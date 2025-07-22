@@ -74,10 +74,10 @@ docker build -t local/ngs-pipeline:latest .
 
 ```bash
 docker run -it --rm \
-  -u $(id -u):$(id -g)
-  -v ./data:/app/data \
-  -v ./SRR_list.txt:/app/SRR_list.txt \
-  -v ./genome.txt:/app/genome.txt \
+  -u --user=$UID:$(id -g $USER)
+  -v ./data:/data \
+  -v ./SRR_list.txt:/data/SRR_list.txt \
+  -v ./genome.txt:/data/genome.txt \
   --name ngs_pipeline_runner \
   local/ngs-pipeline:latest
 ```
@@ -85,9 +85,9 @@ docker run -it --rm \
 **命令解释:**
 - `-it`: 以交互模式运行容器。
 - `--rm`: 容器停止后自动删除，避免产生垃圾文件。
-- `-v ./data:/app/data`: 将本地的 `data` 目录挂载到容器的 `/app/data` 目录。这是为了持久化存储所有输出结果。**首次运行前，请确保本地存在 `data` 目录。**
-- `-v ./SRR_list.txt:/app/SRR_list.txt`: 将本地的 `SRR_list.txt` 文件挂载到容器中。
-- `-v ./genome.txt:/app/genome.txt`: 将本地的 `genome.txt` 配置文件挂载到容器中。
+- `-v ./data:/data`: 将本地的 `data` 目录挂载到容器的 `/data` 目录。这是为了持久化存储所有输出结果、日志和配置文件。**首次运行前，请确保本地存在 `data` 目录。**
+- `-v ./SRR_list.txt:/data/SRR_list.txt`: 将本地的 `SRR_list.txt` 文件挂载到容器中，供流程读取。
+- `-v ./genome.txt:/data/genome.txt`: 将本地的 `genome.txt` 配置文件挂载到容器中，供流程读取。
 - `--name ngs_pipeline_runner`: 为容器指定一个名称，方便管理。
 
 容器启动后，您将看到 `launch.py` 脚本的交互式提示，引导您完成后续操作。
@@ -104,14 +104,6 @@ docker run -it --rm \
   hg38.gtf gtf: https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/genes/hg38.ncbiRefSeq.gtf.gz
   ```
 - **本地基因组**: 您也可以将基因组文件手动放置在 `data/genomes/<物种>/<版本>/` 目录下，流程会自动发现并优先使用它们。
-
-在运行前，请根据您的需求准备好以下配置文件：
-- **`SRR_list.txt`**: 如果您需要从SRA下载数据，请在此文件中每行输入一个SRR ID。
-- **`genome.txt`**: 定义可供下载的基因组。格式为 `文件名 类型: URL`，例如：
-  ```
-  hg38.fa fasta: https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz
-  hg38.gtf gtf: https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/genes/hg38.ncbiRefSeq.gtf.gz
-  ```
 
 ### 5.1 交互式模式
 
@@ -140,15 +132,15 @@ docker run -it --rm \
 
 ```bash
 docker run -it --rm \
-  -u $(id -u):$(id -g) \ 
-  -v ./data:/app/data \
-  -v ./SRR_list.txt:/app/SRR_list.txt \
-  -v ./genome.txt:/app/genome.txt \
+  --user=$(id -u):$(id -g) \
+  -v ./data:/data \
+  -v ./SRR_list.txt:/data/SRR_list.txt \
+  -v ./genome.txt:/data/genome.txt \
   --name ngs_pipeline_runner \
   local/ngs-pipeline:latest \
-  --srr_list SRR_list.txt \
-  --species human \
-  --genome_version hg38
+  --srr_list /data/SRR_list.txt \
+  --species mouse \
+  --genome_version mm39
 ```
 
 **可用参数:**

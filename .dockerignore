@@ -1,9 +1,8 @@
 # Ignore data directory
 data/
-
-# Ignore input files
+# data
 SRR_list.txt
-
+genome.txt
 # Ignore documentation
 README.md
 
