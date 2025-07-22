@@ -96,6 +96,23 @@ docker run -it --rm \
 
 本流程支持两种运行模式：**交互式模式**和**非交互式（命令行）模式**。
 
+在运行前，建议您先根据需求准备好以下关键文件：
+- **`SRR_list.txt`**: 如果您需要从SRA下载数据，请在此文件中每行输入一个SRR ID。
+- **`genome.txt`**: 定义可供下载的基因组。格式为 `文件名 类型: URL`，例如：
+  ```
+  hg38.fa fasta: https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz
+  hg38.gtf gtf: https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/genes/hg38.ncbiRefSeq.gtf.gz
+  ```
+- **本地基因组**: 您也可以将基因组文件手动放置在 `data/genomes/<物种>/<版本>/` 目录下，流程会自动发现并优先使用它们。
+
+在运行前，请根据您的需求准备好以下配置文件：
+- **`SRR_list.txt`**: 如果您需要从SRA下载数据，请在此文件中每行输入一个SRR ID。
+- **`genome.txt`**: 定义可供下载的基因组。格式为 `文件名 类型: URL`，例如：
+  ```
+  hg38.fa fasta: https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz
+  hg38.gtf gtf: https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/genes/hg38.ncbiRefSeq.gtf.gz
+  ```
+
 ### 5.1 交互式模式
 
 这是默认的运行模式。当您直接运行 `docker run ...` 命令而不带任何额外参数时，将进入此模式。脚本会通过一系列问题引导您完成配置：
