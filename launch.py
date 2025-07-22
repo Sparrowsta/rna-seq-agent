@@ -186,11 +186,11 @@ def process_single_srr(srr_id, fastq_dir, seq_mode):
         if seq_mode:
             command = f"""
             source activate sra_env && \\
-            fasterq-dump --stdout --split-spot --skip-technical {srr_file} | gzip > {final_fastq_files[0]}
+            fasterq-dump --stdout --split-spot --skip-technical -t {sra_dir} {srr_file} | gzip > {final_fastq_files[0]}
             """
             subprocess.run(["bash", "-c", command], check=True, text=True, capture_output=True, timeout=1800)
         else:
-            dump_command = f"source activate sra_env && fasterq-dump --split-files -O {fastq_dir} {srr_file}"
+            dump_command = f"source activate sra_env && fasterq-dump --split-files -t {sra_dir} -O {fastq_dir} {srr_file}"
             subprocess.run(["bash", "-c", dump_command], check=True, text=True, capture_output=True, timeout=1800)
             
             gzip_r1_command = f"gzip {os.path.join(fastq_dir, srr_id + '_1.fastq')}"
@@ -468,6 +468,7 @@ def confirm_and_run(params, download_srr, is_interactive):
                     "/opt/conda/envs/ngs_env/bin/python3",
                     "/app/summarize.py",
                     "--fastp_dir", "/data/fastp",
+                    "--bam_dir", "/data/bam",
                     "--featurecounts_dir", "/data/featurecounts",
                     "--output_file", "/data/rna_seq_summary_report.md",
                 ]

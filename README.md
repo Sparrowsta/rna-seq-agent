@@ -1,19 +1,22 @@
-# RNA-Seq 自动化分析流程
+# RNA-Seq 自动化分析与 AI 摘要流程
 
 ## 1. 项目概述
 
-本项目是一个全自动的 RNA-Seq 数据分析流程，旨在从原始测序数据（SRR 文件或本地 FASTQ 文件）开始，一直到最终的基因表达定量，实现端到端的自动化处理。流程通过一个交互式或命令行的启动脚本 (`launch.py`) 来收集参数，然后调用强大的 Nextflow 工作流 (`main.nf`) 来执行核心分析任务。
+本项目是一个全自动的 RNA-Seq 数据分析流程，旨在从原始测序数据（SRR 文件或本地 FASTQ 文件）开始，一直到最终的基因表达定量和一份由大语言模型（LLM）生成的、人类可读的分析报告，实现端到端的自动化处理。
+
+流程通过一个交互式或命令行的启动脚本 (`launch.py`) 来收集参数，然后调用强大的 Nextflow 工作流 (`main.nf`) 来执行核心分析任务。在分析完成后，一个 Python 脚本 (`summarize.py`) 会被自动调用，它将整合质控（fastp）、比对（STAR）和定量（featureCounts）的结果，并利用 LLM 生成一份全面的摘要报告。
 
 整个流程被封装在 Docker 容器中，确保了环境的一致性和可重复性，极大地简化了部署和运行过程。
 
 ## 2. 核心功能
 
 - **自动化数据准备**: 自动从 NCBI SRA 下载数据，或使用本地提供的 FASTQ 文件。
-- **并行处理**: 高效地并行下载和处理多个样本，并对下载文件进行完整性校验。
+- **并行处理**: 高效地并行下载和处理多个样本。
 - **智能基因组管理**:
-    - **远程下载**: 自动从 `genome.txt` 文件中定义的 URL 下载并管理不同物种和版本的参考基因组及注释文件。
-    - **本地发现**: 自动扫描 `data/genomes/` 目录，发现并利用本地已存在的基因组，避免重复下载。
+    - **远程下载**: 自动从 `genome.txt` 文件中定义的 URL 下载并管理参考基因组。
+    - **本地发现**: 自动扫描 `data/genomes/` 目录，发现并利用本地已存在的基因组。
 - **标准化分析流程**: 包含标准的质控 (fastp)、比对 (STAR) 和定量 (featureCounts) 步骤。
+- **AI 摘要报告**: 流程结束后，自动调用大语言模型，生成一份包含对质控、比对和定量结果的全面分析与解读的 Markdown 报告。
 - **环境隔离**: 所有依赖项均通过 Docker 和 Conda 进行管理，避免了复杂的本地环境配置。
 - **灵活的运行模式**: 支持交互式模式（引导用户完成参数选择）和非交互式模式（通过命令行参数直接运行），方便集成到自动化脚本中。
 
@@ -47,8 +50,15 @@ graph TD
         G -- GTF文件 --> O;
         O --> P[生成Counts矩阵];
     end
+    
+    subgraph "报告生成阶段 (summarize.py)"
+        Q[分析完成] --> R[解析fastp, STAR, featureCounts结果];
+        R --> S[调用大语言模型];
+        S --> T[生成 rna_seq_summary_report.md];
+    end
 
     F --> I[执行 nextflow run];
+    P --> Q;
 ```
 
 ## 4. 环境与安装
@@ -62,41 +72,56 @@ graph TD
 在项目根目录下，执行以下命令来构建镜像：
 
 ```bash
-docker build -t local/ngs-pipeline:latest .
+docker build -t ngs-pipeline-with-llm .
+```
+- `ngs-pipeline-with-llm` 是建议的镜像名称，您可以根据需要修改。
+
+### 4.2 配置 AI 摘要功能
+
+为了让流程能够调用大语言模型，您需要在项目的根目录下创建一个名为 `.env` 的文件。这个文件用于存放您的 API 密钥等敏感信息，**它不会被包含在 Docker 镜像中，保证了安全性**。
+
+文件内容应如下：
+
+```env
+# .env
+OPENAI_API_KEY="sk-YourActualAPIKey"
+OPENAI_API_BASE="https://api.example.com/v1"
+OPENAI_MODEL_NAME="your-model-name"
 ```
 
-- `local/ngs-pipeline:latest` 是建议的镜像名称和标签，您可以根据需要修改。
-- 构建过程可能需要一些时间，因为它会下载基础镜像、安装软件包并配置 Conda 环境。
+- **`OPENAI_API_KEY`**: 您的语言模型服务提供商的 API 密钥。
+- **`OPENAI_API_BASE`**: 您的语言模型服务的 API 地址。
+- **`OPENAI_MODEL_NAME`**: 您希望使用的具体模型名称。
 
-### 4.2 启动容器
+### 4.3 启动容器
 
-构建成功后，您可以运行一个交互式的容器来启动分析流程。由于 `launch.py` 是容器的入口点（ENTRYPOINT），容器启动后将直接执行该脚本。
+构建并配置好 `.env` 文件后，使用以下命令来启动分析流程。
 
 ```bash
 docker run -it --rm \
-  -u --user=$UID:$(id -g $USER)
-  -v ./data:/data \
-  -v ./SRR_list.txt:/data/SRR_list.txt \
-  -v ./genome.txt:/data/genome.txt \
+  --user=$UID:$(id -g $USER) \
+  -v "$(pwd)/.env:/app/.env:ro" \
+  -v "$(pwd)/data:/data" \
+  -v "$(pwd)/SRR_list.txt:/data/SRR_list.txt" \
+  -v "$(pwd)/genome.txt:/data/genome.txt" \
   --name ngs_pipeline_runner \
-  local/ngs-pipeline:latest
+  ngs-pipeline-with-llm
 ```
 
 **命令解释:**
 - `-it`: 以交互模式运行容器。
-- `--rm`: 容器停止后自动删除，避免产生垃圾文件。
-- `-v ./data:/data`: 将本地的 `data` 目录挂载到容器的 `/data` 目录。这是为了持久化存储所有输出结果、日志和配置文件。**首次运行前，请确保本地存在 `data` 目录。**
-- `-v ./SRR_list.txt:/data/SRR_list.txt`: 将本地的 `SRR_list.txt` 文件挂载到容器中，供流程读取。
-- `-v ./genome.txt:/data/genome.txt`: 将本地的 `genome.txt` 配置文件挂载到容器中，供流程读取。
-- `--name ngs_pipeline_runner`: 为容器指定一个名称，方便管理。
-
-容器启动后，您将看到 `launch.py` 脚本的交互式提示，引导您完成后续操作。
+- `--rm`: 容器停止后自动删除。
+- `--user=$(id -u):$(id -g)`: 使用当前用户的身份来运行容器，避免在 `data` 目录中产生 root 用户拥有的文件。
+- **`-v "$(pwd)/.env:/app/.env:ro"`**: **（关键）** 将本地的 `.env` 文件作为**只读卷**挂载到容器的 `/app/.env`。这是最安全、最可靠的传递密钥的方式。
+- `-v "$(pwd)/data:/data"`: 将本地的 `data` 目录挂载到容器的 `/data` 目录，用于持久化存储所有输出结果。**首次运行前，请确保本地存在 `data` 目录。**
+- `-v "$(pwd)/SRR_list.txt:/data/SRR_list.txt"`: 将本地的 `SRR_list.txt` 文件挂载到容器中。
+- `-v "$(pwd)/genome.txt:/data/genome.txt"`: 将本地的 `genome.txt` 配置文件挂载到容器中。
 
 ## 5. 使用方法
 
 本流程支持两种运行模式：**交互式模式**和**非交互式（命令行）模式**。
 
-在运行前，建议您先根据需求准备好以下关键文件：
+在运行前，建议您先根据需求准备好以下关键文件并放入`/data`目录：
 - **`SRR_list.txt`**: 如果您需要从SRA下载数据，请在此文件中每行输入一个SRR ID。
 - **`genome.txt`**: 定义可供下载的基因组。格式为 `文件名 类型: URL`，例如：
   ```
@@ -126,18 +151,18 @@ docker run -it --rm \
 
 ### 5.2 非交互式（命令行）模式
 
-对于自动化脚本或高级用户，您可以通过命令行参数直接指定所有配置，跳过交互式问答。
+通过在 `docker run` 命令的末尾附加参数，可以跳过交互式问答，直接运行。
 
-**基本用法:**
-
+**示例:**
 ```bash
 docker run -it --rm \
-  --user=$(id -u):$(id -g) \
-  -v ./data:/data \
-  -v ./SRR_list.txt:/data/SRR_list.txt \
-  -v ./genome.txt:/data/genome.txt \
+  --user=$UID:$(id -g $USER) \
+  -v "$(pwd)/.env:/app/.env:ro" \
+  -v "$(pwd)/data:/data" \
+  -v "$(pwd)/SRR_list.txt:/data/SRR_list.txt" \
+  -v "$(pwd)/genome.txt:/data/genome.txt" \
   --name ngs_pipeline_runner \
-  local/ngs-pipeline:latest \
+  ngs-pipeline-with-llm \
   --srr_list /data/SRR_list.txt \
   --species mouse \
   --genome_version mm39
@@ -195,33 +220,48 @@ docker run -it --rm \
     - `counts.txt.summary`: 定量过程的统计摘要。
 - **环境**: `quant_env` (包含 subread/featureCounts)。
 
+### 6.5 `summarize.py` (AI 摘要生成)
+- **功能**: 在 Nextflow 工作流成功执行后，此脚本被自动调用，负责生成最终的 AI 分析报告。
+- **触发条件**: `launch.py` 在 `subprocess.run` 成功执行 Nextflow 后调用此脚本。
+- **输入**:
+    - `fastp` 生成的 JSON 报告。
+    - `STAR` 生成的比对日志 (`.log`)。
+    - `featureCounts` 生成的定量摘要 (`.summary`)。
+- **核心操作**:
+    1.  从挂载的 `/app/.env` 文件中加载 `OPENAI_API_KEY` 等配置。
+    2.  解析上述输入文件，提取关键统计数据。
+    3.  将提取的数据整合成一个详细的 Prompt。
+    4.  调用指定的大语言模型（LLM）。
+- **输出**: `rna_seq_summary_report.md` 文件，包含对整个流程结果的全面分析和解读。
+- **环境**: `ngs_env` (包含 `python-dotenv`, `langchain`, `langchain-openai`)。
+
 ## 7. 输出文件结构
 
-所有分析结果和中间文件都将保存在项目根目录下的 `data/` 文件夹中。该目录的结构如下：
+所有分析结果都将保存在 `data/` 文件夹中。
 
 ```
 data/
+├── rna_seq_summary_report.md  # 最终生成的 AI 摘要报告
 ├── srr_files/
 │   └── <SRR_ID>/
-│       └── <SRR_ID>.sra       # 下载的原始SRA文件
+│       └── <SRR_ID>.sra
 ├── fastq_files/
-│   ├── <SRR_ID>_1.fastq.gz    # （双端）处理后的FASTQ文件
+│   ├── <SRR_ID>_1.fastq.gz
 │   └── <SRR_ID>_2.fastq.gz
 ├── fastp/
 │   └── <SAMPLE_ID>/
-│       ├── <SAMPLE_ID>_trimmed_1.fastq.gz  # fastp质控后的FASTQ
-│       ├── <SAMPLE_ID>.html                # fastp HTML报告
-│       └── <SAMPLE_ID>.json                # fastp JSON报告
+│       ├── <SAMPLE_ID>.html
+│       └── <SAMPLE_ID>.json
 ├── bam/
 │   └── <SAMPLE_ID>/
-│       ├── <SAMPLE_ID>.bam      # STAR比对生成的BAM文件
-│       └── <SAMPLE_ID>.log      # STAR比对日志
+│       ├── <SAMPLE_ID>.bam
+│       └── <SAMPLE_ID>.log      # STAR 比对日志
 ├── featurecounts/
-│   ├── counts.txt             # 最终的基因表达计数矩阵
-│   └── counts.txt.summary     # featureCounts运行摘要
+│   ├── counts.txt
+│   └── counts.txt.summary
 └── genomes/
     └── <SPECIES>/
         └── <VERSION>/
-            ├── <genome>.fa      # 参考基因组序列
-            ├── <genome>.gtf     # 基因注释文件
-            └── star_index/      # STAR基因组索引
+            ├── <genome>.fa
+            ├── <genome>.gtf
+            └── star_index/

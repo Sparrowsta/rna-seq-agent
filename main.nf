@@ -91,6 +91,8 @@ process STAR_GENOME_GENERATE {
 process FASTP {
     publishDir "${params.outdir}/fastp/${sample_id}", mode: 'copy'
 
+    label 'large_mem_process'
+
     input:
     tuple val(sample_id), path(reads)
 
@@ -109,7 +111,7 @@ process FASTP {
 
     """
     source activate qc_env
-    fastp -i ${r1} -o ${r1_out} -h ${html_out} -j ${json_out} --qualified_quality_phred 20 --unqualified_percent_limit 40 --length_required 36 ${extra_args}
+    fastp -i ${r1} -o ${r1_out} -h ${html_out} -j ${json_out} --qualified_quality_phred 20 --unqualified_percent_limit 40 --length_required 36  ${extra_args}
     """
 }
 

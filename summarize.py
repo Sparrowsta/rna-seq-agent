@@ -47,37 +47,57 @@ def parse_fastp_report(json_file: Path) -> dict:
         'Insert Size Peak': insert_size.get('peak'),
     }
 
-def parse_featurecounts_summary(summary_file: Path) -> dict:
-    """Parses the featureCounts summary file to extract alignment stats."""
-    stats = {}
+def parse_star_log(log_file: Path) -> dict:
+    """Parses a STAR aligner .log file (which contains Log.final.out content)."""
+    sample_name = log_file.stem
+    stats = {'Sample': sample_name}
     try:
-        with open(summary_file, 'r') as f:
-            # Skip the header line
-            next(f)
+        with open(log_file, 'r') as f:
             for line in f:
-                parts = line.strip().split('\t')
+                if '|' not in line:
+                    continue
+                # Use rsplit with maxsplit=1 to handle keys that might contain '|'
+                parts = line.rsplit('|', 1)
                 if len(parts) == 2:
-                    status, count = parts
-                    stats[status] = int(count)
+                    key, value = [x.strip() for x in parts]
+                    stats[key] = value
     except (IOError, ValueError) as e:
+        print(f"Warning: Could not read or parse {log_file}. Skipping. Error: {e}")
+        return {}
+    return stats
+
+def parse_featurecounts_summary(summary_file: Path) -> dict:
+    """
+    Parses the featureCounts summary file, which can contain one or more samples.
+    It sums up the counts across all samples for a consolidated view.
+    """
+    try:
+        # Use pandas to robustly read the tab-separated summary file
+        df = pd.read_csv(summary_file, sep='\t', index_col=0)
+    except (IOError, pd.errors.ParserError) as e:
         print(f"Warning: Could not read or parse {summary_file}. Skipping. Error: {e}")
         return {}
 
-    # Calculate total reads and assignment rate
-    total_reads = sum(stats.values())
-    assigned_reads = stats.get('Assigned', 0)
+    # The actual count data is in all columns except the first (which is the index)
+    # Summing across all sample columns (axis=1) for each status category
+    summed_stats = df.sum(axis=1).to_dict()
+
+    # Calculate total reads and assignment rate from the summed stats
+    total_reads = sum(summed_stats.values())
+    assigned_reads = summed_stats.get('Assigned', 0)
     
     if total_reads > 0:
         assignment_rate = (assigned_reads / total_reads)
     else:
         assignment_rate = 0
 
-    stats['Total Processed Reads'] = total_reads
-    stats['Assignment Rate'] = assignment_rate
+    # Add calculated fields to the dictionary
+    summed_stats['Total Processed Reads'] = total_reads
+    summed_stats['Assignment Rate'] = assignment_rate
     
-    return stats
+    return summed_stats
 
-def generate_summary_table(fastp_data: list, featurecounts_data: dict) -> str:
+def generate_summary_table(fastp_data: list, star_data: list, featurecounts_data: dict) -> str:
     """Generates a Markdown summary from the extracted data."""
     
     # --- Fastp Summary Table ---
@@ -98,8 +118,29 @@ def generate_summary_table(fastp_data: list, featurecounts_data: dict) -> str:
     else:
         fastp_summary_str += "No fastp data available."
 
+    # --- STAR Alignment Summary ---
+    star_summary_str = "\n\n## Alignment Summary (STAR)\n\n"
+    if star_data:
+        df_star = pd.DataFrame(star_data)
+        df_star = df_star.set_index('Sample')
+        # Select and rename columns for clarity
+        star_metrics = {
+            "Number of input reads": "Input Reads",
+            "Uniquely mapped reads %": "Uniquely Mapped %",
+            "Number of reads mapped to multiple loci": "Multi-mapping Reads",
+            "% of reads mapped to multiple loci": "Multi-mapping %",
+            "Number of reads mapped to too many loci": "Too-many-loci Reads",
+            "% of reads mapped to too many loci": "Too-many-loci %",
+        }
+        # Filter for existing columns and rename
+        df_star_filtered = df_star[[col for col in star_metrics.keys() if col in df_star.columns]].rename(columns=star_metrics)
+        star_summary_str += df_star_filtered.to_markdown()
+    else:
+        star_summary_str += "No STAR alignment data available."
+
+
     # --- FeatureCounts Summary Table ---
-    fc_summary_str = "\n\n## Alignment & Counting Summary (featureCounts)\n\n"
+    fc_summary_str = "\n\n## Gene-level Counting Summary (featureCounts)\n\n"
     if featurecounts_data:
         # Create a DataFrame for featureCounts data for easy formatting
         # We can select and rename the most important metrics for the summary
@@ -122,7 +163,7 @@ def generate_summary_table(fastp_data: list, featurecounts_data: dict) -> str:
     else:
         fc_summary_str += "No featureCounts data available."
 
-    return fastp_summary_str + fc_summary_str
+    return fastp_summary_str + star_summary_str + fc_summary_str
 
 def generate_llm_report(summary_table: str, api_key: str, base_url: str, model_name: str) -> str:
     """Generates a final report using a compatible LLM, ensuring Chinese output."""
@@ -140,8 +181,8 @@ def generate_llm_report(summary_table: str, api_key: str, base_url: str, model_n
     - 通过比较“过滤前”和“过滤后”的指标，分析过滤的效果。
     - 讨论接头污染和序列重复率，并指出任何潜在的问题。
 3.  **比对与计数分析**:
-    - 报告整体的 reads 分配率（Assignment Rate）。
-    - 讨论未分配 reads 的比例，特别关注多重比对 (multi-mapping) 和落在注释基因区域之外的 reads。高的多重比对率或“无特征”率可能预示着特定的生物学或技术现象。
+    - **比对 (STAR)**: 解读 STAR 的比对统计数据。评论唯一比对率（Uniquely mapped reads %），这是成功比对的关键指标。讨论多重比对（multi-mapping）和过多位点比对（too many loci）的比例，并解释它们可能的含义（例如，重复序列、基因家族）。
+    - **计数 (featureCounts)**: 报告整体的 reads 分配率（Assignment Rate）。讨论未分配 reads 的比例，并结合 STAR 的结果进行分析。例如，如果唯一比对率高但分配率低，可能意味着许多 reads 落在了基因间区。
 4.  **潜在问题与建议**:
     - 突出显示任何质量指标较差的样本（例如，低 Q30、高重复率）。
     - 指出比对中任何潜在的问题，例如极低的分配率。
@@ -179,7 +220,7 @@ def generate_llm_report(summary_table: str, api_key: str, base_url: str, model_n
     
     return response
 
-def main(fastp_dir: Path, featurecounts_dir: Path, output_file: Path):
+def main(fastp_dir: Path, bam_dir: Path, featurecounts_dir: Path, output_file: Path):
     """
     Main function to orchestrate the parsing, summarization, and report generation.
     """
@@ -211,8 +252,12 @@ def main(fastp_dir: Path, featurecounts_dir: Path, output_file: Path):
         raise FileNotFoundError("Could not find featureCounts summary file.")
     print(f"   Found: {featurecounts_summary_file}")
 
+    print(f"3. Searching for STAR alignment logs in: {bam_dir}")
+    star_log_files = list(bam_dir.glob('**/*.log'))
+    print(f"   Found {len(star_log_files)} STAR logs.")
+
     # --- Data Parsing ---
-    print("3. Parsing fastp reports...")
+    print("4. Parsing fastp reports...")
     all_fastp_data = [parse_fastp_report(f) for f in fastp_files if f.is_file()]
     # Filter out any empty results from failed parsing
     all_fastp_data = [d for d in all_fastp_data if d]
@@ -222,14 +267,21 @@ def main(fastp_dir: Path, featurecounts_dir: Path, output_file: Path):
     pprint.pprint(all_fastp_data)
     print("-------------------------")
 
-    print("4. Parsing featureCounts summary...")
+    print("5. Parsing STAR logs...")
+    all_star_data = [parse_star_log(f) for f in star_log_files if f.is_file()]
+    all_star_data = [d for d in all_star_data if d]
+    print("--- Parsed STAR data ---")
+    pprint.pprint(all_star_data)
+    print("------------------------")
+
+    print("6. Parsing featureCounts summary...")
     featurecounts_data = parse_featurecounts_summary(featurecounts_summary_file)
     print("--- Parsed featureCounts data ---")
     pprint.pprint(featurecounts_data)
     print("-------------------------------")
 
     # --- Summarization ---
-    summary_table = generate_summary_table(all_fastp_data, featurecounts_data)
+    summary_table = generate_summary_table(all_fastp_data, all_star_data, featurecounts_data)
 
     # --- LLM Report Generation ---
     final_report = generate_llm_report(summary_table, api_key, base_url, model_name)
@@ -242,8 +294,9 @@ def main(fastp_dir: Path, featurecounts_dir: Path, output_file: Path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Summarize RNA-Seq pipeline results using an LLM.")
     parser.add_argument("--fastp_dir", type=Path, required=True, help="Directory containing fastp JSON reports.")
+    parser.add_argument("--bam_dir", type=Path, required=True, help="Directory containing STAR alignment logs.")
     parser.add_argument("--featurecounts_dir", type=Path, required=True, help="Directory containing featureCounts output.")
     parser.add_argument("--output_file", type=Path, default="rna_seq_summary_report.md", help="Path to save the final Markdown report.")
     args = parser.parse_args()
     
-    main(args.fastp_dir, args.featurecounts_dir, args.output_file)
+    main(args.fastp_dir, args.bam_dir, args.featurecounts_dir, args.output_file)
