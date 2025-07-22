@@ -25,10 +25,10 @@ ENV PATH=$CONDA_DIR/bin:$PATH
 RUN ln -s $CONDA_DIR/bin/conda /usr/local/bin/conda && \
     ln -s $CONDA_DIR/bin/activate /usr/local/bin/activate && \
     ln -s $CONDA_DIR/bin/deactivate /usr/local/bin/deactivate && \
-    conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free/ && \
-    conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main/ && \
+    # to ensure the solver can find compatible packages efficiently.
     conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge/ && \
     conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/bioconda/ && \
+    conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main/ && \
     conda config --set show_channel_urls yes
 
 # 6. 接受服务条款，然后为每个工具或工具组创建独立的Conda环境
@@ -39,6 +39,10 @@ RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkg
     mamba create -y -n qc_env -c bioconda fastp=1.0.1 && \
     mamba create -y -n align_env -c bioconda samtools=1.22.1 star=2.7.11b && \
     mamba create -y -n quant_env -c bioconda subread=2.1.1 && \
+    # Create a dedicated environment for our Python scripts and their dependencies
+    mamba create -y -n ngs_env python=3.12 && \
+    # Install Python packages using mamba from the conda-forge channel for better dependency management.
+    mamba install -y -n ngs_env -c conda-forge pandas python-dotenv langchain langchain-openai tabulate && \
     mamba clean -y -a
 
 # 7. 创建工作目录并将项目文件复制到镜像中
@@ -46,4 +50,5 @@ WORKDIR /app
 COPY . .
 
 # 8. 设置入口点，使容器可以直接运行启动脚本
-ENTRYPOINT ["python3", "launch.py"]
+
+ENTRYPOINT ["/bin/sh", "-c", "exec python3 launch.py"]

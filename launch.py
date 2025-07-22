@@ -455,7 +455,33 @@ def confirm_and_run(params, download_srr, is_interactive):
     try:
         # Set NXF_HOME to a writable directory to store Nextflow's global config
         os.environ['NXF_HOME'] = '/data/.nxf_home'
-        subprocess.run(command, check=True, cwd='/data')
+        result = subprocess.run(command, check=True, cwd='/data')
+        
+        # --- Add LLM Summary Generation Step ---
+        if result.returncode == 0:
+            print("\n--- Nextflow pipeline completed successfully. Generating LLM summary report... ---")
+            try:
+                # Activate the correct conda environment to ensure all dependencies are available
+                # Directly use the Python interpreter from the conda environment
+                # to avoid shell activation issues. This is a more robust method.
+                summary_command = [
+                    "/opt/conda/envs/ngs_env/bin/python3",
+                    "/app/summarize.py",
+                    "--fastp_dir", "/data/fastp",
+                    "--featurecounts_dir", "/data/featurecounts",
+                    "--output_file", "/data/rna_seq_summary_report.md",
+                ]
+                print("Executing summary command:")
+                print(" ".join(summary_command))
+                subprocess.run(summary_command, check=True, env=os.environ)
+                print("--- Summary report generated successfully. ---")
+            except subprocess.CalledProcessError as summary_e:
+                print(f"\nError: Summary generation failed with exit code {summary_e.returncode}", file=sys.stderr)
+                print(f"Stderr: {summary_e.stderr}", file=sys.stderr)
+            except FileNotFoundError:
+                print("\nError: 'python3' or 'summarize.py' not found in the expected location.", file=sys.stderr)
+        # --- End of LLM Summary Generation Step ---
+        
     except subprocess.CalledProcessError as e:
         print(f"\nError: Pipeline execution failed with exit code {e.returncode}")
     except FileNotFoundError:
