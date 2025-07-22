@@ -3,7 +3,7 @@ nextflow.enable.dsl=2
 
 // --- 1. Parameter Definitions ---
 params.reads = null
-params.outdir = 'data'
+params.outdir = '.'
 params.seq_mode = false
 
 // Genome-related parameters

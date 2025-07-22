@@ -11,18 +11,18 @@ def get_args():
     """Parses command-line arguments."""
     parser = argparse.ArgumentParser(description="NGS Pipeline Launcher")
     parser.add_argument("--srr_list", type=str, help="Path to the SRR list file (for non-interactive mode).")
-    parser.add_argument("--seq_mode", action="store_true", help="Flag for single-end sequencing.")
+    parser.add_argument("--seq_mode", action="store_true", help="Flag for single-end/paired-end sequencing.")
     parser.add_argument("--species", type=str, help="Species to process (for non-interactive mode),etc. human,mouse,other.")
     parser.add_argument("--genome_version", type=str, help="Genome version, e.g., hg38 (for non-interactive mode).")
     parser.add_argument("--fastq_dir", type=str, help="Path to the directory with local fastq files.")
     return parser.parse_args()
 
-def setup_directories(base_dir):
+def setup_directories():
     """
-    Creates necessary directories for the NGS pipeline within the 'data' folder.
+    Creates necessary directories for the NGS pipeline within the '/data' folder.
     Returns True on success, False on failure.
     """
-    data_dir = os.path.join(base_dir, 'data')
+    data_dir = '/data'
     
     sub_dirs = [
         "srr_files",
@@ -30,7 +30,9 @@ def setup_directories(base_dir):
         "fastp",
         "bam",
         "featurecounts",
-        "genomes"
+        "genomes",
+        "work",
+        ".nxf_home"
     ]
 
     try:
@@ -47,7 +49,7 @@ def setup_directories(base_dir):
         print(f"Error creating directories: {e}")
         return False
 
-def parse_genome_file(filepath, base_dir):
+def parse_genome_file(filepath):
     """
     Parses the genome.txt file and scans local directories to return a structured dictionary.
     Categorizes genomes into 'human', 'mouse', and 'other'.
@@ -80,7 +82,7 @@ def parse_genome_file(filepath, base_dir):
         print(f"Warning: Genome file not found at {filepath}. Only local genomes will be available.")
 
     # 2. Scan local genomes directory
-    genomes_dir = os.path.join(base_dir, 'data', 'genomes')
+    genomes_dir = '/data/genomes'
     if os.path.exists(genomes_dir):
         for species in os.listdir(genomes_dir):  # e.g., human, mouse, other
             species_dir = os.path.join(genomes_dir, species)
@@ -205,18 +207,6 @@ def process_single_srr(srr_id, fastq_dir, seq_mode):
     except Exception as e:
         return f"{srr_id}: FAILED - An unexpected error occurred: {e}"
 
-def verify_fastq_file(f_path):
-    """Verifies a single FASTQ file for existence, size, and integrity."""
-    if not os.path.exists(f_path) or os.path.getsize(f_path) < 100:
-        print(f"ERROR: Final file missing or too small: {f_path}")
-        return False
-    try:
-        subprocess.run(["gzip", "-t", f_path], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
-    except subprocess.CalledProcessError:
-        print(f"ERROR: Final file is corrupt: {f_path}")
-        return False
-
 def prepare_fastq_files(srr_list_path, fastq_dir, seq_mode, max_workers=4):
     """Reads SRR list, processes them in parallel, and verifies all outputs in parallel."""
     print(f"\n--- Preparing FASTQ Files (in parallel with max {max_workers} workers) ---")
@@ -241,23 +231,7 @@ def prepare_fastq_files(srr_list_path, fastq_dir, seq_mode, max_workers=4):
             except Exception as exc:
                 print(f'{srr_id} generated an exception: {exc}')
 
-    print("\n--- Final Verification of All FASTQ Files ---")
-    all_expected_files = []
-    for srr_id in srr_ids:
-        if seq_mode:
-            all_expected_files.append(os.path.join(fastq_dir, f"{srr_id}.fastq.gz"))
-        else:
-            all_expected_files.append(os.path.join(fastq_dir, f"{srr_id}_1.fastq.gz"))
-            all_expected_files.append(os.path.join(fastq_dir, f"{srr_id}_2.fastq.gz"))
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        results = executor.map(verify_fastq_file, all_expected_files)
-        if not all(results):
-            print("\nERROR: One or more FASTQ files are missing or corrupt. Please check the logs.")
-            print("Pipeline will not be started.")
-            return False
-
-    print("--- FASTQ File Preparation and Verification Complete ---")
+    print("--- FASTQ File Preparation Complete ---")
     return True
 
 def handle_non_interactive_mode(args):
@@ -294,7 +268,7 @@ def handle_non_interactive_mode(args):
         print(f"  SRR list file: {params['srr_list']}")
     if params['fastq_dir']:
         print(f"  FASTQ directory: {params['fastq_dir']}")
-    print(f"  Single-end: {params['seq_mode']}")
+    print(f"  seq_mode: {params['seq_mode']}")
     print(f"  Species: {params['species']}")
     print(f"  Genome Version: {params['genome_version']}")
     
@@ -309,16 +283,16 @@ def get_user_choice(prompt, options):
         else:
             print("Invalid selection. Please try again.")
 
-def get_data_source(current_dir):
+def get_data_source():
     """Gets the data source from the user."""
     print("\nSelect the source of your FASTQ files:")
-    print("  1: Download and process from an SRR list file (e.g., SRR_list.txt)")
-    print("  2: Use existing FASTQ files in the 'fastq_files' directory")
+    print("  1: Download and process from an SRR list file (e.g., /data/SRR_list.txt)")
+    print("  2: Use existing FASTQ files in the '/data/fastq_files' directory")
     
     choice = get_user_choice("Enter number (1-2): ", ["1", "2"])
     
     if choice == "1":
-        srr_list_path = input("Enter the path to your SRR list file (default: SRR_list.txt): ") or "SRR_list.txt"
+        srr_list_path = input("Enter the path to your SRR list file (default: /data/SRR_list.txt): ") or "/data/SRR_list.txt"
         if not os.path.isfile(srr_list_path):
             print(f"Error: File not found at {srr_list_path}", file=sys.stderr)
             sys.exit(1)
@@ -330,7 +304,7 @@ def get_data_source(current_dir):
                 
         return {"srr_list": srr_list_path}, True
     else:
-        fastq_dir = os.path.join(current_dir, 'data', 'fastq_files')
+        fastq_dir = '/data/fastq_files'
         if not os.path.exists(fastq_dir) or not os.listdir(fastq_dir):
             print(f"Error: The directory '{fastq_dir}' is empty or does not exist.", file=sys.stderr)
             print("Please add your FASTQ files to this directory or choose to download from SRR.", file=sys.stderr)
@@ -369,17 +343,17 @@ def get_genome_selection(genome_data):
     
     return selected_species, selected_version
 
-def handle_interactive_mode(current_dir):
+def handle_interactive_mode():
     """Handles interactive mode."""
     print("\n--- Running in Interactive Mode ---")
     params = {"seq_type": "rna-seq"}
     
-    source_params, download_srr = get_data_source(current_dir)
+    source_params, download_srr = get_data_source()
     params.update(source_params)
     
     params["seq_mode"] = get_seq_mode()
     
-    genome_data = parse_genome_file('genome.txt', current_dir)
+    genome_data = parse_genome_file('/data/genome.txt')
     if not genome_data:
         sys.exit(1)
         
@@ -389,7 +363,7 @@ def handle_interactive_mode(current_dir):
             
     return params, download_srr
 
-def confirm_and_run(params, download_srr, is_interactive, current_dir):
+def confirm_and_run(params, download_srr, is_interactive):
     """Confirm parameters and run the pipeline."""
     if is_interactive:
         print("\n--- Configuration Summary ---")
@@ -405,18 +379,17 @@ def confirm_and_run(params, download_srr, is_interactive, current_dir):
             print("Operation cancelled by user.")
             sys.exit(0)
 
-    fastq_dir = params.get("fastq_dir") or os.path.join(current_dir, 'data', 'fastq_files')
+    fastq_dir = params.get("fastq_dir") or '/data/fastq_files'
     os.makedirs(fastq_dir, exist_ok=True)
     
     if params.get("srr_list"):
         if not prepare_fastq_files(params["srr_list"], fastq_dir, params["seq_mode"]):
             sys.exit(1)
     
-    relative_fastq_dir = os.path.relpath(fastq_dir, current_dir)
     glob_pattern = '*.fastq.gz' if params["seq_mode"] else '*_{1,2}.fastq.gz'
-    params["reads"] = os.path.join(relative_fastq_dir, glob_pattern)
+    params["reads"] = os.path.join(fastq_dir, glob_pattern)
 
-    genome_data = parse_genome_file('genome.txt', current_dir)
+    genome_data = parse_genome_file('/data/genome.txt')
     if not genome_data:
         sys.exit(1)
         
@@ -435,7 +408,7 @@ def confirm_and_run(params, download_srr, is_interactive, current_dir):
         fasta_url = version_data.get("fasta")
         gtf_url = version_data.get("gtf")
 
-        genome_base_dir = os.path.join(current_dir, 'data', 'genomes', selected_species, selected_version)
+        genome_base_dir = os.path.join('/data', 'genomes', selected_species, selected_version)
         os.makedirs(genome_base_dir, exist_ok=True)
 
         if fasta_url:
@@ -453,7 +426,7 @@ def confirm_and_run(params, download_srr, is_interactive, current_dir):
     print("\nFinal parameters for Nextflow:")
     print(json.dumps(params, indent=4))
 
-    log_dir = os.path.join(current_dir, '.nextflow', 'log')
+    log_dir = '/data/.nextflow/log'
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, 'nextflow.log')
 
@@ -469,9 +442,10 @@ def confirm_and_run(params, download_srr, is_interactive, current_dir):
         "nextflow",
         "-log", log_file,
         "run",
-        "main.nf",
+        "/app/main.nf",
         "-profile", "inside_container,standard",
-        "-resume"
+        "-resume",
+        "-work-dir", "/data/work"
     ] + nextflow_params
 
     print("\nExecuting command:")
@@ -479,7 +453,9 @@ def confirm_and_run(params, download_srr, is_interactive, current_dir):
     print("-" * 30)
 
     try:
-        subprocess.run(command, check=True)
+        # Set NXF_HOME to a writable directory to store Nextflow's global config
+        os.environ['NXF_HOME'] = '/data/.nxf_home'
+        subprocess.run(command, check=True, cwd='/data')
     except subprocess.CalledProcessError as e:
         print(f"\nError: Pipeline execution failed with exit code {e.returncode}")
     except FileNotFoundError:
@@ -489,10 +465,9 @@ def main():
     """Main function to prepare parameters and launch the pipeline."""
     print("--- NGS Pipeline Launcher ---")
     args = get_args()
-    current_dir = os.path.dirname(os.path.abspath(__file__))
 
     print("\nSetting up necessary directories...")
-    if not setup_directories(current_dir):
+    if not setup_directories():
         print("Failed to set up directories. Exiting.", file=sys.stderr)
         sys.exit(1)
     print("Directories setup successfully.")
@@ -500,11 +475,11 @@ def main():
     is_interactive = not (args.srr_list or args.fastq_dir or args.species or args.genome_version)
 
     if is_interactive:
-        params, download_srr = handle_interactive_mode(current_dir)
+        params, download_srr = handle_interactive_mode()
     else:
         params, download_srr = handle_non_interactive_mode(args)
 
-    confirm_and_run(params, download_srr, is_interactive, current_dir)
+    confirm_and_run(params, download_srr, is_interactive)
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,9 @@
+# Ignore data directory
+data/
+
+# Ignore input files
+SRR_list.txt
+
+# Ignore documentation
+README.md
+
