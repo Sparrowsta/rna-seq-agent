@@ -1,6 +1,4 @@
-data
+data/*/
 config.json
 rna_seq_summary_report.md
-SRR_list.txt
-genome.txt
 .env
