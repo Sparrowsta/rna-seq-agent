@@ -6,6 +6,7 @@ import re
 from collections import defaultdict
 import argparse
 import concurrent.futures
+from datetime import datetime
 
 def get_args():
     """Parses command-line arguments."""
@@ -424,7 +425,7 @@ def confirm_and_run(params, download_srr, is_interactive):
     print("--- Genome Files Ready ---")
 
     print("\nFinal parameters for Nextflow:")
-    print(json.dumps(params, indent=4))
+    print(json.dumps(params, indent=4, default=str))
 
     log_dir = '/data/.nextflow/log'
     os.makedirs(log_dir, exist_ok=True)
@@ -464,6 +465,9 @@ def confirm_and_run(params, download_srr, is_interactive):
                 # Activate the correct conda environment to ensure all dependencies are available
                 # Directly use the Python interpreter from the conda environment
                 # to avoid shell activation issues. This is a more robust method.
+                end_time = datetime.now()
+                total_duration = end_time - params['start_time']
+                
                 summary_command = [
                     "/opt/conda/envs/ngs_env/bin/python3",
                     "/app/summarize.py",
@@ -471,6 +475,9 @@ def confirm_and_run(params, download_srr, is_interactive):
                     "--bam_dir", "/data/bam",
                     "--featurecounts_dir", "/data/featurecounts",
                     "--output_file", "/data/rna_seq_summary_report.md",
+                    "--start_time", params['start_time'].strftime('%Y-%m-%d %H:%M:%S'),
+                    "--end_time", end_time.strftime('%Y-%m-%d %H:%M:%S'),
+                    "--total_duration", str(total_duration)
                 ]
                 print("Executing summary command:")
                 print(" ".join(summary_command))
@@ -505,6 +512,9 @@ def main():
         params, download_srr = handle_interactive_mode()
     else:
         params, download_srr = handle_non_interactive_mode(args)
+    
+    params['start_time'] = datetime.now()
+    print(f"\nPipeline started at: {params['start_time'].strftime('%Y-%m-%d %H:%M:%S')}")
 
     confirm_and_run(params, download_srr, is_interactive)
 

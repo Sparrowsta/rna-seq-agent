@@ -42,7 +42,7 @@ RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkg
     # Create a dedicated environment for our Python scripts and their dependencies
     mamba create -y -n ngs_env python=3.12 && \
     # Install Python packages using mamba from the conda-forge channel for better dependency management.
-    mamba install -y -n ngs_env -c conda-forge pandas python-dotenv langchain langchain-openai tabulate && \
+    mamba install -y -n ngs_env -c conda-forge pandas python-dotenv langchain langchain-openai tabulate requests && \
     mamba clean -y -a
 
 # 7. 创建工作目录并将项目文件复制到镜像中

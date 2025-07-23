@@ -17,6 +17,8 @@
     - **本地发现**: 自动扫描 `data/genomes/` 目录，发现并利用本地已存在的基因组。
 - **标准化分析流程**: 包含标准的质控 (fastp)、比对 (STAR) 和定量 (featureCounts) 步骤。
 - **AI 摘要报告**: 流程结束后，自动调用大语言模型，生成一份包含对质控、比对和定量结果的全面分析与解读的 Markdown 报告。
+- **运行时间统计**: 报告中会自动包含流程的开始、结束及总运行时间，方便进行性能评估。
+- **Webhook 通知**: 分析完成后，可自动将生成的报告发送到指定的 Webhook URL，方便集成到即时通讯工具（如 Slack, Discord）或自动化工作流中。
 - **环境隔离**: 所有依赖项均通过 Docker 和 Conda 进行管理，避免了复杂的本地环境配置。
 - **灵活的运行模式**: 支持交互式模式（引导用户完成参数选择）和非交互式模式（通过命令行参数直接运行），方便集成到自动化脚本中。
 
@@ -87,11 +89,13 @@ docker build -t ngs-pipeline-with-llm .
 OPENAI_API_KEY="sk-YourActualAPIKey"
 OPENAI_API_BASE="https://api.example.com/v1"
 OPENAI_MODEL_NAME="your-model-name"
++WEBHOOK_URL=""
 ```
 
 - **`OPENAI_API_KEY`**: 您的语言模型服务提供商的 API 密钥。
 - **`OPENAI_API_BASE`**: 您的语言模型服务的 API 地址。
 - **`OPENAI_MODEL_NAME`**: 您希望使用的具体模型名称。
+- **`WEBHOOK_URL`**: (可选) 用于接收最终报告的 Webhook URL。如果留空，则不发送通知。
 
 ### 4.3 启动容器
 
@@ -232,7 +236,7 @@ docker run -it --rm \
     2.  解析上述输入文件，提取关键统计数据。
     3.  将提取的数据整合成一个详细的 Prompt。
     4.  调用指定的大语言模型（LLM）。
-- **输出**: `rna_seq_summary_report.md` 文件，包含对整个流程结果的全面分析和解读。
+- **输出**: `rna_seq_summary_report.md` 文件，包含流程运行时间统计和对整个流程结果的全面分析和解读。
 - **环境**: `ngs_env` (包含 `python-dotenv`, `langchain`, `langchain-openai`)。
 
 ## 7. 输出文件结构

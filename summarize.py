@@ -1,5 +1,6 @@
 import argparse
 import json
+import requests
 from pathlib import Path
 import pandas as pd
 
@@ -8,6 +9,33 @@ from dotenv import load_dotenv
 from langchain_openai.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+
+def send_webhook(url: str, report_content: str):
+    """Sends the report content to the specified Feishu/Lark webhook URL as plain text."""
+    if not url:
+        return
+
+    payload = {
+        "msg_type": "text",
+        "content": {
+            "text": report_content
+        }
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers={"Content-Type": "application/json"})
+        response.raise_for_status()
+        response_data = response.json()
+        if response_data.get("StatusCode") == 0 or response_data.get("code") == 0:
+            print(f"Successfully sent report to Feishu webhook: {url}")
+        else:
+            print(f"Warning: Feishu webhook returned an error. Response: {response.text}")
+
+    except requests.exceptions.RequestException as e:
+        print(f"Warning: Failed to send report to webhook {url}. Error: {e}")
+    except json.JSONDecodeError:
+        print(f"Warning: Could not decode JSON response from Feishu webhook. Response: {response.text}")
+
 
 def parse_fastp_report(json_file: Path) -> dict:
     """Parses a single fastp JSON report to extract a comprehensive set of QC metrics."""
@@ -220,7 +248,7 @@ def generate_llm_report(summary_table: str, api_key: str, base_url: str, model_n
     
     return response
 
-def main(fastp_dir: Path, bam_dir: Path, featurecounts_dir: Path, output_file: Path):
+def main(fastp_dir: Path, bam_dir: Path, featurecounts_dir: Path, output_file: Path, start_time: str = None, end_time: str = None, total_duration: str = None):
     """
     Main function to orchestrate the parsing, summarization, and report generation.
     """
@@ -234,6 +262,8 @@ def main(fastp_dir: Path, bam_dir: Path, featurecounts_dir: Path, output_file: P
     api_key = os.getenv("OPENAI_API_KEY")
     base_url = os.getenv("OPENAI_API_BASE")
     model_name = os.getenv("OPENAI_MODEL_NAME")
+
+    webhook_url = os.getenv("WEBHOOK_URL")
 
     if not all([api_key, base_url, model_name]):
         raise ValueError(
@@ -286,9 +316,26 @@ def main(fastp_dir: Path, bam_dir: Path, featurecounts_dir: Path, output_file: P
     # --- LLM Report Generation ---
     final_report = generate_llm_report(summary_table, api_key, base_url, model_name)
 
+    # --- Add Time Information ---
+    time_info = ""
+    if start_time and end_time and total_duration:
+        time_info = (
+            f"# 流程运行时间\n\n"
+            f"- **开始时间**: {start_time}\n"
+            f"- **结束时间**: {end_time}\n"
+            f"- **总耗时**: {total_duration}\n\n"
+            f"---\n\n"
+        )
+    
+    full_report = time_info + final_report
+
     # --- Save Report ---
-    output_file.write_text(final_report)
+    output_file.write_text(full_report)
     print(f"\nSuccessfully generated report: {output_file}")
+
+    # --- Send Webhook ---
+    if webhook_url:
+        send_webhook(webhook_url, full_report)
 
 
 if __name__ == "__main__":
@@ -297,6 +344,9 @@ if __name__ == "__main__":
     parser.add_argument("--bam_dir", type=Path, required=True, help="Directory containing STAR alignment logs.")
     parser.add_argument("--featurecounts_dir", type=Path, required=True, help="Directory containing featureCounts output.")
     parser.add_argument("--output_file", type=Path, default="rna_seq_summary_report.md", help="Path to save the final Markdown report.")
+    parser.add_argument("--start_time", type=str, help="Pipeline start time.")
+    parser.add_argument("--end_time", type=str, help="Pipeline end time.")
+    parser.add_argument("--total_duration", type=str, help="Pipeline total duration.")
     args = parser.parse_args()
     
-    main(args.fastp_dir, args.bam_dir, args.featurecounts_dir, args.output_file)
+    main(args.fastp_dir, args.bam_dir, args.featurecounts_dir, args.output_file, args.start_time, args.end_time, args.total_duration)
