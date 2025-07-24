@@ -102,7 +102,8 @@ def parse_genome_file(filepath):
                     fasta_file = next((f for f in os.listdir(item_path) if f.endswith(('.fa', '.fasta'))), None)
                     gtf_file = next((f for f in os.listdir(item_path) if f.endswith('.gtf')), None)
                     
-                    if fasta_file and gtf_file and version not in genome_data[species]:
+                    if fasta_file and gtf_file:
+                        # If a local version is found, prioritize it by overwriting any remote entry.
                         genome_data[species][version]['fasta'] = os.path.join(item_path, fasta_file)
                         genome_data[species][version]['gtf'] = os.path.join(item_path, gtf_file)
                         genome_data[species][version]['source'] = 'local'
@@ -118,7 +119,8 @@ def parse_genome_file(filepath):
             # Process the collected flat files for the 'other' species
             if species == 'other':
                 for version, files in flat_files.items():
-                    if 'fasta' in files and 'gtf' in files and version not in genome_data[species]:
+                    if 'fasta' in files and 'gtf' in files:
+                        # Prioritize local version for 'other' species as well.
                         genome_data[species][version]['fasta'] = files['fasta']
                         genome_data[species][version]['gtf'] = files['gtf']
                         genome_data[species][version]['source'] = 'local'
