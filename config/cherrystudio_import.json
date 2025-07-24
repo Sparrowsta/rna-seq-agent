@@ -1,0 +1,90 @@
+{
+  "serviceInfo": {
+    "name": "MCP RNA-seq Analysis Service",
+    "description": "A powerful backend service to run a two-stage RNA-seq analysis pipeline using Nextflow.",
+    "version": "1.0.1",
+    "baseUrl": "http://localhost:8001",
+    "discoveryUrl": "http://localhost:8001/workflows"
+  },
+  "workflows": [
+    {
+      "id": "rna-seq-full-workflow",
+      "name": "Two-Stage RNA-seq Analysis",
+      "description": "Performs a two-stage RNA-seq analysis with real-time progress updates via Server-Sent Events (SSE).",
+      "steps": [
+        {
+          "id": "start_upstream",
+          "name": "1. Start Upstream Analysis",
+          "description": "Initiates the pipeline. Returns a task_id. After this, connect to the stream endpoint.",
+          "endpoint": "/pipeline/run",
+          "method": "POST",
+          "parameters": [
+            { "name": "srr_list", "type": "string", "description": "Path to SRR list file inside the container (e.g., /data/SRR_list.txt).", "required": true },
+            { "name": "seq_mode", "type": "boolean", "description": "Sequencing mode: false for paired-end, true for single-end.", "required": true },
+            { "name": "species", "type": "string", "description": "Species (e.g., 'human', 'mouse').", "required": true },
+            { "name": "genome_version", "type": "string", "description": "Genome version (e.g., 'hg38').", "required": true }
+          ],
+          "outputs": [
+            { "name": "task_id", "type": "string", "description": "The unique ID for this task.", "path": "$.task_id" }
+          ]
+        },
+        {
+          "id": "stream_task_updates",
+          "name": "2. Stream Real-Time Updates",
+          "description": "Connect to this SSE endpoint to receive live status and log updates for the task.",
+          "endpoint": "/tasks/{task_id}/stream",
+          "method": "GET",
+          "is_stream": true,
+          "parameters": [
+            { "name": "task_id", "type": "string", "in": "path", "description": "Task ID from the previous step.", "required": true }
+          ],
+          "outputs": [
+            { "name": "event_stream", "type": "sse_stream", "description": "A stream of events. Expected event types: 'status_update', 'log', 'error_log', 'task_end'." }
+          ]
+        },
+        {
+          "id": "upload_metadata",
+          "name": "3. Upload Sample Metadata",
+          "description": "Uploads a CSV/TSV file with sample information. (Can be done while upstream is running).",
+          "endpoint": "/tasks/{task_id}/meta",
+          "method": "POST",
+          "parameters": [
+            { "name": "task_id", "type": "string", "in": "path", "description": "Task ID.", "required": true },
+            { "name": "file", "type": "file", "in": "body", "description": "The metadata file (CSV or TSV).", "required": true }
+          ]
+        },
+        {
+          "id": "define_groups",
+          "name": "4. Define Comparison Groups",
+          "description": "Specifies the control and experiment groups for DE analysis.",
+          "endpoint": "/tasks/{task_id}/groups",
+          "method": "POST",
+          "parameters": [
+            { "name": "task_id", "type": "string", "in": "path", "description": "Task ID.", "required": true },
+            { "name": "control_group", "type": "array", "in": "body", "description": "List of sample IDs for the control group.", "required": true },
+            { "name": "experiment_group", "type": "array", "in": "body", "description": "List of sample IDs for the experiment group.", "required": true }
+          ]
+        },
+        {
+          "id": "start_downstream",
+          "name": "5. Start Downstream Analysis",
+          "description": "Triggers the differential expression analysis. Monitor the event stream for completion.",
+          "endpoint": "/tasks/{task_id}/analyze",
+          "method": "POST",
+          "parameters": [
+            { "name": "task_id", "type": "string", "in": "path", "description": "Task ID.", "required": true }
+          ]
+        }
+      ],
+      "results": {
+        "description": "Results are accessible via URL. Construct the URL using the task_id.",
+        "url_template": "http://localhost:8001/results/de_analysis/{task_id}/{filename}",
+        "example_files": [
+          "volcano_plot.png",
+          "pheatmap.png",
+          "deseq2_results.csv"
+        ]
+      }
+    }
+  ]
+}

@@ -8,15 +8,15 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && \
     sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && \
     apt-get update && \
-    apt-get install -y --no-install-recommends wget ca-certificates procps python3 python3-pip && \
+    apt-get install -y --no-install-recommends wget ca-certificates procps python3 python3-pip curl uvicorn jq && \
     apt-get install -y openjdk-21-jdk-headless && \
     apt-get clean && \
     pip3 install nextflow && \
     rm -rf /var/lib/apt/lists/*
 
-# 4. 下载并安装Miniconda
+# 4. 下载并安装Miniconda (使用curl和清华镜像源加速)
 ENV CONDA_DIR=/opt/conda
-RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh && \
+RUN curl -L -o ~/miniconda.sh https://mirrors.tuna.tsinghua.edu.cn/anaconda/miniconda/Miniconda3-latest-Linux-x86_64.sh && \
     /bin/bash ~/miniconda.sh -b -p $CONDA_DIR && \
     rm ~/miniconda.sh
 
@@ -25,30 +25,49 @@ ENV PATH=$CONDA_DIR/bin:$PATH
 RUN ln -s $CONDA_DIR/bin/conda /usr/local/bin/conda && \
     ln -s $CONDA_DIR/bin/activate /usr/local/bin/activate && \
     ln -s $CONDA_DIR/bin/deactivate /usr/local/bin/deactivate && \
-    # to ensure the solver can find compatible packages efficiently.
-    conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge/ && \
-    conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/bioconda/ && \
-    conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main/ && \
-    conda config --set show_channel_urls yes
+    echo "channels:" > /root/.condarc && \
+    echo "  - defaults" >> /root/.condarc && \
+    echo "show_channel_urls: true" >> /root/.condarc && \
+    echo "default_channels:" >> /root/.condarc && \
+    echo "  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main" >> /root/.condarc && \
+    echo "  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r" >> /root/.condarc && \
+    echo "  - https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/msys2" >> /root/.condarc && \
+    echo "custom_channels:" >> /root/.condarc && \
+    echo "  conda-forge: https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud" >> /root/.condarc && \
+    echo "  bioconda: https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud" >> /root/.condarc && \
+    echo "  pytorch: https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud" >> /root/.condarc
 
-# 6. 接受服务条款，然后为每个工具或工具组创建独立的Conda环境
-RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
-    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r && \
-    conda install -y -c conda-forge mamba && \
-    mamba create -y -n sra_env -c bioconda sra-tools && \
-    mamba create -y -n qc_env -c bioconda fastp=1.0.1 && \
-    mamba create -y -n align_env -c bioconda samtools=1.22.1 star=2.7.11b && \
-    mamba create -y -n quant_env -c bioconda subread=2.1.1 && \
-    # Create a dedicated environment for our Python scripts and their dependencies
-    mamba create -y -n ngs_env python=3.12 && \
-    # Install Python packages using mamba from the conda-forge channel for better dependency management.
-    mamba install -y -n ngs_env -c conda-forge pandas python-dotenv langchain langchain-openai tabulate requests && \
-    mamba clean -y -a
+# 6. 为每个工具或工具组创建独立的Conda环境
+RUN conda install -y -c conda-forge mamba
+
+
+RUN mamba create -y -n sra_env -c conda-forge -c bioconda sra-tools=3.2.1
+RUN mamba create -y -n qc_env -c conda-forge -c bioconda fastp=1.0.1
+RUN mamba create -y -n align_env -c conda-forge -c bioconda samtools=1.22.1 star=2.7.11b
+RUN mamba create -y -n quant_env -c conda-forge -c bioconda subread=2.1.1
+
+
+RUN mamba create -y -n ngs_env python=3.12
+RUN mamba install -y -n ngs_env -c conda-forge pandas python-dotenv langchain langchain-openai tabulate requests fastapi sse-starlette mcp
+
+
+# Create a dedicated environment for differential expression analysis with R
+RUN mamba create -y -n de_env -c conda-forge -c r r-base r-essentials r-argparse
+
+# Set up CRAN and Bioconductor mirrors for faster R package installation
+# This creates a global .Rprofile that R will load on startup.
+RUN echo "options(repos = c(CRAN = 'https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), BioC_mirror = 'https://mirrors.tuna.tsinghua.edu.cn/bioconductor')" > /root/.Rprofile
+
+# Install BiocManager and required Bioconductor packages
+# The mirrors are now automatically picked up from the .Rprofile file.
+RUN conda run --no-capture-output -n de_env R -e "if (!requireNamespace('BiocManager', quietly = TRUE)) install.packages('BiocManager'); BiocManager::install(c('DESeq2', 'EnhancedVolcano', 'pheatmap'), update=FALSE, ask=FALSE)"
+
+
+RUN mamba clean -y -a
 
 # 7. 创建工作目录并将项目文件复制到镜像中
 WORKDIR /app
 COPY . .
 
-# 8. 设置入口点，使容器可以直接运行启动脚本
-
-ENTRYPOINT ["/bin/sh", "-c", "exec python3 launch.py"]
+# 8. 移除固定的入口点，以便在 docker-compose 中灵活定义启动命令
+# ENTRYPOINT ["/bin/sh", "-c", "exec python3 launch.py"]

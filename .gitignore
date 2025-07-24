@@ -1,4 +1,8 @@
 data/*/
+data
 config.json
 rna_seq_summary_report.md
 .env
+.nextflow
+work
+__pycache__

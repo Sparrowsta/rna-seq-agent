@@ -12,6 +12,16 @@ params.gtf = null
 params.species = null
 params.genome_version = null
 
+// Add parameters for MCP Server integration
+params.task_id = null
+params.mcp_server_url = "http://localhost:8001"
+
+// Parameters for downstream analysis
+params.run_de_analysis = false
+params.meta_file = null
+params.control_group = null
+params.experiment_group = null
+
 // --- 2. Create Input Channel ---
 if (params.seq_mode) {
     Channel
@@ -25,7 +35,17 @@ if (params.seq_mode) {
         .set { ch_reads }
 }
 
-// --- 3. Main Workflow Definition ---
+// --- 3. Include external modules ---
+// Include the PUBLISH_RESULTS process from the module file, creating an alias for each use case
+// to prevent the "Process has been already used" error in DSL2.
+include { PUBLISH_RESULTS as PUBLISH_FASTP } from './modules/publish'
+include { PUBLISH_RESULTS as PUBLISH_STAR } from './modules/publish'
+include { PUBLISH_RESULTS as PUBLISH_COUNTS } from './modules/publish'
+include { PUBLISH_DE_RESULTS } from './modules/publish'
+include { DE_ANALYSIS } from './modules/de_analysis'
+
+
+// --- 4. Main Workflow Definition ---
 workflow {
     // Define the expected path for the STAR index
     def star_index_path = file("${params.outdir}/genomes/${params.species}/${params.genome_version}/star_index")
@@ -48,14 +68,37 @@ workflow {
     
     // Step 2: Quality control and filtering with fastp
     FASTP(ch_reads)
+    PUBLISH_FASTP(params.task_id, "fastp", FASTP.out.json)
 
     // Step 3: Combine fastp output with STAR index to ensure each sample gets the index path
     ch_for_alignment = FASTP.out.reads.combine(ch_star_index)
     STAR_ALIGN(ch_for_alignment)
+    PUBLISH_STAR(params.task_id, "star_align", STAR_ALIGN.out.log_ch)
 
     // Step 4: Collect all BAM files and perform unified quantification
     ch_bam_files = STAR_ALIGN.out.bam_ch.map { it[1] }.collect()
     FEATURECOUNTS(ch_bam_files)
+    PUBLISH_COUNTS(params.task_id, "featurecounts", FEATURECOUNTS.out.summary.first())
+
+    // --- Optional Step 5: Downstream Differential Expression Analysis ---
+    if (params.run_de_analysis) {
+        if (!params.meta_file || !params.control_group || !params.experiment_group) {
+            error "To run DE analysis, --meta_file, --control_group, and --experiment_group must be provided."
+        }
+        
+        DE_ANALYSIS(
+            params.task_id,
+            FEATURECOUNTS.out.counts.first(),
+            file(params.meta_file),
+            params.control_group.split(','),
+            params.experiment_group.split(',')
+        )
+
+        PUBLISH_DE_RESULTS(
+            params.task_id,
+            DE_ANALYSIS.out.results_dir
+        )
+    }
 }
 
 // --- 4. Process Definitions ---
