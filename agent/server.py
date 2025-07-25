@@ -3,11 +3,18 @@
 import json
 import time
 import asyncio
-from fastapi import FastAPI
+import os
+import tempfile
+import re
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, AsyncGenerator
 from fastapi.middleware.cors import CORSMiddleware
+
+# 导入我们新创建的 pipeline 模块和 tools 模块
+from agent.pipeline import run_nextflow_pipeline
+from agent.tools import run_rna_seq_pipeline
 
 # --- 1. 定义数据模型 ---
 class StandardMessage(BaseModel):
@@ -16,6 +23,9 @@ class StandardMessage(BaseModel):
 
 class ChatInput(BaseModel):
     messages: List[StandardMessage]
+
+class PipelineRunInput(BaseModel):
+    srr_list: str
 
 # --- 2. 创建 FastAPI 应用实例 ---
 app = FastAPI(
@@ -59,17 +69,38 @@ async def list_models():
         ],
     }
 
-async def stream_generator() -> AsyncGenerator[str, None]:
+async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, None]:
     """
-    异步生成器，用于模拟流式响应。
+    一个真正的 Agent 响应生成器。
+    它会分析用户输入，并决定是调用工具还是返回普通信息。
     """
     model_id = "rna-seq-agent-v1"
-    response_chunks = [
-        "Agent ", "已收到", "您的", "消息。", " ",
-        "我", "现在", "是一个", "流式", "Agent。",
-    ]
+    user_message = chat_input.messages[-1].content if chat_input.messages else ""
+
+    # --- Agent 核心逻辑：路由和工具调用 ---
     
-    for chunk in response_chunks:
+    # 规则1：如果用户想要运行流程
+    # 我们使用非常简单的正则匹配来查找 SRR ID 和关键词
+    srr_pattern = re.compile(r"(SRR\d{7,})", re.IGNORECASE)
+    run_keywords = ["run", "运行", "执行", "处理"]
+    
+    srr_matches = srr_pattern.findall(user_message)
+    contains_run_keyword = any(keyword in user_message for keyword in run_keywords)
+
+    response_text = ""
+    if srr_matches and contains_run_keyword:
+        # 如果找到了 SRR ID 和运行关键词，就调用工具
+        srr_list_str = ", ".join(srr_matches)
+        print(f"检测到运行意图，提取到 SRR IDs: {srr_list_str}")
+        response_text = run_rna_seq_pipeline(srr_list_str)
+    else:
+        # 否则，返回默认的帮助信息
+        response_text = "你好！我是 RNA-seq 流程助手。你可以通过发送'运行 SRR1234567'来启动一个分析流程。"
+
+    # --- 将 Agent 的响应文本转换为流式输出 ---
+    
+    # 将完整响应文本逐字发送
+    for char in response_text:
         response_chunk = {
             "id": f"chatcmpl-{int(time.time())}",
             "object": "chat.completion.chunk",
@@ -77,14 +108,15 @@ async def stream_generator() -> AsyncGenerator[str, None]:
             "model": model_id,
             "choices": [{
                 "index": 0,
-                "delta": {"content": chunk},
+                "delta": {"content": char},
                 "finish_reason": None
             }]
         }
         sse_formatted_chunk = f"data: {json.dumps(response_chunk)}\n\n"
         yield sse_formatted_chunk
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.02) # 模拟打字效果
 
+    # 发送结束标志
     final_chunk = {
         "id": f"chatcmpl-{int(time.time())}",
         "object": "chat.completion.chunk",
@@ -99,15 +131,56 @@ async def stream_generator() -> AsyncGenerator[str, None]:
     yield f"data: {json.dumps(final_chunk)}\n\n"
     yield "data: [DONE]\n\n"
 
-@app.post("/chat/completions") 
+@app.post("/chat/completions")
 async def chat_completions(chat_input: ChatInput):
     """
-    核心聊天接口，返回一个流式响应。
+    核心聊天接口，现在它会调用真正的 Agent 逻辑。
     """
-    return StreamingResponse(stream_generator(), media_type="text/event-stream")
+    return StreamingResponse(stream_agent_response(chat_input), media_type="text/event-stream")
+
+# @app.post("/run_pipeline")
+# async def run_pipeline_endpoint(run_input: PipelineRunInput):
+#     """
+#     [已弃用] 用于启动 Nextflow 流程的 API 端点。
+#     这个端点的业务逻辑已经全部移动到 agent/tools.py 的 run_rna_seq_pipeline 函数中，
+#     以解决死锁问题并优化代码结构。Agent 现在直接调用工具函数，不再需要这个 API。
+#     保留此代码作为参考。
+#     """
+#     # 创建一个临时目录来存放 SRR 列表文件，如果尚不存在
+#     temp_dir = os.path.join(os.path.dirname(__file__), "temp_srr_lists")
+#     os.makedirs(temp_dir, exist_ok=True)
+#
+#     try:
+#         # 将逗号或空格分隔的 SRR 字符串转换为列表
+#         srr_ids = run_input.srr_list.replace(",", " ").split()
+#         if not srr_ids:
+#             raise HTTPException(status_code=400, detail="SRR list cannot be empty.")
+#
+#         # 创建一个带时间戳的、唯一的临时文件名
+#         timestamp = int(time.time())
+#         temp_file_path = os.path.join(temp_dir, f"srr_list_{timestamp}.txt")
+#
+#         # 将 SRR ID 写入临时文件，每行一个
+#         with open(temp_file_path, "w") as f:
+#             for srr_id in srr_ids:
+#                 f.write(f"{srr_id}\n")
+#
+#         # 调用 pipeline 模块中的函数，传递临时文件的路径
+#         process = run_nextflow_pipeline({"srr_list_path": temp_file_path})
+#
+#         return {
+#             "message": "Nextflow pipeline started successfully.",
+#             "pid": process.pid,
+#             "srr_list_file": temp_file_path # 返回使用的临时文件路径，便于调试
+#         }
+#     except ValueError as e:
+#         raise HTTPException(status_code=400, detail=str(e))
+#     except Exception as e:
+#         # 其他未知错误，返回 500 错误
+#         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
 
 # --- 5. 启动服务器 ---
 if __name__ == "__main__":
     import uvicorn
-    print("正在启动流式 Agent 服务器 v0.2.4 (移除/v1前缀)，访问 http://localhost:8001")
+    print("正在启动流式 Agent 服务器 v0.3.0 ，访问 http://localhost:8001")
     uvicorn.run(app, host="0.0.0.0", port=8001)

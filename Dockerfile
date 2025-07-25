@@ -48,7 +48,7 @@ RUN mamba create -y -n quant_env -c conda-forge -c bioconda subread=2.1.1
 
 
 RUN mamba create -y -n ngs_env python=3.12
-RUN mamba install -y -n ngs_env -c conda-forge pandas python-dotenv langchain langchain-openai tabulate requests fastapi sse-starlette mcp
+RUN mamba install -y -n ngs_env -c conda-forge pandas python-dotenv 'langchain>=0.2.0' 'langchain-openai>=0.1.0' 'fastapi>=0.110.0' 'pydantic>=2.0.0' sse-starlette tabulate requests mcp
 
 
 # Create a dedicated environment for differential expression analysis with R

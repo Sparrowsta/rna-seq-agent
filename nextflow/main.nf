@@ -5,7 +5,37 @@ nextflow.enable.dsl=2
 params.reads = null
 params.outdir = '.'
 params.seq_mode = false
+params.srr_list = null
 
+
+// 核心修复：如果 srr_list 参数被提供了，就用它来覆盖 reads 参数
+if (params.srr_list) {
+    params.reads = params.srr_list
+}
+
+// --- 简化版工作流，用于测试调用 ---
+log.info "========================================="
+log.info "Nextflow script started successfully!"
+log.info "Received srr_list file: ${params.srr_list}"
+log.info "========================================="
+
+workflow {
+    // 一个最简单的 process，只是为了让 workflow 能运行
+    dummy_process(Channel.of(1))
+}
+
+process dummy_process {
+    input:
+    val x
+
+    script:
+    """
+    echo "Dummy process executed with value: $x"
+    """
+}
+
+
+/*
 // Genome-related parameters
 params.fasta = null
 params.gtf = null
@@ -211,3 +241,4 @@ process FEATURECOUNTS {
                   ${bams.join(' ')}
     """
 }
+*/

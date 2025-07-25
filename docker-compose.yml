@@ -21,7 +21,7 @@ services:
       bash -c "
       echo 'Activating ngs_env and starting agent server...';
       source /opt/conda/bin/activate ngs_env;
-      exec uvicorn scripts.agent_server:app --host 0.0.0.0 --port 8001
+      exec python3 agent/server.py
       "
     ports:
       - "8001:8001"
