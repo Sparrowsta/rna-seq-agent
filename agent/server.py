@@ -154,6 +154,7 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
 
             available_tools = {
                 "run_rna_seq_pipeline": tool_module.run_rna_seq_pipeline,
+                "list_available_genomes": tool_module.list_available_genomes,
             }
             
             # --- 修正后的逻辑：优先处理特殊工具 ---
@@ -196,6 +197,7 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
                     function_response = f"错误：未知的工具名称 '{function_name}'"
                 else:
                     try:
+                        # 统一调用工具
                         tool_result = function_to_call(**function_args)
                         
                         # 如果是运行流程的工具，需要特殊处理结果以创建任务
@@ -216,8 +218,8 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
                             else:
                                 function_response = f"启动流程失败: {tool_result.get('message', '未知工具错误')}"
                         else:
-                            # 对于其他工具，直接将字典结果转为字符串
-                            function_response = json.dumps(tool_result)
+                            # 对于其他所有工具，直接将字典结果转为字符串
+                            function_response = json.dumps(tool_result, ensure_ascii=False, indent=4)
 
                     except Exception as e:
                         function_response = f"执行工具 '{function_name}' 时发生错误: {e}"

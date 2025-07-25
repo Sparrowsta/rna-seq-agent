@@ -2,9 +2,29 @@
 
 import os
 import time
+import json
 
 # 导入最底层的 pipeline 执行器
 from agent.pipeline import run_nextflow_pipeline
+
+def list_available_genomes() -> dict:
+    """
+    读取并返回 config/genomes.json 的内容，列出所有可用的基因组。
+    """
+    print("工具 'list_available_genomes' 被调用。")
+    try:
+        # 构造相对于项目根目录的绝对路径
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config', 'genomes.json')
+        with open(config_path, 'r') as f:
+            genomes = json.load(f)
+        # 直接返回字典，server 端会处理序列化
+        return genomes
+    except FileNotFoundError:
+        return {"error": "配置文件 'config/genomes.json' 未找到。"}
+    except json.JSONDecodeError:
+        return {"error": "配置文件 'config/genomes.json' 格式不正确。"}
+    except Exception as e:
+        return {"error": f"读取基因组配置时发生未知错误: {e}"}
 
 def run_rna_seq_pipeline(srr_list: str) -> dict:
     """

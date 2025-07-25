@@ -1,0 +1,42 @@
+{
+  "hg38": {
+    "species": "human",
+    "version": "hg38",
+    "fasta": "data/genomes/human/hg38/hg38.fa.gz",
+    "gtf": "data/genomes/human/hg38/hg38.knownGene.gtf.gz",
+    "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/latest/hg38.fa.gz",
+    "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/genes/hg38.knownGene.gtf.gz"
+  },
+  "hg19": {
+    "species": "human",
+    "version": "hg19",
+    "fasta": "data/genomes/human/hg19/hg19.fa.gz",
+    "gtf": "data/genomes/human/hg19/hg19.knownGene.gtf.gz",
+    "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/bigZips/latest/hg19.fa.gz",
+    "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/bigZips/genes/hg19.knownGene.gtf.gz"
+  },
+  "mm39": {
+    "species": "mouse",
+    "version": "mm39",
+    "fasta": "data/genomes/mouse/mm39/mm39.fa.gz",
+    "gtf": "data/genomes/mouse/mm39/mm39.knownGene.gtf.gz",
+    "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/mm39/bigZips/mm39.fa.gz",
+    "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/mm39/bigZips/genes/mm39.knownGene.gtf.gz"
+  },
+  "mm10": {
+    "species": "mouse",
+    "version": "mm10",
+    "fasta": "data/genomes/mouse/mm10/mm10.fa.gz",
+    "gtf": "data/genomes/mouse/mm10/mm10.knownGene.gtf.gz",
+    "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/mm10/bigZips/latest/mm10.fa.gz",
+    "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/mm10/bigZips/genes/mm10.knownGene.gtf.gz"
+  },
+  "mm9": {
+    "species": "mouse",
+    "version": "mm9",
+    "fasta": "data/genomes/mouse/mm9/mm9.fa.gz",
+    "gtf": "data/genomes/mouse/mm9/mm9.knownGene.gtf.gz",
+    "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/mm9/bigZips/mm9.fa.gz",
+    "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/mm9/bigZips/genes/mm9.knownGene.gtf.gz"
+  }
+}

@@ -63,5 +63,17 @@ TOOLS = [
                 "required": ["task_id"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_available_genomes",
+            "description": "当用户想要查询当前服务器上有哪些可用的基因组时调用此工具。它会列出所有已配置的基因组及其详细信息。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
     }
 ]
