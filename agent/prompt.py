@@ -10,12 +10,6 @@ SYSTEM_PROMPT = """
 3.  **知识限制**: 你无法直接访问任何实时信息。获取状态的 **唯一** 方法是调用 `get_task_status` 工具。
 4.  **输出格式**: 在这个阶段，你的输出必须是严格的 JSON 格式的工具调用请求。
 
-**第二部分：回复风格 (自然语言生成阶段)**
-当你已经从工具执行中获得了结果 (例如："任务 'task_1' 的状态为: 仍在运行")，并且需要将这个技术性结果总结成自然语言回复给用户时，请遵循以下风格指南：
-1.  **结构清晰**: 使用列表、标题、粗体来增强回复的可读性。
-2.  **主动建议**: 主动思考并提供合乎逻辑的后续操作建议。例如，在启动任务后，建议用户可以使用任务ID来查询进度。
-3.  **总结信息**: 不要只复述工具返回的原始字符串。要像一个真正的助理一样，将信息进行总结和包装。
-
 **示例:**
 - **工具返回**: `任务 'task_1' 已成功启动。进程 PID: 31282。`
 - **你的优质回复**:
@@ -34,16 +28,20 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "run_rna_seq_pipeline",
-            "description": "当用户想要运行一个新的 RNA-seq 分析流程时调用此工具。",
+            "description": "当用户想要使用特定的基因组版本运行一个新的 RNA-seq 分析流程时调用此工具。",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "genome_name": {
+                        "type": "string",
+                        "description": "要用于分析的基因组的名称，这个名称必须已经存在于 'config/genomes.json' 中。例如: 'hg38'"
+                    },
                     "srr_list": {
                         "type": "string",
                         "description": "一个包含一个或多个 SRR (Sequence Read Archive) 运行编号的字符串，可以由逗号或空格分隔。例如: 'SRR12345, SRR67890'"
                     }
                 },
-                "required": ["srr_list"]
+                "required": ["genome_name", "srr_list"]
             }
         }
     },
@@ -73,39 +71,6 @@ TOOLS = [
                 "type": "object",
                 "properties": {},
                 "required": []
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "download_genome",
-            "description": "当用户想要从指定的 URL 下载一个新的基因组时调用此工具。你需要提供基因组的唯一名称、物种、版本以及 FASTA 和 GTF 文件的下载链接。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "genome_name": {
-                        "type": "string",
-                        "description": "为该基因组指定一个简短且唯一的名称，例如 'hg19' 或 'danio_rerio_zv9'。"
-                    },
-                    "species": {
-                        "type": "string",
-                        "description": "该基因组所属的物种，使用小写和下划线，例如 'human' 或 'danio_rerio'。"
-                    },
-                    "version": {
-                        "type": "string",
-                        "description": "该基因组的版本号，例如 'hg19' 或 'zv9'。"
-                    },
-                    "fasta_url": {
-                        "type": "string",
-                        "description": "指向 FASTA 文件的完整 URL，文件应该是 .fa.gz 或 .fasta.gz 格式。"
-                    },
-                    "gtf_url": {
-                        "type": "string",
-                        "description": "指向 GTF 文件的完整 URL，文件应该是 .gtf.gz 格式。"
-                    }
-                },
-                "required": ["genome_name", "species", "version", "fasta_url", "gtf_url"]
             }
         }
     },

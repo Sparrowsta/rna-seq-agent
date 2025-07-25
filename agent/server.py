@@ -152,79 +152,65 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
 
             print(f"执行工具: {function_name}，参数: {function_args}")
 
+            # --- 最终重构：完全统一的工具调用逻辑 ---
             available_tools = {
                 "run_rna_seq_pipeline": tool_module.run_rna_seq_pipeline,
                 "list_available_genomes": tool_module.list_available_genomes,
                 "add_genome_to_config": tool_module.add_genome_to_config,
                 "download_genome_files": tool_module.download_genome_files,
+                "get_task_status": tool_module.get_task_status, # 注册新工具
             }
             
-            # --- 修正后的逻辑：优先处理特殊工具 ---
-            if function_name == "get_task_status":
-                task_id = function_args.get("task_id")
-                with db_lock:
-                    task_info = TASK_DATABASE.get(task_id)
-                
-                if not task_info:
-                    function_response = f"错误：找不到任务 '{task_id}'。"
-                else:
-                    pid = task_info.get("pid")
-                    current_status = task_info.get("status", "unknown")
-                    process_status_text = "未知"
-                    if current_status == "running" and pid:
-                        try:
-                            pid_check, exit_status = os.waitpid(pid, os.WNOHANG)
-                            if pid_check == 0:
-                                process_status_text = "仍在运行"
-                            else:
-                                exit_code = os.WEXITSTATUS(exit_status)
-                                process_status_text = f"已结束 (退出码: {exit_code})"
-                                with db_lock:
-                                    TASK_DATABASE[task_id]["status"] = "finished"
-                                    TASK_DATABASE[task_id]["exit_code"] = exit_code
-                        except OSError:
-                            process_status_text = "已结束 (进程不存在)"
-                            with db_lock:
-                                if TASK_DATABASE.get(task_id):
-                                    TASK_DATABASE[task_id]["status"] = "finished"
-                    elif current_status == "finished":
-                        exit_code = task_info.get('exit_code', 'N/A')
-                        process_status_text = f"已结束 (退出码: {exit_code})"
-                    function_response = f"任务 '{task_id}' 的状态为: {process_status_text} (PID: {pid})。"
-            
-            # --- 然后处理通用工具 ---
-            else:
+            global task_id_counter
+            function_response = ""
+
+            try:
                 function_to_call = available_tools.get(function_name)
                 if not function_to_call:
                     function_response = f"错误：未知的工具名称 '{function_name}'"
                 else:
-                    try:
-                        # 统一调用工具
-                        tool_result = function_to_call(**function_args)
-                        
-                        # 如果是运行流程的工具，需要特殊处理结果以创建任务
-                        if function_name == "run_rna_seq_pipeline":
-                            if tool_result.get("status") == "success":
-                                global task_id_counter
-                                with db_lock:
-                                    task_id = f"task_{task_id_counter}"
-                                    task_id_counter += 1
-                                    TASK_DATABASE[task_id] = {
-                                        "pid": tool_result.get("pid"),
-                                        "srr_list_file": tool_result.get("srr_list_file"),
-                                        "status": "running",
-                                        "start_time": time.time(),
-                                        "srr_list": function_args.get("srr_list")
-                                    }
-                                function_response = f"任务 '{task_id}' 已成功启动。进程 PID: {tool_result.get('pid')}。"
-                            else:
-                                function_response = f"启动流程失败: {tool_result.get('message', '未知工具错误')}"
-                        else:
-                            # 对于其他所有工具，直接将字典结果转为字符串
-                            function_response = json.dumps(tool_result, ensure_ascii=False, indent=4)
+                    # 统一准备参数
+                    tool_kwargs = function_args.copy()
 
-                    except Exception as e:
-                        function_response = f"执行工具 '{function_name}' 时发生错误: {e}"
+                    # 检查工具是否需要数据库或锁等共享资源
+                    # 这是我们新的、更灵活的依赖注入方式
+                    if function_name in ["run_rna_seq_pipeline", "download_genome_files", "get_task_status"]:
+                        tool_kwargs["task_database"] = TASK_DATABASE
+                        tool_kwargs["db_lock"] = db_lock
+
+                    # 为需要创建任务的工具注入 task_id
+                    if function_name == "run_rna_seq_pipeline":
+                         with db_lock:
+                            new_task_id = f"task_{task_id_counter}"
+                            task_id_counter += 1
+                         tool_kwargs["task_id"] = new_task_id
+                    
+                    if function_name == "download_genome_files":
+                        with db_lock:
+                            # download_genome_files 内部会自己生成 download_x, download_y 等ID
+                            # 我们只需要传递计数器本身，让它能安全地增加
+                            tool_kwargs["task_id_counter"] = task_id_counter
+                        
+                        # 调用函数并更新计数器
+                        tool_result = function_to_call(**tool_kwargs)
+                        with db_lock:
+                            # 函数执行后，从其返回值更新全局计数器
+                            task_id_counter = tool_result.get("updated_task_id_counter", task_id_counter)
+                    else:
+                        # 调用所有其他工具
+                        tool_result = function_to_call(**tool_kwargs)
+
+                    # 统一处理返回结果
+                    # 如果结果是字典，序列化为 JSON 字符串
+                    if isinstance(tool_result, dict):
+                        function_response = json.dumps(tool_result, ensure_ascii=False, indent=2)
+                    else:
+                        # 否则，直接使用返回的字符串（例如 "任务 task_1 已成功启动。"）
+                        function_response = str(tool_result)
+
+            except Exception as e:
+                # 统一的异常处理
+                function_response = f"执行工具 '{function_name}' 时发生严重错误: {e}"
 
             # 5. 将工具执行结果添加到消息历史中
             messages.append(
@@ -286,43 +272,6 @@ async def chat_completions(chat_input: ChatInput):
     """
     return StreamingResponse(stream_agent_response(chat_input), media_type="text/event-stream")
 
-@app.get("/tasks/{task_id}")
-async def get_task_status(task_id: str):
-    """
-    根据任务 ID 查询任务的状态和详细信息。
-    """
-    with db_lock:
-        task = TASK_DATABASE.get(task_id)
-
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    # 使用 os.waitpid 进行更精确、更健壮的状态检查
-    pid = task.get("pid")
-    if pid and task.get("status") == "running":
-        try:
-            # os.WNOHANG 使其成为非阻塞调用
-            pid_check, exit_status = os.waitpid(pid, os.WNOHANG)
-            if pid_check == 0:
-                # 子进程仍在运行
-                task["process_status"] = "running"
-            else:
-                # 子进程已结束
-                task["process_status"] = "finished"
-                task["exit_code"] = os.WEXITSTATUS(exit_status) # 获取退出码
-                # 更新数据库中的状态
-                with db_lock:
-                    TASK_DATABASE[task_id]["status"] = "finished"
-        except OSError:
-            # 如果进程不存在（例如，已经被其他方式清理），则也视为已结束
-            task["process_status"] = "finished_or_not_found"
-            with db_lock:
-                if TASK_DATABASE.get(task_id):
-                    TASK_DATABASE[task_id]["status"] = "finished"
-    elif task.get("status") == "finished":
-        task["process_status"] = "finished"
-    
-    return task
 
 # @app.post("/run_pipeline")
 # async def run_pipeline_endpoint(run_input: PipelineRunInput):

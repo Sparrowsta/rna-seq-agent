@@ -14,30 +14,38 @@ def run_nextflow_pipeline(params: Dict[str, Any]) -> subprocess.Popen:
 
     Args:
         params (Dict[str, Any]): 运行流程所需的参数字典。
-                                 目前我们只关心 'srr_list_path'。
+                                 需要 'srr_list_path', 'fasta_path', 'gtf_path'。
 
     Returns:
         subprocess.Popen: 已启动的子进程对象。
     """
     srr_list_path = params.get("srr_list_path")
-    if not srr_list_path or not os.path.exists(srr_list_path):
-        logging.error(f"提供的SRR列表文件路径无效或文件不存在: {srr_list_path}")
-        raise ValueError("srr_list_path is required and must be a valid file path.")
+    fasta_path = params.get("fasta_path")
+    gtf_path = params.get("gtf_path")
+
+    if not all([srr_list_path, fasta_path, gtf_path]):
+        logging.error(f"缺少必要的流程参数。srr_list, fasta, gtf 都必须提供。")
+        raise ValueError("srr_list_path, fasta_path, and gtf_path are required.")
+    
+    if not os.path.exists(srr_list_path):
+        logging.error(f"提供的SRR列表文件路径不存在: {srr_list_path}")
+        raise ValueError("srr_list_path must be a valid file path.")
 
     # 获取项目根目录，以便正确地找到 nextflow/main.nf
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     nextflow_script_path = os.path.join(project_root, "nextflow", "main.nf")
 
     # 构建 Nextflow 命令
-    # 我们使用 -bg 标志让 nextflow 在后台运行，并记录 run name
     command = [
         "nextflow",
         "run",
         nextflow_script_path,
         "-profile",
         "standard",
-        f"--srr_list",
-        srr_list_path,
+        "--srr_list", srr_list_path,
+        "--fasta", fasta_path,
+        "--gtf", gtf_path,
+        "-resume", # 总是启用 resume 功能
         "-bg" # 让 Nextflow 在后台运行
     ]
 
