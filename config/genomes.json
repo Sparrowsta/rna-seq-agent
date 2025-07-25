@@ -38,5 +38,13 @@
     "gtf": "data/genomes/mouse/mm9/mm9.knownGene.gtf.gz",
     "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/mm9/bigZips/mm9.fa.gz",
     "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/mm9/bigZips/genes/mm9.knownGene.gtf.gz"
+  },
+  "xenLae2": {
+    "species": "xenopus_laevis",
+    "version": "xenLae2",
+    "fasta": "data/genomes/xenopus_laevis/xenLae2/xenLae2.fa.gz",
+    "gtf": "data/genomes/xenopus_laevis/xenLae2/xenLae2.ncbiRefSeq.gtf.gz",
+    "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/xenLae2/bigZips/xenLae2.fa.gz",
+    "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/xenLae2/bigZips/genes/xenLae2.ncbiRefSeq.gtf.gz"
   }
 }

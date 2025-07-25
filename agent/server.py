@@ -158,7 +158,9 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
                 "list_available_genomes": tool_module.list_available_genomes,
                 "add_genome_to_config": tool_module.add_genome_to_config,
                 "download_genome_files": tool_module.download_genome_files,
-                "get_task_status": tool_module.get_task_status, # 注册新工具
+                "get_task_status": tool_module.get_task_status,
+                "list_files": tool_module.list_files,
+                "unsupported_request": tool_module.unsupported_request, # 注册“兜底”工具
             }
             
             global task_id_counter

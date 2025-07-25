@@ -283,6 +283,51 @@ def run_rna_seq_pipeline(genome_name: str, srr_list: str, task_database: dict, d
     except Exception as e:
         return {"status": "error", "message": f"执行流程时发生未知错误: {e}"}
 
+def list_files(path: str = ".") -> dict:
+    """
+    列出指定路径下的文件和目录。
+    为了安全，路径被限制在 'data' 目录内。
+    例如，要查看 data/genomes/human 目录，请使用 path="genomes/human"。
+    """
+    print(f"工具 'list_files' 被调用，路径: {path}")
+    
+    # 安全限制：将根目录固定为项目下的 'data' 目录
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    data_root = os.path.join(project_root, 'data')
+    
+    # 构造并清理目标路径
+
+
+    target_path = os.path.join(data_root, path)
+    
+    # 再次检查，确保最终路径在 data_root 内，防止 ".." 等路径逃逸
+    if not os.path.abspath(target_path).startswith(os.path.abspath(data_root)):
+        return {"error": "访问被拒绝。只能查看 'data' 目录下的内容。"}
+        
+    try:
+        if not os.path.isdir(target_path):
+            return {"error": f"路径 '{path}' 不是一个有效的目录。"}
+            
+        items = os.listdir(target_path)
+        return {"path": path, "files": items}
+    except FileNotFoundError:
+        return {"error": f"路径 '{path}' 未找到。"}
+    except Exception as e:
+        return {"error": f"列出文件时发生错误: {e}"}
+
+def unsupported_request(user_request: str) -> dict:
+    """
+    当用户的请求与任何其他可用工具的功能都不匹配时，必须调用此工具。
+    它会向用户返回一个标准化的消息，说明请求无法处理。
+    """
+    print(f"工具 'unsupported_request' 被调用，原始请求: {user_request}")
+    # 在未来，这里可以加入更复杂的逻辑，比如记录无法处理的请求用于分析
+    return {
+        "status": "error",
+        "type": "unsupported_request",
+        "message": "抱歉，我无法处理您的请求。我的能力目前仅限于运行生物信息学流程和管理相关数据。请尝试提出与以下功能相关的请求：运行分析、查询任务状态、列出可用基因组、添加或下载基因组、查看文件列表。"
+    }
+
 # 你可以在这里直接测试这个工具
 if __name__ == '__main__':
     # 示例：如何调用这个工具
