@@ -75,5 +75,88 @@ TOOLS = [
                 "required": []
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "download_genome",
+            "description": "当用户想要从指定的 URL 下载一个新的基因组时调用此工具。你需要提供基因组的唯一名称、物种、版本以及 FASTA 和 GTF 文件的下载链接。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "genome_name": {
+                        "type": "string",
+                        "description": "为该基因组指定一个简短且唯一的名称，例如 'hg19' 或 'danio_rerio_zv9'。"
+                    },
+                    "species": {
+                        "type": "string",
+                        "description": "该基因组所属的物种，使用小写和下划线，例如 'human' 或 'danio_rerio'。"
+                    },
+                    "version": {
+                        "type": "string",
+                        "description": "该基因组的版本号，例如 'hg19' 或 'zv9'。"
+                    },
+                    "fasta_url": {
+                        "type": "string",
+                        "description": "指向 FASTA 文件的完整 URL，文件应该是 .fa.gz 或 .fasta.gz 格式。"
+                    },
+                    "gtf_url": {
+                        "type": "string",
+                        "description": "指向 GTF 文件的完整 URL，文件应该是 .gtf.gz 格式。"
+                    }
+                },
+                "required": ["genome_name", "species", "version", "fasta_url", "gtf_url"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_genome_to_config",
+            "description": "将一个新的基因组条目添加到 'config/genomes.json' 配置文件中。这个操作只更新配置，不执行下载。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "genome_name": {
+                        "type": "string",
+                        "description": "为该基因组指定一个简短且唯一的名称，例如 'hg19' 或 'danio_rerio_zv9'。"
+                    },
+                    "species": {
+                        "type": "string",
+                        "description": "该基因组所属的物种，使用小写和下划线，例如 'human' 或 'danio_rerio'。"
+                    },
+                    "version": {
+                        "type": "string",
+                        "description": "该基因组的版本号，例如 'hg19' 或 'zv9'。"
+                    },
+                    "fasta_url": {
+                        "type": "string",
+                        "description": "指向 FASTA 文件的完整 URL。"
+                    },
+                    "gtf_url": {
+                        "type": "string",
+                        "description": "指向 GTF 文件的完整 URL。"
+                    }
+                },
+                "required": ["genome_name", "species", "version", "fasta_url", "gtf_url"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "download_genome_files",
+            "description": "为一个已经存在于配置文件中的基因组启动后台下载任务。你需要提供基因组的名称。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "genome_name": {
+                        "type": "string",
+                        "description": "要下载的基因组的名称，这个名称必须已经存在于 'config/genomes.json' 中。例如: 'hg38'"
+                    }
+                },
+                "required": ["genome_name"]
+            }
+        }
     }
 ]

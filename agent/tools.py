@@ -3,6 +3,12 @@
 import os
 import time
 import json
+import threading
+import subprocess
+
+# 为 genomes.json 创建一个专用的文件锁，防止并发写入冲突
+genomes_json_lock = threading.Lock()
+
 
 # 导入最底层的 pipeline 执行器
 from agent.pipeline import run_nextflow_pipeline
@@ -25,6 +31,98 @@ def list_available_genomes() -> dict:
         return {"error": "配置文件 'config/genomes.json' 格式不正确。"}
     except Exception as e:
         return {"error": f"读取基因组配置时发生未知错误: {e}"}
+
+def add_genome_to_config(genome_name: str, species: str, version: str, fasta_url: str, gtf_url: str) -> dict:
+    """
+    将一个新的基因组条目线程安全地添加到 'config/genomes.json'。
+    这个函数只更新配置文件，不执行下载。
+    """
+    print(f"工具 'add_genome_to_config' 被调用，参数: {genome_name}")
+    with genomes_json_lock:
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config', 'genomes.json')
+        try:
+            with open(config_path, 'r') as f:
+                genomes_data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            genomes_data = {}
+        
+        # 根据URL推断文件名，并构建相对路径
+        fasta_filename = os.path.basename(fasta_url)
+        gtf_filename = os.path.basename(gtf_url)
+        relative_fasta_path = os.path.join('data', 'genomes', species, version, fasta_filename)
+        relative_gtf_path = os.path.join('data', 'genomes', species, version, gtf_filename)
+
+        genomes_data[genome_name] = {
+            "species": species,
+            "version": version,
+            "fasta": relative_fasta_path,
+            "gtf": relative_gtf_path,
+            "fasta_url": fasta_url,
+            "gtf_url": gtf_url
+        }
+        
+        with open(config_path, 'w') as f:
+            json.dump(genomes_data, f, indent=2)
+        
+        return {"status": "success", "message": f"基因组 '{genome_name}' 已成功添加到配置文件中。"}
+
+def _perform_download(genome_name: str, species: str, version: str, fasta_url: str, gtf_url: str):
+    """在后台线程中执行实际的下载操作。"""
+    print(f"后台任务开始：为 '{genome_name}' 下载基因组文件...")
+    base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'genomes', species, version)
+    os.makedirs(base_path, exist_ok=True)
+
+    fasta_local_path = os.path.join(base_path, os.path.basename(fasta_url))
+    gtf_local_path = os.path.join(base_path, os.path.basename(gtf_url))
+
+    try:
+        print(f"正在下载 FASTA 文件从 {fasta_url} 到 {fasta_local_path}...")
+        subprocess.run(['wget', '-O', fasta_local_path, fasta_url], check=True)
+        print(f"FASTA 文件 '{genome_name}' 下载完成。")
+
+        print(f"正在下载 GTF 文件从 {gtf_url} 到 {gtf_local_path}...")
+        subprocess.run(['wget', '-O', gtf_local_path, gtf_url], check=True)
+        print(f"GTF 文件 '{genome_name}' 下载完成。")
+    except subprocess.CalledProcessError as e:
+        print(f"错误：下载 '{genome_name}' 时 wget 命令失败: {e}")
+    except Exception as e:
+        print(f"错误：执行下载任务 '{genome_name}' 时发生未知错误: {e}")
+
+def download_genome_files(genome_name: str) -> dict:
+    """
+    为一个在配置文件中已存在的基因组启动后台下载。
+    """
+    print(f"工具 'download_genome_files' 被调用，准备下载 '{genome_name}'。")
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config', 'genomes.json')
+    
+    try:
+        with open(config_path, 'r') as f:
+            genomes_data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"status": "error", "message": "无法读取或解析基因组配置文件。"}
+
+    genome_info = genomes_data.get(genome_name)
+    if not genome_info:
+        return {"status": "error", "message": f"在配置文件中找不到名为 '{genome_name}' 的基因组。"}
+
+    # 创建并启动一个后台线程来执行下载
+    download_thread = threading.Thread(
+        target=_perform_download,
+        args=(
+            genome_name,
+            genome_info['species'],
+            genome_info['version'],
+            genome_info['fasta_url'],
+            genome_info['gtf_url']
+        )
+    )
+    download_thread.daemon = True
+    download_thread.start()
+    
+    return {
+        "status": "success",
+        "message": f"基因组 '{genome_name}' 的下载任务已在后台启动。"
+    }
 
 def run_rna_seq_pipeline(srr_list: str) -> dict:
     """

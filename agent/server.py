@@ -155,6 +155,8 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
             available_tools = {
                 "run_rna_seq_pipeline": tool_module.run_rna_seq_pipeline,
                 "list_available_genomes": tool_module.list_available_genomes,
+                "add_genome_to_config": tool_module.add_genome_to_config,
+                "download_genome_files": tool_module.download_genome_files,
             }
             
             # --- 修正后的逻辑：优先处理特殊工具 ---
