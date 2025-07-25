@@ -117,6 +117,19 @@ def download_genome_files(genome_name: str, task_database: dict, db_lock: thread
     if not genome_info:
         return {"status": "error", "message": f"在配置文件中找不到名为 '{genome_name}' 的基因组。"}
 
+    # --- 新增：下载前检查文件是否存在 ---
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    fasta_path = os.path.join(project_root, genome_info.get('fasta', ''))
+    gtf_path = os.path.join(project_root, genome_info.get('gtf', ''))
+
+    if os.path.exists(fasta_path) and os.path.exists(gtf_path):
+        print(f"文件已存在，跳过下载 '{genome_name}'。")
+        return {
+            "status": "skipped",
+            "message": f"基因组 '{genome_name}' 的文件已存在，跳过下载。"
+        }
+    # --- 检查结束 ---
+
     with db_lock:
         # 注意：这里的 task_id_counter 是一个 int，不能直接拼接，需要先转换
         task_id = f"download_{task_id_counter}"
@@ -150,10 +163,12 @@ def download_genome_files(genome_name: str, task_database: dict, db_lock: thread
     download_thread.daemon = True
     download_thread.start()
     
+    # 注意：这里需要返回一个包含 updated_task_id_counter 的字典，以便 server 更新计数器
     return {
         "status": "success",
         "message": f"基因组 '{genome_name}' 的下载任务已在后台启动。",
-        "task_id": task_id
+        "task_id": task_id,
+        "updated_task_id_counter": task_id_counter + 1
     }
 
 def get_task_status(task_id: str, task_database: dict, db_lock: threading.Lock) -> dict:
