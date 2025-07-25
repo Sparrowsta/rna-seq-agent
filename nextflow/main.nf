@@ -3,10 +3,9 @@ nextflow.enable.dsl=2
 
 // --- 1. Parameter Definitions ---
 params.reads = null
-params.outdir = './results' // Set a default output directory
-params.srr_list = null // This will be the primary input mechanism
+params.outdir = './data/results' // Set a default output directory
 
-// Genome-related parameters - MUST be provided by the user
+// Genome-related parameters - MUST be provided by the agent
 params.fasta = null
 params.gtf = null
 params.species = null
@@ -19,78 +18,53 @@ params.control_group = null
 params.experiment_group = null
 
 
-// --- 2. Validate Parameters & Create Input Channel ---
-
-// Ensure essential genome parameters are provided
-if (!params.fasta || !params.gtf || !params.species || !params.genome_version) {
-    error """
-    Missing essential genome parameters! Please provide all of the following:
-    --fasta [path_to_fasta]
-    --gtf [path_to_gtf]
-    --species [species_name]
-    --genome_version [version_name]
-    """
-}
-
-// Create input channel from SRR list file
-if (params.srr_list) {
-    Channel
-        .fromPath(params.srr_list)
-        .splitText()
-        .map { it.trim() }
-        .filter { it }
-        .map { srr_id ->
-            // Assuming a standard data directory structure
-            def read1 = file("data/fastq/${srr_id}_1.fastq.gz", checkIfExists: true)
-            def read2 = file("data/fastq/${srr_id}_2.fastq.gz", checkIfExists: true)
-            tuple(srr_id, [read1, read2])
-        }
-        .ifEmpty { error "Cannot find any reads for SRR IDs in file: ${params.srr_list}" }
-        .set { ch_reads }
-} else if (params.reads) {
-    // Fallback for manually providing reads pattern
-    Channel
-        .fromFilePairs(params.reads, size: 2, checkIfExists: true)
-        .ifEmpty { error "Cannot find any reads matching: ${params.reads}" }
-        .set { ch_reads }
-} else {
-    error "Input data not specified. Please provide --srr_list (a file with one SRR ID per line) or --reads (a glob pattern)."
-}
-
-
-// --- 3. Main Workflow Definition ---
+// --- 2. Workflow Definition ---
 workflow {
-    // Define the expected path for the STAR index
-    def star_index_path = file("${params.outdir}/genomes/${params.species}/${params.genome_version}/star_index")
+    // --- 1. Input Channel Setup ---
+    // The agent is now responsible for providing the correct file path pattern.
+    // Nextflow simply consumes it and figures out the pairing.
+    if (!params.reads) {
+        error "Input reads not specified. Please provide a glob pattern for FASTQ files via --reads, e.g., 'path/to/*_{1,2}.fastq.gz'"
+    }
 
+    ch_reads = Channel
+        .fromFilePairs(params.reads, size: -1) { file ->
+            // Group by sample ID, removing _1, _2, etc. from the filename
+            // This assumes a standard naming convention like SRR12345_1.fastq.gz
+            file.name.split('_')[0]
+        }
+        .map { sample_id, files ->
+            // Sort files to ensure _1 is always first for paired-end data
+            tuple(sample_id, files.sort())
+        }
+
+    // --- 2. Genome Index Management ---
+    def published_index = file(params.fasta).parent.resolve('star_index')
     ch_star_index = Channel.empty()
-
-    // Check if the index already exists
-    if (star_index_path.exists() && star_index_path.isDirectory()) {
-        log.info "Found existing STAR index at: ${star_index_path}"
-        ch_star_index = Channel.fromPath(star_index_path)
+    if (published_index.exists() && published_index.isDirectory()) {
+        log.info "Found published STAR index: ${published_index}"
+        ch_star_index = Channel.fromPath(published_index)
     } else {
-        log.info "STAR index not found. Generating a new one."
-        // Step 1: Build STAR index
+        log.info "Published STAR index not found, generating..."
         STAR_GENOME_GENERATE(
             Channel.fromPath(params.fasta),
             Channel.fromPath(params.gtf)
         )
         ch_star_index = STAR_GENOME_GENERATE.out
     }
-    
-    // Step 2: Quality control and filtering with fastp
+
+    // --- 3. Quality Control ---
     FASTP(ch_reads)
 
-    // Step 3: Combine fastp output with STAR index to ensure each sample gets the index path
+    // --- 4. Alignment ---
     ch_for_alignment = FASTP.out.reads.combine(ch_star_index)
     STAR_ALIGN(ch_for_alignment)
 
-    // Step 4: Collect all BAM files and perform unified quantification
+    // --- 5. Quantification ---
     ch_bam_files = STAR_ALIGN.out.bam_ch.map { it[1] }.collect()
     FEATURECOUNTS(ch_bam_files, Channel.fromPath(params.gtf))
 
-    // --- Optional Step 5: Downstream Differential Expression Analysis ---
+    // --- 6. (Optional) Differential Expression Analysis ---
     if (params.run_de_analysis) {
         if (!params.meta_file || !params.control_group || !params.experiment_group) {
             error "To run DE analysis, --meta_file, --control_group, and --experiment_group must be provided."
@@ -99,10 +73,11 @@ workflow {
     }
 }
 
-// --- 4. Process Definitions ---
+// --- 3. Process Definitions ---
 
 process STAR_GENOME_GENERATE {
-    publishDir "${params.outdir}/genomes/${params.species}/${params.genome_version}", mode: 'copy'
+    // 将生成的索引发布到与源FASTA文件相同的目录中，以供跨项目复用
+    publishDir path: "${file(fasta).parent}", mode: 'copy'
     
     label 'large_mem_process'
 
@@ -156,16 +131,17 @@ process STAR_ALIGN {
     label 'large_mem_process'
 
     input:
-    tuple val(sample_id), path(fastq_files), path(star_index)
+    tuple val(sample_id), path(reads), path(star_index)
 
     output:
     tuple val(sample_id), path("*.bam"), emit: bam_ch
     path "*.log", emit: log_ch
 
     script:
+    def read_files_str = reads instanceof List ? reads.join(' ') : reads
     """
     STAR --genomeDir ${star_index} \\
-         --readFilesIn ${fastq_files.join(' ')} \\
+         --readFilesIn ${read_files_str} \\
          --readFilesCommand zcat \\
          --runThreadN ${task.cpus} \\
          --outFileNamePrefix "${sample_id}_" \\

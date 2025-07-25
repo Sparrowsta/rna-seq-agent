@@ -3,7 +3,7 @@ FROM ubuntu:22.04
 
 # 2. 设置一些环境变量，避免安装过程中的交互提示
 ENV DEBIAN_FRONTEND=noninteractive
-
+ENV PYTHONUNBUFFERED=1
 # 3. 更换apt源为清华源，然后更新包管理器并安装一些基础工具
 RUN sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && \
     sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && \
@@ -69,5 +69,8 @@ RUN mamba clean -y -a
 WORKDIR /app
 COPY . .
 
-# 8. 移除固定的入口点，以便在 docker-compose 中灵活定义启动命令
-# ENTRYPOINT ["/bin/sh", "-c", "exec python3 launch.py"]
+
+
+# 8. 定义容器启动时要执行的默认命令
+# 这会使用 ngs_env 环境中的 python 来运行我们的服务器脚本
+CMD ["conda", "run", "-n", "ngs_env", "python", "-u", "-m", "agent.server"]

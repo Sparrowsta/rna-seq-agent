@@ -6,3 +6,4 @@ rna_seq_summary_report.md
 .nextflow
 work
 __pycache__
+temp_srr_lists

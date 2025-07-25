@@ -5,6 +5,8 @@ import time
 import json
 import threading
 import subprocess
+from pathlib import Path
+from typing import List
 
 # 为 genomes.json 创建一个专用的文件锁，防止并发写入冲突
 genomes_json_lock = threading.Lock()
@@ -215,73 +217,161 @@ def get_task_status(task_id: str, task_database: dict, db_lock: threading.Lock) 
     with db_lock:
         return task_database.get(task_id, {})
 
-def run_rna_seq_pipeline(genome_name: str, srr_list: str, task_database: dict, db_lock: threading.Lock, task_id: str) -> dict:
+def _perform_rna_seq_pipeline(task_id: str, task_database: dict, db_lock: threading.Lock, genome_name: str, srr_list: str):
     """
-    根据指定的基因组和 SRR 列表，调用 RNA-seq Nextflow 流程，并在任务数据库中创建一个条目。
+    在后台线程中执行 RNA-seq 流程的完整操作，包括下载、压缩和运行 Nextflow。
     """
-    print(f"工具 'run_rna_seq_pipeline' 被调用，基因组: {genome_name}, SRR列表: {srr_list}")
+    # 注意：这个函数在自己的线程中运行，所以可以安全地执行阻塞操作。
+    # 它通过闭包或参数捕获了所有需要的变量。
 
-    # --- 1. 查找基因组文件路径 ---
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config', 'genomes.json')
+    # --- 1. 更新任务状态为 'running' 并解析参数 ---
+    project_root = Path(__file__).parent.parent.resolve()
+    config_path = project_root / 'config' / 'genomes.json'
+    
+    with db_lock:
+        task_database[task_id]['status'] = 'running'
+        task_database[task_id]['details']['message'] = '正在解析参数和基因组信息...'
+
     try:
         with open(config_path, 'r') as f:
             genomes_data = json.load(f)
         genome_info = genomes_data.get(genome_name)
         if not genome_info:
-            return {"status": "error", "message": f"在配置文件中找不到名为 '{genome_name}' 的基因组。"}
+            raise ValueError(f"在配置文件中找不到名为 '{genome_name}' 的基因组。")
         
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        fasta_path = os.path.join(project_root, genome_info['fasta'])
-        gtf_path = os.path.join(project_root, genome_info['gtf'])
-
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {"status": "error", "message": "无法读取或解析基因组配置文件。"}
-
-    # --- 2. 准备 SRR 列表文件 ---
-    temp_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_srr_lists")
-    os.makedirs(temp_dir, exist_ok=True)
-    try:
+        fasta_path = str(project_root / genome_info['fasta'])
+        gtf_path = str(project_root / genome_info['gtf'])
         srr_ids = srr_list.replace(",", " ").split()
         if not srr_ids:
-            return {"status": "error", "message": "SRR 列表不能为空。"}
+            raise ValueError("SRR 列表不能为空。")
 
-        timestamp = int(time.time())
-        temp_file_path = os.path.join(temp_dir, f"srr_list_{timestamp}.txt")
+    except Exception as e:
+        print(f"任务 {task_id} 失败: 参数解析错误。错误: {e}")
+        with db_lock:
+            task_database[task_id]['status'] = 'failed'
+            task_database[task_id]['details']['error'] = f"参数解析错误: {e}"
+        return
 
-        with open(temp_file_path, "w") as f:
-            for srr_id in srr_ids:
-                f.write(f"{srr_id}\n")
+    # --- 2. 检查、下载并压缩 FASTQ 文件 ---
+    fastq_dir = project_root / 'data' / 'fastq'
+    fastq_dir.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        with db_lock:
+            task_database[task_id]['details']['message'] = '正在准备 FASTQ 文件...'
+        
+        for srr_id in srr_ids:
+            with db_lock:
+                 task_database[task_id]['details']['current_srr'] = srr_id
+            
+            existing_gz_files = list(fastq_dir.glob(f"{srr_id}*.fastq.gz"))
+            if existing_gz_files:
+                print(f"任务 {task_id}: 找到 '{srr_id}' 的本地文件，跳过下载。")
+                continue
 
-        # --- 3. 调用底层流程执行器 ---
+            print(f"任务 {task_id}: 未找到 '{srr_id}' 的本地文件，开始从 SRA 下载...")
+            with db_lock:
+                task_database[task_id]['details']['message'] = f"正在从 SRA 下载 {srr_id}..."
+
+            dump_command = ['conda', 'run', '--no-capture-output', '-n', 'sra_env', 'fasterq-dump', '--split-files', '--outdir', str(fastq_dir), srr_id]
+            dump_result = subprocess.run(dump_command, capture_output=True, text=True)
+            if dump_result.returncode != 0:
+                raise subprocess.CalledProcessError(dump_result.returncode, dump_command, dump_result.stdout, dump_result.stderr)
+            
+            print(f"任务 {task_id}: 成功下载 '{srr_id}'。")
+            with db_lock:
+                task_database[task_id]['details']['message'] = f"正在压缩 {srr_id}..."
+
+            newly_dumped_files = list(fastq_dir.glob(f"{srr_id}*.fastq"))
+            if not newly_dumped_files:
+                print(f"警告 (任务 {task_id}): 为 '{srr_id}' 运行 fasterq-dump 后未找到输出的 .fastq 文件。")
+                continue
+
+            for fastq_file in newly_dumped_files:
+                gzip_command = ['gzip', '-f', str(fastq_file)]
+                gzip_result = subprocess.run(gzip_command, capture_output=True, text=True)
+                if gzip_result.returncode != 0:
+                    raise subprocess.CalledProcessError(gzip_result.returncode, gzip_command, gzip_result.stdout, gzip_result.stderr)
+                print(f"任务 {task_id}: 成功压缩 {fastq_file.name}.gz。")
+
+    except subprocess.CalledProcessError as e:
+        error_message = f"处理 SRR ID '{srr_id}' 时命令 '{' '.join(e.cmd)}' 失败。\n返回码: {e.returncode}\n标准输出: {e.stdout}\n标准错误: {e.stderr}"
+        print(f"任务 {task_id} 失败: {error_message}")
+        with db_lock:
+            task_database[task_id]['status'] = 'failed'
+            task_database[task_id]['details']['error'] = error_message
+        return
+    except Exception as e:
+        print(f"任务 {task_id} 失败: 准备 FASTQ 文件时发生未知错误: {e}")
+        with db_lock:
+            task_database[task_id]['status'] = 'failed'
+            task_database[task_id]['details']['error'] = f"准备 FASTQ 文件时发生未知错误: {e}"
+        return
+
+    # --- 3. 构造 Nextflow 参数并执行 ---
+    srr_glob_part = "{" + ",".join(srr_ids) + "}"
+    reads_glob_pattern = str(fastq_dir / f"{srr_glob_part}_*.fastq.gz")
+    
+    try:
+        with db_lock:
+            task_database[task_id]['details']['message'] = '正在启动 Nextflow 流程...'
+            task_database[task_id]['details']['reads_glob_pattern'] = reads_glob_pattern
+        
         pipeline_params = {
-            "srr_list_path": temp_file_path,
+            "reads_glob": reads_glob_pattern,
             "fasta_path": fasta_path,
             "gtf_path": gtf_path
         }
         process = run_nextflow_pipeline(pipeline_params)
         
-        # --- 4. 在数据库中创建任务记录 ---
+        print(f"任务 {task_id}: Nextflow 流程已启动，PID: {process.pid}")
         with db_lock:
-            task_database[task_id] = {
-                "type": "pipeline",
-                "status": "running",
-                "start_time": time.time(),
-                "details": {
-                    "pid": process.pid,
-                    "genome_name": genome_name,
-                    "srr_list": srr_ids,
-                    "srr_list_file": temp_file_path
-                }
-            }
+            task_database[task_id]['details']['pid'] = process.pid
+            task_database[task_id]['details']['message'] = 'Nextflow 流程正在运行。'
         
-        return {
-            "status": "success",
-            "message": f"成功启动 RNA-seq 流程！任务 ID: {task_id}",
-            "task_id": task_id
-        }
+        # 这里不需要等待，get_task_status 会负责检查进程状态
 
     except Exception as e:
-        return {"status": "error", "message": f"执行流程时发生未知错误: {e}"}
+        print(f"任务 {task_id} 失败: 执行 Nextflow 流程时发生未知错误: {e}")
+        with db_lock:
+            task_database[task_id]['status'] = 'failed'
+            task_database[task_id]['details']['error'] = f"执行 Nextflow 流程时发生未知错误: {e}"
+        return
+
+def run_rna_seq_pipeline(genome_name: str, srr_list: str, task_database: dict, db_lock: threading.Lock, task_id: str) -> dict:
+    """
+    根据指定的基因组和 SRR 列表，在后台启动 RNA-seq Nextflow 流程。
+    此函数会立即返回一个任务 ID，实际工作在后台线程中进行。
+    """
+    print(f"工具 'run_rna_seq_pipeline' 被调用，准备启动任务 {task_id}。基因组: {genome_name}, SRR列表: {srr_list}")
+
+    # --- 1. 在数据库中立即创建任务记录 ---
+    with db_lock:
+        task_database[task_id] = {
+            "type": "pipeline",
+            "status": "starting", # 初始状态
+            "start_time": time.time(),
+            "details": {
+                "genome_name": genome_name,
+                "srr_list": srr_list.replace(",", " ").split(),
+                "message": "任务正在初始化..."
+            }
+        }
+
+    # --- 2. 创建并启动后台线程 ---
+    pipeline_thread = threading.Thread(
+        target=_perform_rna_seq_pipeline,
+        args=(task_id, task_database, db_lock, genome_name, srr_list)
+    )
+    pipeline_thread.daemon = True
+    pipeline_thread.start()
+
+    # --- 3. 立即返回成功信息 ---
+    return {
+        "status": "success",
+        "message": f"成功启动 RNA-seq 流程！任务 ID: {task_id}",
+        "task_id": task_id
+    }
 
 def list_files(path: str = ".") -> dict:
     """
@@ -292,24 +382,23 @@ def list_files(path: str = ".") -> dict:
     print(f"工具 'list_files' 被调用，路径: {path}")
     
     # 安全限制：将根目录固定为项目下的 'data' 目录
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    data_root = os.path.join(project_root, 'data')
+    project_root = Path(__file__).parent.parent.resolve()
+    data_root = project_root / 'data'
     
     # 构造并清理目标路径
-
-
-    target_path = os.path.join(data_root, path)
+    # 使用 resolve() 来处理 ".." 等路径，并确保它是一个绝对路径
+    target_path = (data_root / path).resolve()
     
-    # 再次检查，确保最终路径在 data_root 内，防止 ".." 等路径逃逸
-    if not os.path.abspath(target_path).startswith(os.path.abspath(data_root)):
-        return {"error": "访问被拒绝。只能查看 'data' 目录下的内容。"}
+    # 再次检查，确保最终路径在 data_root 内，防止路径逃逸
+    if not target_path.is_relative_to(data_root.resolve()):
+         return {"error": "访问被拒绝。只能查看 'data' 目录下的内容。"}
         
     try:
-        if not os.path.isdir(target_path):
+        if not target_path.is_dir():
             return {"error": f"路径 '{path}' 不是一个有效的目录。"}
             
-        items = os.listdir(target_path)
-        return {"path": path, "files": items}
+        items = [item.name for item in target_path.iterdir()]
+        return {"path": str(target_path.relative_to(data_root)), "files": items}
     except FileNotFoundError:
         return {"error": f"路径 '{path}' 未找到。"}
     except Exception as e:
@@ -330,8 +419,6 @@ def unsupported_request(user_request: str) -> dict:
 
 # 你可以在这里直接测试这个工具
 if __name__ == '__main__':
-    # 示例：如何调用这个工具
-    # 这个测试现在不再需要 server 运行，可以直接执行
-    test_srr_ids = "SRR17469059,SRR17469061"
-    result_message = run_rna_seq_pipeline(test_srr_ids)
-    print(result_message)
+    # 这个 __main__ 块需要更新以反映新的函数签名和逻辑
+    # 由于它依赖于任务数据库等，直接运行变得复杂，因此暂时将其留空。
+    pass

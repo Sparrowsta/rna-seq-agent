@@ -33,6 +33,12 @@ class ChatInput(BaseModel):
 class PipelineRunInput(BaseModel):
     srr_list: str
 
+class ToolCallInput(BaseModel):
+    """用于直接调用工具的测试端点的数据模型"""
+    tool_name: str
+    params: Dict[str, Any]
+
+
 # --- 2. 创建 FastAPI 应用实例 ---
 app = FastAPI(
     title="LLM 驱动的流式 Agent 服务器",
@@ -43,7 +49,10 @@ app = FastAPI(
 # --- 3. 配置和初始化 ---
 # 加载 .env 文件中的环境变量
 # 这应该在访问任何环境变量之前完成
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', 'config', '.env'))
+# 加载项目根目录的 .env 文件 (如果存在)，
+# 这使得在容器外本地运行也成为可能。
+# 在容器内，这些变量主要由 docker-compose 的 env_file 指令注入。
+load_dotenv()
 
 # 初始化 OpenAI 客户端
 # 从环境变量中获取配置
@@ -52,7 +61,7 @@ base_url = os.getenv("OPENAI_API_BASE")
 model_name = os.getenv("OPENAI_MODEL_NAME", "default-model") # 提供一个默认值
 
 if not api_key or not base_url:
-    raise ValueError("请在 config/.env 文件中设置 OPENAI_API_KEY 和 OPENAI_API_BASE")
+    raise ValueError("请在项目根目录的 .env 文件中设置 OPENAI_API_KEY 和 OPENAI_API_BASE")
 
 client = openai.OpenAI(
     api_key=api_key,
@@ -273,6 +282,31 @@ async def chat_completions(chat_input: ChatInput):
     核心聊天接口，现在它会调用真正的 Agent 逻辑。
     """
     return StreamingResponse(stream_agent_response(chat_input), media_type="text/event-stream")
+
+
+
+
+@app.get("/task-status/{task_id}")
+def get_task_status_endpoint(task_id: str):
+    """用于轮询长时任务状态的端点。"""
+    print(f"--- [状态端点] 正在查询任务: {task_id} ---")
+    try:
+        # 直接调用我们的工具函数，并传入所需的依赖
+        status_result = tool_module.get_task_status(
+            task_id=task_id,
+            task_database=TASK_DATABASE,
+            db_lock=db_lock
+        )
+        # 如果工具函数返回了它自己的错误（例如 "找不到任务"），则将其转换为 404
+        if not status_result or status_result.get("status") == "error":
+            raise HTTPException(status_code=404, detail=status_result.get("message", f"找不到任务 '{task_id}'。"))
+        
+        return status_result
+    except HTTPException as he:
+        raise he # 重新抛出已有的 HTTP 异常
+    except Exception as e:
+        print(f"!!! [状态端点] 查询状态时出错: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # @app.post("/run_pipeline")
