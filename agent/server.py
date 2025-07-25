@@ -6,6 +6,7 @@ import asyncio
 import os
 import tempfile
 import re
+import json
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -13,9 +14,13 @@ from typing import List, AsyncGenerator, Dict, Any
 from threading import Lock
 from fastapi.middleware.cors import CORSMiddleware
 
-# 导入我们新创建的 pipeline 模块和 tools 模块
-from agent.pipeline import run_nextflow_pipeline
-from agent.tools import run_rna_seq_pipeline, get_task_status
+# --- 新增: LLM 和环境相关导入 ---
+import openai
+from dotenv import load_dotenv
+
+# --- 新增: 从我们的模块导入 ---
+from agent.prompt import SYSTEM_PROMPT, TOOLS
+import agent.tools as tool_module # 导入整个模块以便于函数查找
 
 # --- 1. 定义数据模型 ---
 class StandardMessage(BaseModel):
@@ -30,9 +35,28 @@ class PipelineRunInput(BaseModel):
 
 # --- 2. 创建 FastAPI 应用实例 ---
 app = FastAPI(
-    title="从零构建的流式 Agent 服务器",
-    description="这是一个支持流式响应、符合OpenAI接口标准的Agent服务器。",
-    version="0.3.0", # 版本更新：增加了任务跟踪
+    title="LLM 驱动的流式 Agent 服务器",
+    description="这是一个由大型语言模型驱动、支持工具调用、符合OpenAI接口标准的Agent服务器。",
+    version="1.0.0", # 版本跃迁
+)
+
+# --- 3. 配置和初始化 ---
+# 加载 .env 文件中的环境变量
+# 这应该在访问任何环境变量之前完成
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', 'config', '.env'))
+
+# 初始化 OpenAI 客户端
+# 从环境变量中获取配置
+api_key = os.getenv("OPENAI_API_KEY")
+base_url = os.getenv("OPENAI_API_BASE")
+model_name = os.getenv("OPENAI_MODEL_NAME", "default-model") # 提供一个默认值
+
+if not api_key or not base_url:
+    raise ValueError("请在 config/.env 文件中设置 OPENAI_API_KEY 和 OPENAI_API_BASE")
+
+client = openai.OpenAI(
+    api_key=api_key,
+    base_url=base_url,
 )
 
 # --- 3. 添加 CORS 中间件 ---
@@ -60,151 +84,193 @@ def read_root():
     """根路径，用于检查服务器是否在线。"""
     return {"message": "你好，流式 Agent 服务器正在运行！"}
 
-@app.get("/models") 
+@app.get("/models")
 async def list_models():
     """
     响应客户端获取模型列表的请求。
-    我们使用自己定义的、清晰的 model_id。
+    现在模型列表直接从环境变量中读取。
     """
-    model_id = "rna-seq-agent-v1"
     return {
         "object": "list",
         "data": [
             {
-                "id": model_id,
+                "id": model_name,
                 "object": "model",
                 "created": int(time.time()),
-                "owned_by": "user",
+                "owned_by": "system",
             }
         ],
     }
 
 async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, None]:
     """
-    一个真正的 Agent 响应生成器。
-    它会分析用户输入，并决定是调用工具还是返回普通信息。
+    一个由 LLM 驱动的、支持工具调用的 Agent 响应生成器。
     """
-    model_id = "rna-seq-agent-v1"
-    user_message = chat_input.messages[-1].content if chat_input.messages else ""
+    # 1. 准备发送给 LLM 的消息，确保我们的系统提示是唯一的
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # 过滤掉任何可能从上游传入的 system 消息，只保留 user 和 assistant 的消息
+    for msg in chat_input.messages:
+        if msg.role != "system":
+            messages.append({"role": msg.role, "content": msg.content})
 
-    # --- Agent 核心逻辑：路由和工具调用 ---
+    # 2. 第一次调用 LLM，让它决定是否使用工具
+    print(f"--- 第一次调用 LLM (模型: {model_name}) ---")
+    print(f"发送的消息: {messages}")
+    print(f"可用的工具: {TOOLS}")
     
-    # 规则1：如果用户想要运行流程
-    # 我们使用非常简单的正则匹配来查找 SRR ID 和关键词
-    srr_pattern = re.compile(r"(SRR\d{7,})", re.IGNORECASE)
-    run_keywords = ["run", "运行", "执行", "处理"]
-    
-    srr_matches = srr_pattern.findall(user_message)
-    contains_run_keyword = any(keyword in user_message for keyword in run_keywords)
+    try:
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            tools=TOOLS,
+            tool_choice="required",
+        )
+    except Exception as e:
+        print(f"调用 LLM API 时发生错误: {e}")
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+        return
 
-    # 规则2：如果用户想要查询任务状态
-    task_pattern = re.compile(r"(task_\d+)", re.IGNORECASE)
-    query_keywords = ["查询", "状态", "status", "检查", "check"]
-    
-    task_matches = task_pattern.findall(user_message)
-    contains_query_keyword = any(keyword in user_message for keyword in query_keywords)
+    response_message = response.choices[0].message
+    tool_calls = response_message.tool_calls
 
-    response_text = ""
-    if srr_matches and contains_run_keyword:
-        # 如果找到了 SRR ID 和运行关键词，就调用工具
-        srr_list_str = ", ".join(srr_matches)
-        print(f"检测到运行意图，提取到 SRR IDs: {srr_list_str}")
-        
-        tool_result = run_rna_seq_pipeline(srr_list_str)
-        
-        if tool_result.get("status") == "success":
-            global task_id_counter
-            with db_lock:
-                task_id = f"task_{task_id_counter}"
-                task_id_counter += 1
+    # 3. 检查 LLM 是否决定调用工具
+    if tool_calls:
+        print(f"--- LLM 决定调用工具: {tool_calls} ---")
+        messages.append(response_message)  # 将 assistant 的回复（包括工具调用请求）添加到历史记录中
+
+        # 4. 执行所有工具调用
+        for tool_call in tool_calls:
+            function_name = tool_call.function.name
+            
+            try:
+                function_args = json.loads(tool_call.function.arguments)
+            except json.JSONDecodeError:
+                function_response = f"错误: LLM 返回了无效的 JSON 参数: {tool_call.function.arguments}"
+                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": function_response})
+                continue
+
+            print(f"执行工具: {function_name}，参数: {function_args}")
+
+            available_tools = {
+                "run_rna_seq_pipeline": tool_module.run_rna_seq_pipeline,
+            }
+            
+            # --- 修正后的逻辑：优先处理特殊工具 ---
+            if function_name == "get_task_status":
+                task_id = function_args.get("task_id")
+                with db_lock:
+                    task_info = TASK_DATABASE.get(task_id)
                 
-                TASK_DATABASE[task_id] = {
-                    "pid": tool_result.get("pid"),
-                    "srr_list_file": tool_result.get("srr_list_file"),
-                    "status": "running", # 初始状态
-                    "start_time": time.time(),
-                    "srr_list": srr_list_str
-                }
-            
-            response_text = f"任务 '{task_id}' 已成功启动。进程 PID: {tool_result.get('pid')}。"
-        else:
-            # 如果工具返回错误
-            error_message = tool_result.get("message", "未知工具错误")
-            response_text = f"启动流程失败: {error_message}"
-
-    elif task_matches and contains_query_keyword:
-        # 如果找到了 task_id 和查询关键词，就查询状态
-        task_id_to_query = task_matches[0]
-        print(f"检测到查询意图，查询任务 ID: {task_id_to_query}")
-        
-        with db_lock:
-            task_info = TASK_DATABASE.get(task_id_to_query)
-
-        if not task_info:
-            response_text = f"错误：找不到任务 '{task_id_to_query}'。"
-        else:
-            pid = task_info.get("pid")
-            current_status = task_info.get("status", "unknown")
-            
-            # 使用 os.waitpid 进行更精确、更健壮的状态检查
-            process_status_text = "未知"
-            if current_status == "running" and pid:
-                try:
-                    pid_check, exit_status = os.waitpid(pid, os.WNOHANG)
-                    if pid_check == 0:
-                        process_status_text = "仍在运行"
-                    else:
-                        exit_code = os.WEXITSTATUS(exit_status)
+                if not task_info:
+                    function_response = f"错误：找不到任务 '{task_id}'。"
+                else:
+                    pid = task_info.get("pid")
+                    current_status = task_info.get("status", "unknown")
+                    process_status_text = "未知"
+                    if current_status == "running" and pid:
+                        try:
+                            pid_check, exit_status = os.waitpid(pid, os.WNOHANG)
+                            if pid_check == 0:
+                                process_status_text = "仍在运行"
+                            else:
+                                exit_code = os.WEXITSTATUS(exit_status)
+                                process_status_text = f"已结束 (退出码: {exit_code})"
+                                with db_lock:
+                                    TASK_DATABASE[task_id]["status"] = "finished"
+                                    TASK_DATABASE[task_id]["exit_code"] = exit_code
+                        except OSError:
+                            process_status_text = "已结束 (进程不存在)"
+                            with db_lock:
+                                if TASK_DATABASE.get(task_id):
+                                    TASK_DATABASE[task_id]["status"] = "finished"
+                    elif current_status == "finished":
+                        exit_code = task_info.get('exit_code', 'N/A')
                         process_status_text = f"已结束 (退出码: {exit_code})"
-                        with db_lock:
-                            TASK_DATABASE[task_id_to_query]["status"] = "finished"
-                            TASK_DATABASE[task_id_to_query]["exit_code"] = exit_code
-                except OSError:
-                    process_status_text = "已结束 (进程不存在)"
-                    with db_lock:
-                        if TASK_DATABASE.get(task_id_to_query):
-                            TASK_DATABASE[task_id_to_query]["status"] = "finished"
-
-            elif current_status == "finished":
-                exit_code = task_info.get('exit_code', 'N/A')
-                process_status_text = f"已结束 (退出码: {exit_code})"
+                    function_response = f"任务 '{task_id}' 的状态为: {process_status_text} (PID: {pid})。"
             
-            response_text = f"任务 '{task_id_to_query}' 的状态为: {process_status_text} (PID: {pid})。"
+            # --- 然后处理通用工具 ---
+            else:
+                function_to_call = available_tools.get(function_name)
+                if not function_to_call:
+                    function_response = f"错误：未知的工具名称 '{function_name}'"
+                else:
+                    try:
+                        tool_result = function_to_call(**function_args)
+                        
+                        # 如果是运行流程的工具，需要特殊处理结果以创建任务
+                        if function_name == "run_rna_seq_pipeline":
+                            if tool_result.get("status") == "success":
+                                global task_id_counter
+                                with db_lock:
+                                    task_id = f"task_{task_id_counter}"
+                                    task_id_counter += 1
+                                    TASK_DATABASE[task_id] = {
+                                        "pid": tool_result.get("pid"),
+                                        "srr_list_file": tool_result.get("srr_list_file"),
+                                        "status": "running",
+                                        "start_time": time.time(),
+                                        "srr_list": function_args.get("srr_list")
+                                    }
+                                function_response = f"任务 '{task_id}' 已成功启动。进程 PID: {tool_result.get('pid')}。"
+                            else:
+                                function_response = f"启动流程失败: {tool_result.get('message', '未知工具错误')}"
+                        else:
+                            # 对于其他工具，直接将字典结果转为字符串
+                            function_response = json.dumps(tool_result)
+
+                    except Exception as e:
+                        function_response = f"执行工具 '{function_name}' 时发生错误: {e}"
+
+            # 5. 将工具执行结果添加到消息历史中
+            messages.append(
+                {
+                    "tool_call_id": tool_call.id,
+                    "role": "tool",
+                    "name": function_name,
+                    "content": function_response,
+                }
+            )
+        
+        # 6. 第二次调用 LLM，让它根据工具结果生成最终回复
+        print(f"--- 第二次调用 LLM (携带工具结果) ---")
+        print(f"发送的消息: {messages}")
+        
+        try:
+            second_response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                stream=True, # 以流式模式获取最终回复
+            )
+            # 7. 流式传输最终回复
+            for chunk in second_response:
+                content = chunk.choices[0].delta.content
+                if content:
+                    response_chunk = {
+                        "id": chunk.id, "object": chunk.object, "created": chunk.created, "model": chunk.model,
+                        "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}]
+                    }
+                    yield f"data: {json.dumps(response_chunk)}\n\n"
+        except Exception as e:
+            print(f"第二次调用 LLM API 时发生错误: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     else:
-        # 否则，返回默认的帮助信息
-        response_text = "你好！我是 RNA-seq 流程助手。你可以通过发送'运行 SRR1234567'或'查询 task_1'来与我交互。"
-
-    # --- 将 Agent 的响应文本转换为流式输出 ---
-    
-    # 将完整响应文本逐字发送
-    for char in response_text:
-        response_chunk = {
-            "id": f"chatcmpl-{int(time.time())}",
-            "object": "chat.completion.chunk",
-            "created": int(time.time()),
-            "model": model_id,
-            "choices": [{
-                "index": 0,
-                "delta": {"content": char},
-                "finish_reason": None
-            }]
-        }
-        sse_formatted_chunk = f"data: {json.dumps(response_chunk)}\n\n"
-        yield sse_formatted_chunk
-        await asyncio.sleep(0.02) # 模拟打字效果
+        # 如果 LLM 不需要调用工具，直接流式返回它的回复
+        print("--- LLM 无需调用工具，直接回复 ---")
+        content = response_message.content or ""
+        for char in content:
+            response_chunk = {
+                "id": response.id, "object": "chat.completion.chunk", "created": response.created, "model": response.model,
+                "choices": [{"index": 0, "delta": {"content": char}, "finish_reason": None}]
+            }
+            yield f"data: {json.dumps(response_chunk)}\n\n"
+            await asyncio.sleep(0.02)
 
     # 发送结束标志
     final_chunk = {
-        "id": f"chatcmpl-{int(time.time())}",
-        "object": "chat.completion.chunk",
-        "created": int(time.time()),
-        "model": model_id,
-        "choices": [{
-            "index": 0,
-            "delta": {},
-            "finish_reason": "stop"
-        }]
+        "id": response.id, "object": "chat.completion.chunk", "created": response.created, "model": response.model,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
     }
     yield f"data: {json.dumps(final_chunk)}\n\n"
     yield "data: [DONE]\n\n"
