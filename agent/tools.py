@@ -58,6 +58,19 @@ def run_rna_seq_pipeline(srr_list: str) -> dict:
         # 捕获所有可能的异常，例如文件系统权限问题
         return {"status": "error", "message": f"执行流程时发生未知错误: {e}"}
 
+def get_task_status(task_id: str) -> dict:
+    """
+    获取指定任务ID的状态。
+    注意：这个函数的实际逻辑在 server.py 的 Agent 路由中实现，
+    以避免循环依赖和网络死锁。这里只是一个形式上的定义。
+    """
+    # 在当前架构中，此工具函数不应包含实现。
+    # 实际的状态查询直接在服务器的 Agent 逻辑中完成。
+    print(f"形式化调用：查询任务 {task_id} 状态。")
+    # 返回一个表示未实现的占位符
+    return {"status": "error", "message": "此功能应在服务器内部直接实现"}
+
+
 # 你可以在这里直接测试这个工具
 if __name__ == '__main__':
     # 示例：如何调用这个工具

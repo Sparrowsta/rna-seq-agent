@@ -9,12 +9,13 @@ import re
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, AsyncGenerator
+from typing import List, AsyncGenerator, Dict, Any
+from threading import Lock
 from fastapi.middleware.cors import CORSMiddleware
 
 # 导入我们新创建的 pipeline 模块和 tools 模块
 from agent.pipeline import run_nextflow_pipeline
-from agent.tools import run_rna_seq_pipeline
+from agent.tools import run_rna_seq_pipeline, get_task_status
 
 # --- 1. 定义数据模型 ---
 class StandardMessage(BaseModel):
@@ -31,7 +32,7 @@ class PipelineRunInput(BaseModel):
 app = FastAPI(
     title="从零构建的流式 Agent 服务器",
     description="这是一个支持流式响应、符合OpenAI接口标准的Agent服务器。",
-    version="0.2.4", # 版本更新
+    version="0.3.0", # 版本更新：增加了任务跟踪
 )
 
 # --- 3. 添加 CORS 中间件 ---
@@ -42,6 +43,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- 3.5. 全局任务数据库 (内存中) ---
+# 使用字典来存储任务状态。在生产环境中，这应该被替换为真正的数据库。
+TASK_DATABASE: Dict[str, Dict[str, Any]] = {}
+# 使用锁来确保对 TASK_DATABASE 的线程安全访问
+db_lock = Lock()
+# 任务 ID 计数器
+task_id_counter = 1
+
 
 # --- 4. 定义 API 端点 ---
 
@@ -87,15 +97,75 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
     srr_matches = srr_pattern.findall(user_message)
     contains_run_keyword = any(keyword in user_message for keyword in run_keywords)
 
+    # 规则2：如果用户想要查询任务状态
+    task_pattern = re.compile(r"(task_\d+)", re.IGNORECASE)
+    query_keywords = ["查询", "状态", "status", "检查", "check"]
+    
+    task_matches = task_pattern.findall(user_message)
+    contains_query_keyword = any(keyword in user_message for keyword in query_keywords)
+
     response_text = ""
     if srr_matches and contains_run_keyword:
         # 如果找到了 SRR ID 和运行关键词，就调用工具
         srr_list_str = ", ".join(srr_matches)
         print(f"检测到运行意图，提取到 SRR IDs: {srr_list_str}")
-        response_text = run_rna_seq_pipeline(srr_list_str)
+        
+        tool_result = run_rna_seq_pipeline(srr_list_str)
+        
+        if tool_result.get("status") == "success":
+            global task_id_counter
+            with db_lock:
+                task_id = f"task_{task_id_counter}"
+                task_id_counter += 1
+                
+                TASK_DATABASE[task_id] = {
+                    "pid": tool_result.get("pid"),
+                    "srr_list_file": tool_result.get("srr_list_file"),
+                    "status": "running", # 初始状态
+                    "start_time": time.time(),
+                    "srr_list": srr_list_str
+                }
+            
+            response_text = f"任务 '{task_id}' 已成功启动。进程 PID: {tool_result.get('pid')}。"
+        else:
+            # 如果工具返回错误
+            error_message = tool_result.get("message", "未知工具错误")
+            response_text = f"启动流程失败: {error_message}"
+
+    elif task_matches and contains_query_keyword:
+        # 如果找到了 task_id 和查询关键词，就查询状态
+        task_id_to_query = task_matches[0]
+        print(f"检测到查询意图，查询任务 ID: {task_id_to_query}")
+        
+        with db_lock:
+            task_info = TASK_DATABASE.get(task_id_to_query)
+
+        if not task_info:
+            response_text = f"错误：找不到任务 '{task_id_to_query}'。"
+        else:
+            pid = task_info.get("pid")
+            current_status = task_info.get("status", "unknown")
+            
+            # 检查进程是否仍在运行
+            if current_status == "running" and pid:
+                try:
+                    os.kill(pid, 0)
+                    process_status_text = "仍在运行"
+                except OSError:
+                    process_status_text = "已结束"
+                    # 更新数据库中的状态
+                    with db_lock:
+                        TASK_DATABASE[task_id_to_query]["status"] = "finished"
+            elif current_status == "finished":
+                 process_status_text = "已结束"
+            else:
+                process_status_text = "未知"
+
+            response_text = f"任务 '{task_id_to_query}' 的状态为: {process_status_text} (PID: {pid})。"
+
     else:
         # 否则，返回默认的帮助信息
-        response_text = "你好！我是 RNA-seq 流程助手。你可以通过发送'运行 SRR1234567'来启动一个分析流程。"
+        response_text = "你好！我是 RNA-seq 流程助手。你可以通过发送'运行 SRR1234567'或'查询 task_1'来与我交互。"
 
     # --- 将 Agent 的响应文本转换为流式输出 ---
     
@@ -137,6 +207,34 @@ async def chat_completions(chat_input: ChatInput):
     核心聊天接口，现在它会调用真正的 Agent 逻辑。
     """
     return StreamingResponse(stream_agent_response(chat_input), media_type="text/event-stream")
+
+@app.get("/tasks/{task_id}")
+async def get_task_status(task_id: str):
+    """
+    根据任务 ID 查询任务的状态和详细信息。
+    """
+    with db_lock:
+        task = TASK_DATABASE.get(task_id)
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # 检查子进程的当前状态
+    # 注意：这是一个简化的检查，仅适用于 Unix-like 系统
+    # os.kill(pid, 0) 会在进程存在时成功，否则抛出异常
+    pid = task.get("pid")
+    if pid:
+        try:
+            # 发送信号 0 不会杀死进程，只是检查它是否存在
+            os.kill(pid, 0)
+            task["process_status"] = "running"
+        except OSError:
+            task["process_status"] = "finished_or_not_found"
+            # 如果进程已结束，我们可以更新我们的数据库状态
+            if task["status"] == "running":
+                task["status"] = "finished"
+    
+    return task
 
 # @app.post("/run_pipeline")
 # async def run_pipeline_endpoint(run_input: PipelineRunInput):
