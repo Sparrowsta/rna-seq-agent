@@ -1,18 +1,4 @@
 services:
-  mcpserver:
-    build:
-      context: .
-    container_name: ngs-mcpserver
-    command: >
-      bash -c "
-      echo 'Activating ngs_env and starting mcpserver...';
-      source /opt/conda/bin/activate ngs_env;
-      exec uvicorn mcpserver.server:app --host 0.0.0.0 --port 48001
-      "
-    ports:
-      - "48001:48001"
-    volumes:
-      - .:/app
   agent-server:
     build:
       context: .
@@ -21,7 +7,7 @@ services:
       bash -c "
       echo 'Activating ngs_env and starting agent server...';
       source /opt/conda/bin/activate ngs_env;
-      exec python3 agent/server.py
+      exec uvicorn agent.server:app --host 0.0.0.0 --port 8001 --reload
       "
     ports:
       - "8001:8001"

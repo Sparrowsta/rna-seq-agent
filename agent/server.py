@@ -146,21 +146,29 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
             pid = task_info.get("pid")
             current_status = task_info.get("status", "unknown")
             
-            # 检查进程是否仍在运行
+            # 使用 os.waitpid 进行更精确、更健壮的状态检查
+            process_status_text = "未知"
             if current_status == "running" and pid:
                 try:
-                    os.kill(pid, 0)
-                    process_status_text = "仍在运行"
+                    pid_check, exit_status = os.waitpid(pid, os.WNOHANG)
+                    if pid_check == 0:
+                        process_status_text = "仍在运行"
+                    else:
+                        exit_code = os.WEXITSTATUS(exit_status)
+                        process_status_text = f"已结束 (退出码: {exit_code})"
+                        with db_lock:
+                            TASK_DATABASE[task_id_to_query]["status"] = "finished"
+                            TASK_DATABASE[task_id_to_query]["exit_code"] = exit_code
                 except OSError:
-                    process_status_text = "已结束"
-                    # 更新数据库中的状态
+                    process_status_text = "已结束 (进程不存在)"
                     with db_lock:
-                        TASK_DATABASE[task_id_to_query]["status"] = "finished"
-            elif current_status == "finished":
-                 process_status_text = "已结束"
-            else:
-                process_status_text = "未知"
+                        if TASK_DATABASE.get(task_id_to_query):
+                            TASK_DATABASE[task_id_to_query]["status"] = "finished"
 
+            elif current_status == "finished":
+                exit_code = task_info.get('exit_code', 'N/A')
+                process_status_text = f"已结束 (退出码: {exit_code})"
+            
             response_text = f"任务 '{task_id_to_query}' 的状态为: {process_status_text} (PID: {pid})。"
 
     else:
@@ -219,20 +227,30 @@ async def get_task_status(task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # 检查子进程的当前状态
-    # 注意：这是一个简化的检查，仅适用于 Unix-like 系统
-    # os.kill(pid, 0) 会在进程存在时成功，否则抛出异常
+    # 使用 os.waitpid 进行更精确、更健壮的状态检查
     pid = task.get("pid")
-    if pid:
+    if pid and task.get("status") == "running":
         try:
-            # 发送信号 0 不会杀死进程，只是检查它是否存在
-            os.kill(pid, 0)
-            task["process_status"] = "running"
+            # os.WNOHANG 使其成为非阻塞调用
+            pid_check, exit_status = os.waitpid(pid, os.WNOHANG)
+            if pid_check == 0:
+                # 子进程仍在运行
+                task["process_status"] = "running"
+            else:
+                # 子进程已结束
+                task["process_status"] = "finished"
+                task["exit_code"] = os.WEXITSTATUS(exit_status) # 获取退出码
+                # 更新数据库中的状态
+                with db_lock:
+                    TASK_DATABASE[task_id]["status"] = "finished"
         except OSError:
+            # 如果进程不存在（例如，已经被其他方式清理），则也视为已结束
             task["process_status"] = "finished_or_not_found"
-            # 如果进程已结束，我们可以更新我们的数据库状态
-            if task["status"] == "running":
-                task["status"] = "finished"
+            with db_lock:
+                if TASK_DATABASE.get(task_id):
+                    TASK_DATABASE[task_id]["status"] = "finished"
+    elif task.get("status") == "finished":
+        task["process_status"] = "finished"
     
     return task
 
