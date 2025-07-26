@@ -1,5 +1,6 @@
 data/*/
 data
+datatest
 config.json
 rna_seq_summary_report.md
 .env
@@ -7,3 +8,9 @@ rna_seq_summary_report.md
 work
 __pycache__
 temp_srr_lists
+data/fastq_files/.gitkeep
+main_sample.nf
+SRR_list.txt
+.gitignore
+
+feature_plan_interactive_tasks.md

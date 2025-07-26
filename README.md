@@ -38,7 +38,7 @@ docker build -t ngs-agent-server .
 ```bash
 docker run --rm -d \
   --name ngs-agent-server \
-  -p 8001:8001 \
+  -p 48001:48001 \
   -v "$(pwd)":/app \
   -u "$(id -u)" \
   ngs-agent-server

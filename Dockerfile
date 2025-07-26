@@ -3,7 +3,7 @@ FROM ubuntu:22.04
 
 # 2. 设置一些环境变量，避免安装过程中的交互提示
 ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONUNBUFFERED=1
+
 # 3. 更换apt源为清华源，然后更新包管理器并安装一些基础工具
 RUN sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && \
     sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && \
@@ -41,14 +41,14 @@ RUN ln -s $CONDA_DIR/bin/conda /usr/local/bin/conda && \
 RUN conda install -y -c conda-forge mamba
 
 
-RUN mamba create -y -n sra_env -c conda-forge -c bioconda sra-tools=3.2.1
+RUN mamba create -y -n sra_env -c conda-forge -c bioconda sra-tools=3.2.0
 RUN mamba create -y -n qc_env -c conda-forge -c bioconda fastp=1.0.1
 RUN mamba create -y -n align_env -c conda-forge -c bioconda samtools=1.22.1 star=2.7.11b
 RUN mamba create -y -n quant_env -c conda-forge -c bioconda subread=2.1.1
 
 
-RUN mamba create -y -n ngs_env python=3.12
-RUN mamba install -y -n ngs_env -c conda-forge pandas python-dotenv 'langchain>=0.2.0' 'langchain-openai>=0.1.0' 'fastapi>=0.110.0' 'pydantic>=2.0.0' sse-starlette tabulate requests mcp
+# 直接在全局 Python 环境中安装依赖
+RUN pip3 install --no-cache-dir pandas python-dotenv 'langchain>=0.2.0' 'langchain-openai>=0.1.0' 'fastapi>=0.110.0' 'pydantic>=2.0.0' sse-starlette tabulate requests mcp
 
 
 # Create a dedicated environment for differential expression analysis with R
@@ -69,8 +69,6 @@ RUN mamba clean -y -a
 WORKDIR /app
 COPY . .
 
-
-
 # 8. 定义容器启动时要执行的默认命令
-# 这会使用 ngs_env 环境中的 python 来运行我们的服务器脚本
-CMD ["conda", "run", "-n", "ngs_env", "python", "-u", "-m", "agent.server"]
+# 直接使用全局的 python3 运行服务器脚本，彻底绕开 conda run
+CMD ["python3", "-u", "-m", "agent.server"]

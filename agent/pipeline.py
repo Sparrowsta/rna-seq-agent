@@ -42,20 +42,23 @@ def run_nextflow_pipeline(params: Dict[str, Any]) -> subprocess.Popen:
         "--reads", reads_glob,
         "--fasta", fasta_path,
         "--gtf", gtf_path,
-        "-resume", # 总是启用 resume 功能
-        "-bg" # 让 Nextflow 在后台运行
+        "-resume" # 总是启用 resume 功能
     ]
 
     logging.info(f"准备执行 Nextflow 命令: {' '.join(command)}")
 
-    # 使用 Popen 异步执行命令
-    # stdout=subprocess.PIPE 和 stderr=subprocess.PIPE 可以捕获输出，以便后续查看
+    # --- 双保险修复：明确设置 NXF_HOME 和 cwd ---
+    env = os.environ.copy()
+    work_dir = os.path.join(project_root, 'data')
+    env['NXF_HOME'] = work_dir # 强制 Nextflow 在此创建 .nextflow 目录
+
     process = subprocess.Popen(
         command,
-        cwd=project_root,  # 在项目根目录执行
+        cwd=work_dir,  # 将工作目录也设置在此
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True  # 让输出以文本形式返回
+        text=True,
+        env=env # 传入修改后的环境变量
     )
 
     logging.info(f"Nextflow 流程已启动，进程 PID: {process.pid}")

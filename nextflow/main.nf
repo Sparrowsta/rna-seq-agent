@@ -3,7 +3,7 @@ nextflow.enable.dsl=2
 
 // --- 1. Parameter Definitions ---
 params.reads = null
-params.outdir = './data/results' // Set a default output directory
+params.outdir = './results'      // Set a default output directory
 
 // Genome-related parameters - MUST be provided by the agent
 params.fasta = null
@@ -31,7 +31,7 @@ workflow {
         .fromFilePairs(params.reads, size: -1) { file ->
             // Group by sample ID, removing _1, _2, etc. from the filename
             // This assumes a standard naming convention like SRR12345_1.fastq.gz
-            file.name.split('_')[0]
+            file.name.replaceAll(/_?[12]\.fastq\.gz$|_\.fastq\.gz$/, "")
         }
         .map { sample_id, files ->
             // Sort files to ensure _1 is always first for paired-end data
@@ -77,7 +77,7 @@ workflow {
 
 process STAR_GENOME_GENERATE {
     // 将生成的索引发布到与源FASTA文件相同的目录中，以供跨项目复用
-    publishDir path: "${file(fasta).parent}", mode: 'copy'
+    publishDir path: "${file(params.fasta).parent}", mode: 'copy'
     
     label 'large_mem_process'
 
@@ -90,6 +90,7 @@ process STAR_GENOME_GENERATE {
 
     script:
     """
+    source activate align_env
     mkdir star_index
     STAR --runMode genomeGenerate \\
          --genomeDir star_index \\
@@ -121,6 +122,7 @@ process FASTP {
     def extra_args = r2 ? "-I ${r2} -O ${r2_out}" : ""
 
     """
+    source activate qc_env
     fastp -i ${r1} -o ${r1_out} -h ${html_out} -j ${json_out} --qualified_quality_phred 20 --unqualified_percent_limit 40 --length_required 36 ${extra_args}
     """
 }
@@ -140,6 +142,7 @@ process STAR_ALIGN {
     script:
     def read_files_str = reads instanceof List ? reads.join(' ') : reads
     """
+    source activate align_env
     STAR --genomeDir ${star_index} \\
          --readFilesIn ${read_files_str} \\
          --readFilesCommand zcat \\
@@ -168,6 +171,7 @@ process FEATURECOUNTS {
     script:
     def extra_params = "-p -s 2"
     """
+    source activate quant_env
     featureCounts -a ${gtf} \\
                   -o counts.txt \\
                   -T ${task.cpus} \\

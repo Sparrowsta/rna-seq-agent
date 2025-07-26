@@ -245,6 +245,13 @@ def _perform_rna_seq_pipeline(task_id: str, task_database: dict, db_lock: thread
         if not srr_ids:
             raise ValueError("SRR 列表不能为空。")
 
+        # --- 新增：在启动流程前检查基因组文件是否存在 ---
+        if not os.path.exists(fasta_path):
+            raise FileNotFoundError(f"参考基因组 FASTA 文件未找到: {fasta_path}。请在使用前先下载该基因组。")
+        if not os.path.exists(gtf_path):
+            raise FileNotFoundError(f"参考基因组 GTF 文件未找到: {gtf_path}。请在使用前先下载该基因组。")
+        # --- 检查结束 ---
+
     except Exception as e:
         print(f"任务 {task_id} 失败: 参数解析错误。错误: {e}")
         with db_lock:
@@ -273,10 +280,19 @@ def _perform_rna_seq_pipeline(task_id: str, task_database: dict, db_lock: thread
             with db_lock:
                 task_database[task_id]['details']['message'] = f"正在从 SRA 下载 {srr_id}..."
 
-            dump_command = ['conda', 'run', '--no-capture-output', '-n', 'sra_env', 'fasterq-dump', '--split-files', '--outdir', str(fastq_dir), srr_id]
-            dump_result = subprocess.run(dump_command, capture_output=True, text=True)
+            # 使用 'source activate' 替代 'conda run' 来避免在容器中出现网络验证问题。
+            # 这需要使用 shell=True 和 bash 执行器。
+            command_to_run = f"source activate sra_env && fasterq-dump --progress --split-files --outdir {fastq_dir} {srr_id}"
+            dump_result = subprocess.run(
+                command_to_run,
+                shell=True,
+                capture_output=True,
+                text=True,
+                executable="/bin/bash"  # 明确使用 bash 以确保 'source' 命令有效
+            )
             if dump_result.returncode != 0:
-                raise subprocess.CalledProcessError(dump_result.returncode, dump_command, dump_result.stdout, dump_result.stderr)
+                # 将命令字符串传递给异常，以便进行准确的错误报告
+                raise subprocess.CalledProcessError(dump_result.returncode, command_to_run, dump_result.stdout, dump_result.stderr)
             
             print(f"任务 {task_id}: 成功下载 '{srr_id}'。")
             with db_lock:
@@ -295,7 +311,9 @@ def _perform_rna_seq_pipeline(task_id: str, task_database: dict, db_lock: thread
                 print(f"任务 {task_id}: 成功压缩 {fastq_file.name}.gz。")
 
     except subprocess.CalledProcessError as e:
-        error_message = f"处理 SRR ID '{srr_id}' 时命令 '{' '.join(e.cmd)}' 失败。\n返回码: {e.returncode}\n标准输出: {e.stdout}\n标准错误: {e.stderr}"
+        # e.cmd 现在是一个字符串，而不是列表，所以直接使用它。
+        cmd_str = e.cmd if isinstance(e.cmd, str) else ' '.join(e.cmd)
+        error_message = f"处理 SRR ID '{srr_id}' 时命令 '{cmd_str}' 失败。\n返回码: {e.returncode}\n标准输出: {e.stdout}\n标准错误: {e.stderr}"
         print(f"任务 {task_id} 失败: {error_message}")
         with db_lock:
             task_database[task_id]['status'] = 'failed'
@@ -310,7 +328,7 @@ def _perform_rna_seq_pipeline(task_id: str, task_database: dict, db_lock: thread
 
     # --- 3. 构造 Nextflow 参数并执行 ---
     srr_glob_part = "{" + ",".join(srr_ids) + "}"
-    reads_glob_pattern = str(fastq_dir / f"{srr_glob_part}_*.fastq.gz")
+    reads_glob_pattern = str(fastq_dir / f"{srr_glob_part}_{'{1,2}'}.fastq.gz")
     
     try:
         with db_lock:
@@ -328,8 +346,30 @@ def _perform_rna_seq_pipeline(task_id: str, task_database: dict, db_lock: thread
         with db_lock:
             task_database[task_id]['details']['pid'] = process.pid
             task_database[task_id]['details']['message'] = 'Nextflow 流程正在运行。'
-        
-        # 这里不需要等待，get_task_status 会负责检查进程状态
+
+        # --- 新的异步轮询逻辑 ---
+        # 等待进程结束。process.poll() 是非阻塞的。
+        while process.poll() is None:
+            # 每隔15秒检查一次，避免CPU占用过高
+            time.sleep(15)
+            print(f"任务 {task_id} (PID: {process.pid}) 仍在运行...")
+
+        # 进程已结束，获取最终的输出和返回码
+        print(f"任务 {task_id} (PID: {process.pid}) 已结束。正在收集最终状态...")
+        stdout, stderr = process.communicate()
+        exit_code = process.returncode
+
+        # 原子性地更新最终状态到数据库
+        with db_lock:
+            final_status = "completed" if exit_code == 0 else "failed"
+            task_database[task_id]['status'] = final_status
+            task_database[task_id]['end_time'] = time.time()
+            task_database[task_id]['details']['exit_code'] = exit_code
+            task_database[task_id]['details']['message'] = f'流程执行完毕，最终状态: {final_status}'
+            task_database[task_id]['details']['stdout'] = stdout
+            task_database[task_id]['details']['stderr'] = stderr
+            # 清理不再需要的旧字段
+            task_database[task_id]['details'].pop('current_srr', None)
 
     except Exception as e:
         print(f"任务 {task_id} 失败: 执行 Nextflow 流程时发生未知错误: {e}")

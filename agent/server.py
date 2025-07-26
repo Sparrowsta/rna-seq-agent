@@ -353,5 +353,5 @@ def get_task_status_endpoint(task_id: str):
 # --- 5. 启动服务器 ---
 if __name__ == "__main__":
     import uvicorn
-    print("正在启动流式 Agent 服务器 v0.3.0 ，访问 http://localhost:8001")
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    print("正在启动流式 Agent 服务器 v0.3.0 ，访问 http://localhost:48001")
+    uvicorn.run(app, host="0.0.0.0", port=48001)
