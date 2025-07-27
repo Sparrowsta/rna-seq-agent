@@ -391,14 +391,15 @@ def _perform_rna_seq_pipeline(task_id: str, task_database: dict, db_lock: thread
             task_database[task_id]['details']['error'] = f"执行 Nextflow 流程时发生未知错误: {e}"
         return
 
-def create_rna_seq_task(description: str, task_database: dict, db_lock: threading.Lock, task_id: str) -> dict:
+def create_rna_seq_task(description: str, task_database: dict, db_lock: threading.Lock, task_id_counter: int) -> dict:
     """
     初始化一个新的 RNA-seq 分析任务，状态为“构建中”。
-    此函数只创建任务记录，不执行任何计算。
+    此函数使用 task_id_counter 生成一个新的 task_id，创建任务记录，然后返回新的计数器值。
     """
-    print(f"工具 'create_rna_seq_task' 被调用，准备创建任务 {task_id}。")
-
     with db_lock:
+        task_id = f"task_{task_id_counter}"
+        print(f"工具 'create_rna_seq_task' 被调用，准备创建任务 {task_id}。")
+        
         task_database[task_id] = {
             "type": "pipeline",
             "status": "building", # 新的状态：构建中
@@ -409,12 +410,14 @@ def create_rna_seq_task(description: str, task_database: dict, db_lock: threadin
                 "parameters": {} # 用于存储所有配置
             }
         }
-    
-    return {
-        "status": "success",
-        "message": f"成功初始化新的分析任务！任务 ID: {task_id}",
-        "task_id": task_id
-    }
+        
+        # 返回给 server 的结果，包括新的 task_id 和更新后的计数器
+        return {
+            "status": "success",
+            "message": f"成功初始化新的分析任务！任务 ID: {task_id}",
+            "task_id": task_id,
+            "updated_task_id_counter": task_id_counter + 1
+        }
 
 def set_samples_for_task(task_id: str, srr_list: str, task_database: dict, db_lock: threading.Lock) -> dict:
     """向一个处于“构建中”状态的任务添加样本列表。"""
@@ -492,7 +495,7 @@ def launch_task(task_id: str, task_database: dict, db_lock: threading.Lock) -> d
     # 在锁之外创建并启动后台线程
     pipeline_thread = threading.Thread(
         target=_perform_rna_seq_pipeline,
-        args=(task_id, task_database, db_lock, genome_name, srr_list_str)
+        args=(task_id, task_database, db_lock)
     )
     pipeline_thread.daemon = True
     pipeline_thread.start()

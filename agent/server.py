@@ -133,6 +133,7 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
             messages=messages,
             tools=TOOLS,
             tool_choice="required",
+            temperature=0.0
         )
     except Exception as e:
         print(f"调用 LLM API 时发生错误: {e}")
@@ -251,6 +252,7 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
                 model=model_name,
                 messages=messages,
                 stream=True, # 以流式模式获取最终回复
+                temperature=0.0
             )
             # 7. 流式传输最终回复
             for chunk in second_response:

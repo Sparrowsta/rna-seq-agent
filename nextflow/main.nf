@@ -28,20 +28,15 @@ params.experiment_group = null
 // --- 2. Workflow Definition ---
 workflow {
     // --- 1. Input Channel Setup ---
-    // The agent is now responsible for providing the correct file path pattern.
-    // Nextflow simply consumes it and figures out the pairing.
     if (!params.reads) {
         error "Input reads not specified. Please provide a glob pattern for FASTQ files via --reads, e.g., 'path/to/*_{1,2}.fastq.gz'"
     }
 
     ch_reads = Channel
         .fromFilePairs(params.reads, size: -1) { file ->
-            // Group by sample ID, removing _1, _2, etc. from the filename
-            // This assumes a standard naming convention like SRR12345_1.fastq.gz
             file.name.replaceAll(/_?[12]\.fastq\.gz$|_\.fastq\.gz$/, "")
         }
         .map { sample_id, files ->
-            // Sort files to ensure _1 is always first for paired-end data
             tuple(sample_id, files.sort())
         }
 
@@ -60,16 +55,53 @@ workflow {
         ch_star_index = STAR_GENOME_GENERATE.out
     }
 
-    // --- 3. Quality Control ---
-    FASTP(ch_reads)
+    // --- 3. 智能 Quality Control ---
+    ch_reads.filter { sid, _ ->
+        !file("${params.outdir}/fastp/${sid}/${sid}_trimmed_1.fastq.gz").exists()
+    }.set { ch_reads_to_run_fastp }
 
-    // --- 4. Alignment ---
-    ch_for_alignment = FASTP.out.reads.combine(ch_star_index)
-    STAR_ALIGN(ch_for_alignment)
+    ch_reads.filter { sid, _ ->
+        file("${params.outdir}/fastp/${sid}/${sid}_trimmed_1.fastq.gz").exists()
+    }.set { ch_reads_existing_fastp }
 
-    // --- 5. Quantification ---
-    ch_bam_files = STAR_ALIGN.out.bam_ch.map { it[1] }.collect()
-    FEATURECOUNTS(ch_bam_files, Channel.fromPath(params.gtf))
+    FASTP(ch_reads_to_run_fastp)
+
+    ch_fastp_results_from_existing = ch_reads_existing_fastp.map { sid, _ ->
+        log.info "Skipping FASTP for ${sid}: published files found."
+        def r1 = file("${params.outdir}/fastp/${sid}/${sid}_trimmed_1.fastq.gz")
+        def r2 = file("${params.outdir}/fastp/${sid}/${sid}_trimmed_2.fastq.gz")
+        return tuple(sid, r2.exists() ? [r1, r2] : [r1])
+    }
+    ch_trimmed_reads = FASTP.out.reads.mix(ch_fastp_results_from_existing)
+
+    // --- 4. 智能 Alignment ---
+    ch_for_alignment = ch_trimmed_reads.combine(ch_star_index)
+
+    ch_for_alignment.filter { sid, _reads, _index ->
+        !file("${params.outdir}/bam/${sid}/${sid}.bam").exists()
+    }.set { ch_to_run_align }
+
+    ch_for_alignment.filter { sid, _reads, _index ->
+        file("${params.outdir}/bam/${sid}/${sid}.bam").exists()
+    }.set { ch_existing_align }
+
+    STAR_ALIGN(ch_to_run_align)
+
+    ch_star_results_from_existing = ch_existing_align.map { sid, _reads, _index ->
+        log.info "Skipping STAR Alignment for ${sid}: published BAM found."
+        return tuple(sid, file("${params.outdir}/bam/${sid}/${sid}.bam"))
+    }
+    ch_aligned_bams = STAR_ALIGN.out.bam_ch.mix(ch_star_results_from_existing)
+
+    // --- 5. 智能 Quantification ---
+    def final_counts_file = file("${params.outdir}/featurecounts/counts.txt")
+    if (final_counts_file.exists()) {
+        log.info "Final counts file found. Skipping quantification."
+    } else {
+        // .collect() is necessary here as featureCounts takes a list of files
+        ch_bam_files = ch_aligned_bams.map { it[1] }.collect()
+        FEATURECOUNTS(ch_bam_files, Channel.fromPath(params.gtf))
+    }
 
     // --- 6. (Optional) Differential Expression Analysis ---
     if (params.run_de_analysis) {
@@ -83,7 +115,6 @@ workflow {
 // --- 3. Process Definitions ---
 
 process STAR_GENOME_GENERATE {
-    // 将生成的索引发布到与源FASTA文件相同的目录中，以供跨项目复用
     publishDir path: "${file(params.fasta).parent}", mode: 'copy'
     
     label 'large_mem_process'
@@ -143,8 +174,8 @@ process STAR_ALIGN {
     tuple val(sample_id), path(reads), path(star_index)
 
     output:
-    tuple val(sample_id), path("*.bam"), emit: bam_ch
-    path "*.log", emit: log_ch
+    tuple val(sample_id), path("${sample_id}.bam"), emit: bam_ch
+    path "${sample_id}.log", emit: log_ch
 
     script:
     def read_files_str = reads instanceof List ? reads.join(' ') : reads
