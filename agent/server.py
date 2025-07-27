@@ -162,14 +162,24 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
             print(f"执行工具: {function_name}，参数: {function_args}")
 
             # --- 最终重构：完全统一的工具调用逻辑 ---
+            # --- 新的、模块化的工具集 ---
             available_tools = {
-                "run_rna_seq_pipeline": tool_module.run_rna_seq_pipeline,
+                # 任务构建
+                "create_rna_seq_task": tool_module.create_rna_seq_task,
+                "set_samples_for_task": tool_module.set_samples_for_task,
+                "set_genome_for_task": tool_module.set_genome_for_task,
+                "set_analysis_parameters": tool_module.set_analysis_parameters,
+                "get_task_summary": tool_module.get_task_summary,
+                "launch_task": tool_module.launch_task,
+                # 任务与文件管理
+                "get_task_status": tool_module.get_task_status,
+                "list_files": tool_module.list_files,
+                # 基因组管理
                 "list_available_genomes": tool_module.list_available_genomes,
                 "add_genome_to_config": tool_module.add_genome_to_config,
                 "download_genome_files": tool_module.download_genome_files,
-                "get_task_status": tool_module.get_task_status,
-                "list_files": tool_module.list_files,
-                "unsupported_request": tool_module.unsupported_request, # 注册“兜底”工具
+                # 兜底工具
+                "unsupported_request": tool_module.unsupported_request,
             }
             
             global task_id_counter
@@ -180,36 +190,35 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
                 if not function_to_call:
                     function_response = f"错误：未知的工具名称 '{function_name}'"
                 else:
-                    # 统一准备参数
+                    # --- 新的、更清晰的依赖注入逻辑 ---
                     tool_kwargs = function_args.copy()
 
-                    # 检查工具是否需要数据库或锁等共享资源
-                    # 这是我们新的、更灵活的依赖注入方式
-                    if function_name in ["run_rna_seq_pipeline", "download_genome_files", "get_task_status"]:
+                    # 定义哪些工具需要哪些共享资源
+                    TOOLS_NEEDING_DB = {
+                        "create_rna_seq_task", "set_samples_for_task", "set_genome_for_task",
+                        "set_analysis_parameters", "get_task_summary", "launch_task",
+                        "get_task_status", "download_genome_files"
+                    }
+                    TOOLS_NEEDING_COUNTER = {"create_rna_seq_task", "download_genome_files"}
+
+                    # 注入数据库和锁
+                    if function_name in TOOLS_NEEDING_DB:
                         tool_kwargs["task_database"] = TASK_DATABASE
                         tool_kwargs["db_lock"] = db_lock
-
-                    # 为需要创建任务的工具注入 task_id
-                    if function_name == "run_rna_seq_pipeline":
-                         with db_lock:
-                            new_task_id = f"task_{task_id_counter}"
-                            task_id_counter += 1
-                         tool_kwargs["task_id"] = new_task_id
                     
-                    if function_name == "download_genome_files":
+                    # 注入任务ID计数器
+                    if function_name in TOOLS_NEEDING_COUNTER:
+                        # 传递当前的计数器值
+                        tool_kwargs["task_id_counter"] = task_id_counter
+
+                    # 调用工具
+                    tool_result = function_to_call(**tool_kwargs)
+
+                    # 如果工具更新了计数器，则同步回全局计数器
+                    # 这是为了让 create_task 和 download_genome 都能安全地增加ID
+                    if function_name in TOOLS_NEEDING_COUNTER and isinstance(tool_result, dict):
                         with db_lock:
-                            # download_genome_files 内部会自己生成 download_x, download_y 等ID
-                            # 我们只需要传递计数器本身，让它能安全地增加
-                            tool_kwargs["task_id_counter"] = task_id_counter
-                        
-                        # 调用函数并更新计数器
-                        tool_result = function_to_call(**tool_kwargs)
-                        with db_lock:
-                            # 函数执行后，从其返回值更新全局计数器
                             task_id_counter = tool_result.get("updated_task_id_counter", task_id_counter)
-                    else:
-                        # 调用所有其他工具
-                        tool_result = function_to_call(**tool_kwargs)
 
                     # 统一处理返回结果
                     # 如果结果是字典，序列化为 JSON 字符串
@@ -308,47 +317,6 @@ def get_task_status_endpoint(task_id: str):
         print(f"!!! [状态端点] 查询状态时出错: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# @app.post("/run_pipeline")
-# async def run_pipeline_endpoint(run_input: PipelineRunInput):
-#     """
-#     [已弃用] 用于启动 Nextflow 流程的 API 端点。
-#     这个端点的业务逻辑已经全部移动到 agent/tools.py 的 run_rna_seq_pipeline 函数中，
-#     以解决死锁问题并优化代码结构。Agent 现在直接调用工具函数，不再需要这个 API。
-#     保留此代码作为参考。
-#     """
-#     # 创建一个临时目录来存放 SRR 列表文件，如果尚不存在
-#     temp_dir = os.path.join(os.path.dirname(__file__), "temp_srr_lists")
-#     os.makedirs(temp_dir, exist_ok=True)
-#
-#     try:
-#         # 将逗号或空格分隔的 SRR 字符串转换为列表
-#         srr_ids = run_input.srr_list.replace(",", " ").split()
-#         if not srr_ids:
-#             raise HTTPException(status_code=400, detail="SRR list cannot be empty.")
-#
-#         # 创建一个带时间戳的、唯一的临时文件名
-#         timestamp = int(time.time())
-#         temp_file_path = os.path.join(temp_dir, f"srr_list_{timestamp}.txt")
-#
-#         # 将 SRR ID 写入临时文件，每行一个
-#         with open(temp_file_path, "w") as f:
-#             for srr_id in srr_ids:
-#                 f.write(f"{srr_id}\n")
-#
-#         # 调用 pipeline 模块中的函数，传递临时文件的路径
-#         process = run_nextflow_pipeline({"srr_list_path": temp_file_path})
-#
-#         return {
-#             "message": "Nextflow pipeline started successfully.",
-#             "pid": process.pid,
-#             "srr_list_file": temp_file_path # 返回使用的临时文件路径，便于调试
-#         }
-#     except ValueError as e:
-#         raise HTTPException(status_code=400, detail=str(e))
-#     except Exception as e:
-#         # 其他未知错误，返回 500 错误
-#         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {e}")
 
 # --- 5. 启动服务器 ---
 if __name__ == "__main__":

@@ -217,14 +217,12 @@ def get_task_status(task_id: str, task_database: dict, db_lock: threading.Lock) 
     with db_lock:
         return task_database.get(task_id, {})
 
-def _perform_rna_seq_pipeline(task_id: str, task_database: dict, db_lock: threading.Lock, genome_name: str, srr_list: str):
+def _perform_rna_seq_pipeline(task_id: str, task_database: dict, db_lock: threading.Lock):
     """
-    在后台线程中执行 RNA-seq 流程的完整操作，包括下载、压缩和运行 Nextflow。
+    在后台线程中执行 RNA-seq 流程的完整操作。
+    此函数从任务数据库中读取所有必要的配置。
     """
-    # 注意：这个函数在自己的线程中运行，所以可以安全地执行阻塞操作。
-    # 它通过闭包或参数捕获了所有需要的变量。
-
-    # --- 1. 更新任务状态为 'running' 并解析参数 ---
+    # --- 1. 更新任务状态为 'running' 并从数据库解析参数 ---
     project_root = Path(__file__).parent.parent.resolve()
     config_path = project_root / 'config' / 'genomes.json'
     
@@ -233,6 +231,14 @@ def _perform_rna_seq_pipeline(task_id: str, task_database: dict, db_lock: thread
         task_database[task_id]['details']['message'] = '正在解析参数和基因组信息...'
 
     try:
+        with db_lock:
+            params = task_database[task_id]['details']['parameters']
+            genome_name = params.get('genome_name')
+            srr_ids = params.get('srr_list', [])
+
+        if not genome_name or not srr_ids:
+            raise ValueError("任务配置不完整，缺少基因组或样本列表。")
+
         with open(config_path, 'r') as f:
             genomes_data = json.load(f)
         genome_info = genomes_data.get(genome_name)
@@ -241,11 +247,8 @@ def _perform_rna_seq_pipeline(task_id: str, task_database: dict, db_lock: thread
         
         fasta_path = str(project_root / genome_info['fasta'])
         gtf_path = str(project_root / genome_info['gtf'])
-        srr_ids = srr_list.replace(",", " ").split()
-        if not srr_ids:
-            raise ValueError("SRR 列表不能为空。")
 
-        # --- 新增：在启动流程前检查基因组文件是否存在 ---
+        # --- 在启动流程前检查基因组文件是否存在 ---
         if not os.path.exists(fasta_path):
             raise FileNotFoundError(f"参考基因组 FASTA 文件未找到: {fasta_path}。请在使用前先下载该基因组。")
         if not os.path.exists(gtf_path):
@@ -335,12 +338,22 @@ def _perform_rna_seq_pipeline(task_id: str, task_database: dict, db_lock: thread
             task_database[task_id]['details']['message'] = '正在启动 Nextflow 流程...'
             task_database[task_id]['details']['reads_glob_pattern'] = reads_glob_pattern
         
-        pipeline_params = {
+        base_pipeline_params = {
             "reads_glob": reads_glob_pattern,
             "fasta_path": fasta_path,
             "gtf_path": gtf_path
         }
-        process = run_nextflow_pipeline(pipeline_params)
+        
+        # 从任务数据库中提取额外的工具参数
+        with db_lock:
+            tool_params = task_database[task_id].get('details', {}).get('parameters', {}).get('tool_params', {})
+
+        # 将所有工具的参数合并到一个字典中
+        all_tool_params = {}
+        for params in tool_params.values():
+            all_tool_params.update(params)
+
+        process = run_nextflow_pipeline(base_pipeline_params, all_tool_params)
         
         print(f"任务 {task_id}: Nextflow 流程已启动，PID: {process.pid}")
         with db_lock:
@@ -378,35 +391,112 @@ def _perform_rna_seq_pipeline(task_id: str, task_database: dict, db_lock: thread
             task_database[task_id]['details']['error'] = f"执行 Nextflow 流程时发生未知错误: {e}"
         return
 
-def run_rna_seq_pipeline(genome_name: str, srr_list: str, task_database: dict, db_lock: threading.Lock, task_id: str) -> dict:
+def create_rna_seq_task(description: str, task_database: dict, db_lock: threading.Lock, task_id: str) -> dict:
     """
-    根据指定的基因组和 SRR 列表，在后台启动 RNA-seq Nextflow 流程。
-    此函数会立即返回一个任务 ID，实际工作在后台线程中进行。
+    初始化一个新的 RNA-seq 分析任务，状态为“构建中”。
+    此函数只创建任务记录，不执行任何计算。
     """
-    print(f"工具 'run_rna_seq_pipeline' 被调用，准备启动任务 {task_id}。基因组: {genome_name}, SRR列表: {srr_list}")
+    print(f"工具 'create_rna_seq_task' 被调用，准备创建任务 {task_id}。")
 
-    # --- 1. 在数据库中立即创建任务记录 ---
     with db_lock:
         task_database[task_id] = {
             "type": "pipeline",
-            "status": "starting", # 初始状态
-            "start_time": time.time(),
+            "status": "building", # 新的状态：构建中
+            "creation_time": time.time(),
             "details": {
-                "genome_name": genome_name,
-                "srr_list": srr_list.replace(",", " ").split(),
-                "message": "任务正在初始化..."
+                "description": description,
+                "message": "任务正在配置中...",
+                "parameters": {} # 用于存储所有配置
             }
         }
+    
+    return {
+        "status": "success",
+        "message": f"成功初始化新的分析任务！任务 ID: {task_id}",
+        "task_id": task_id
+    }
 
-    # --- 2. 创建并启动后台线程 ---
+def set_samples_for_task(task_id: str, srr_list: str, task_database: dict, db_lock: threading.Lock) -> dict:
+    """向一个处于“构建中”状态的任务添加样本列表。"""
+    print(f"工具 'set_samples_for_task' 被调用，任务: {task_id}")
+    with db_lock:
+        if task_id not in task_database or task_database[task_id]['status'] != 'building':
+            return {"status": "error", "message": f"任务 {task_id} 不存在或不处于“构建中”状态。"}
+        
+        srr_ids = srr_list.replace(",", " ").split()
+        task_database[task_id]['details']['parameters']['srr_list'] = srr_ids
+        task_database[task_id]['details']['message'] = f"已添加 {len(srr_ids)} 个样本。"
+    
+    return {"status": "success", "message": f"已为任务 {task_id} 设置样本。"}
+
+def set_genome_for_task(task_id: str, genome_name: str, task_database: dict, db_lock: threading.Lock) -> dict:
+    """为一个处于“构建中”状态的任务设置参考基因组。"""
+    print(f"工具 'set_genome_for_task' 被调用，任务: {task_id}")
+    with db_lock:
+        if task_id not in task_database or task_database[task_id]['status'] != 'building':
+            return {"status": "error", "message": f"任务 {task_id} 不存在或不处于“构建中”状态。"}
+        
+        task_database[task_id]['details']['parameters']['genome_name'] = genome_name
+        task_database[task_id]['details']['message'] = f"已设置参考基因组为 {genome_name}。"
+    
+    return {"status": "success", "message": f"已为任务 {task_id} 设置基因组。"}
+
+def set_analysis_parameters(task_id: str, tool_name: str, params: dict, task_database: dict, db_lock: threading.Lock) -> dict:
+    """为一个处于“构建中”状态的任务设置特定工具的分析参数。"""
+    print(f"工具 'set_analysis_parameters' 被调用，任务: {task_id}, 工具: {tool_name}")
+    with db_lock:
+        if task_id not in task_database or task_database[task_id]['status'] != 'building':
+            return {"status": "error", "message": f"任务 {task_id} 不存在或不处于“构建中”状态。"}
+        
+        if 'tool_params' not in task_database[task_id]['details']['parameters']:
+            task_database[task_id]['details']['parameters']['tool_params'] = {}
+        
+        task_database[task_id]['details']['parameters']['tool_params'][tool_name] = params
+        task_database[task_id]['details']['message'] = f"已为 {tool_name} 设置参数。"
+        
+    return {"status": "success", "message": f"已为任务 {task_id} 的 {tool_name} 设置参数。"}
+
+def get_task_summary(task_id: str, task_database: dict, db_lock: threading.Lock) -> dict:
+    """获取一个处于“构建中”状态的任务的配置摘要，用于执行前确认。"""
+    print(f"工具 'get_task_summary' 被调用，任务: {task_id}")
+    with db_lock:
+        if task_id not in task_database or task_database[task_id]['status'] != 'building':
+            return {"status": "error", "message": f"任务 {task_id} 不存在或不处于“构建中”状态。"}
+        
+        # 为了线程安全，返回一个深拷贝
+        summary = json.loads(json.dumps(task_database[task_id]['details']))
+    
+    return {"status": "success", "summary": summary}
+
+def launch_task(task_id: str, task_database: dict, db_lock: threading.Lock) -> dict:
+    """确认并启动一个已配置完成的任务。"""
+    print(f"工具 'launch_task' 被调用，准备启动任务 {task_id}。")
+    with db_lock:
+        if task_id not in task_database or task_database[task_id]['status'] != 'building':
+            return {"status": "error", "message": f"任务 {task_id} 不存在或不处于“构建中”状态。"}
+        
+        # 检查必要的参数是否都已设置
+        params = task_database[task_id]['details']['parameters']
+        if 'genome_name' not in params or 'srr_list' not in params:
+            return {"status": "error", "message": "无法启动任务：缺少样本列表或参考基因组配置。"}
+            
+        # 更新状态，准备启动
+        task_database[task_id]['status'] = 'starting'
+        task_database[task_id]['start_time'] = time.time()
+        task_database[task_id]['details']['message'] = "任务已确认，正在初始化执行..."
+        
+        # 提取参数
+        genome_name = params['genome_name']
+        srr_list_str = " ".join(params['srr_list'])
+
+    # 在锁之外创建并启动后台线程
     pipeline_thread = threading.Thread(
         target=_perform_rna_seq_pipeline,
-        args=(task_id, task_database, db_lock, genome_name, srr_list)
+        args=(task_id, task_database, db_lock, genome_name, srr_list_str)
     )
     pipeline_thread.daemon = True
     pipeline_thread.start()
 
-    # --- 3. 立即返回成功信息 ---
     return {
         "status": "success",
         "message": f"成功启动 RNA-seq 流程！任务 ID: {task_id}",

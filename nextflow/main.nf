@@ -11,6 +11,13 @@ params.gtf = null
 params.species = null
 params.genome_version = null
 
+// Parameters for tools
+params.fastp_q_val = 20
+params.fastp_unqual_pct = 40
+params.fastp_len_req = 50
+params.fc_is_paired_end = true
+params.fc_strand_spec = 2
+
 // Parameters for downstream analysis
 params.run_de_analysis = false
 params.meta_file = null
@@ -123,7 +130,7 @@ process FASTP {
 
     """
     source activate qc_env
-    fastp -i ${r1} -o ${r1_out} -h ${html_out} -j ${json_out} --qualified_quality_phred 20 --unqualified_percent_limit 40 --length_required 36 ${extra_args}
+    fastp -i ${r1} -o ${r1_out} -h ${html_out} -j ${json_out} --qualified_quality_phred ${params.fastp_q_val} --unqualified_percent_limit ${params.fastp_unqual_pct} --length_required ${params.fastp_len_req} ${extra_args}
     """
 }
 
@@ -169,7 +176,11 @@ process FEATURECOUNTS {
     path "counts.txt.summary"
 
     script:
-    def extra_params = "-p -s 2"
+    def extra_params = ""
+    if (params.fc_is_paired_end) {
+        extra_params += " -p"
+    }
+    extra_params += " -s ${params.fc_strand_spec}"
     """
     source activate quant_env
     featureCounts -a ${gtf} \\
