@@ -1,175 +1,87 @@
-# agent/prompt.py
+# agent/prompt.py - v5.2 Architecture
 
+# This is the new "constitution" for our AI agent.
+# It teaches the LLM how to use the new two-step, plan-and-execute workflow.
 SYSTEM_PROMPT = """
-你是一个智能的、对话式的生物信息学分析助手。你的核心任务是通过与用户进行多轮对话，逐步构建并启动一个完整的 RNA-seq 分析任务。
+你是 Roo，一个世界级的生物信息学分析助手。你的核心职责是帮助用户运行复杂的 RNA-seq 分析流程。
 
-**核心工作流程与规则**
+**你的工作流程严格遵循“预检与确认”模式，分为两个主要步骤：**
 
-1.  **对话驱动**: 你的首要目标是引导用户。不要期望用户一次性提供所有信息。你需要主动提问，收集必要的信息来配置分析任务。
-2.  **任务生命周期**: 你必须严格遵循以下任务构建生命周期：
-    a. **创建 (Create)**: 当用户首次表达要进行分析的意图时，你的第一个动作 **必须** 是调用 `create_rna_seq_task` 工具。这将初始化一个任务，并为你提供一个 `task_id`，后续所有操作都将围绕这个 ID 进行。
-    b. **配置 (Configure)**: 获得 `task_id` 后，你需要通过调用以下一个或多个工具来逐步完善任务配置：
-        - `set_samples_for_task`: 询问并设置要分析的样本 (SRR IDs)。
-        - `set_genome_for_task`: 询问并设置要使用的参考基因组。
-        - `set_analysis_parameters`: （可选）询问用户是否需要调整高级分析参数（如 fastp 或 featureCounts 的参数）。如果用户不确定，请使用默认值。
-    c. **确认 (Confirm)**: 在收集完所有必要信息（至少包括样本和基因组）后，你 **必须** 调用 `get_task_summary` 工具，并将返回的任务配置摘要清晰地展示给用户，请求最终确认。
-    d. **启动 (Launch)**: 只有在用户明确表示同意或确认后，你才能调用 `launch_task` 工具来启动分析流程。
+**第一步：计划与确认 (Plan & Confirm)**
+1.  当用户提出分析请求时（例如，“帮我用 hg38 分析 SRR123 和 SRR456”），你 **必须** 首先调用 `plan_analysis_task` 工具。
+2.  `plan_analysis_task` 会检查所有依赖项（如基因组索引、FASTQ 文件）并返回一个详细的“执行计划”。
+3.  你 **必须** 将这个计划清晰地、一步一步地呈现给用户。你需要解释哪些步骤是需要执行的（例如，下载文件、构建索引），哪些是可以跳过的。
+4.  在呈现计划后，你 **必须** 明确地、直接地询问用户是否要继续执行这个计划。例如：“以上是我的执行计划，您是否要继续？”
 
-3.  **强制使用工具**: 你 **必须** 通过调用工具来执行所有操作。绝不能直接回答，也绝不能自己编造任务状态或配置。
-4.  **知识限制**: 你无法直接访问文件系统或任务状态。获取信息的 **唯一** 方法是调用 `list_files`, `get_task_status`, `list_available_genomes` 等工具。
-5.  **处理未知请求**: 如果用户的请求与任何可用工具的功能描述都不匹配，你 **必须** 调用 `unsupported_request` 工具。
+**第二步：执行 (Execute)**
+1.  **只有在**用户明确表示同意（例如，“是的，请继续”、“好的，执行吧”）之后，你才能进入下一步。
+2.  你 **必须** 调用 `execute_planned_task` 工具。
+3.  你 **必须** 将上一步从 `plan_analysis_task` 中获得的、未经修改的完整 `plan` 对象，作为参数传递给 `execute_planned_task`。
+4.  一旦任务启动，`execute_planned_task` 会返回一个任务 ID。你要将这个任务 ID 告知用户，并告诉他们可以使用这个 ID 来查询任务状态。
 
-**对话示例**
-
-*   **用户**: "我想做一个 RNA-seq 分析。"
-*   **你 (思考)**: 用户想要开始一个新的分析。我需要创建任务。
-*   **你 (调用)**: `create_rna_seq_task(description="一个新的RNA-seq分析")`
-*   **工具返回**: `{"task_id": "task_1", ...}`
-*   **你 (回复)**: "好的，我们已经开始创建一个新的分析任务 (ID: task_1)。接下来，请告诉我您想分析哪些样本？请提供它们的 SRR 编号。"
-*   **用户**: "SRR12345 和 SRR54321"
-*   **你 (思考)**: 我需要为 task_1 设置样本。
-*   **你 (调用)**: `set_samples_for_task(task_id="task_1", srr_list="SRR12345, SRR54321")`
-*   ... (继续对话以设置基因组) ...
-*   **你 (调用)**: `get_task_summary(task_id="task_1")`
-*   **工具返回**: `{"summary": ...}`
-*   **你 (回复)**: "请确认最终配置：...。是否现在启动分析？"
-*   **用户**: "是的，开始吧。"
-*   **你 (调用)**: `launch_task(task_id="task_1")`
+**其他重要指令：**
+*   **状态查询**: 如果用户询问任务状态，请使用 `get_task_status` 工具。
+*   **列出基因组**: 如果用户想知道有哪些可用的基因组，请使用 `list_available_genomes` 工具。
+*   **禁止幻觉**: 不要编造任何 `plan` 的内容。`plan` **必须** 来自 `plan_analysis_task` 工具的输出。
+*   **严格遵守流程**: **绝对不要**在没有先调用 `plan_analysis_task` 并获得用户确认的情况下，直接尝试调用 `execute_planned_task`。
 """
 
+# These are the tools the LLM can use.
+# It's a simplified, more powerful set compared to the previous version.
 TOOLS = [
-    # --- 1. 任务构建核心流程 ---
     {
         "type": "function",
         "function": {
-            "name": "create_rna_seq_task",
-            "description": "当用户首次表达想要运行一个新的分析流程时，必须首先调用此工具。它会初始化一个任务并返回一个唯一的 task_id。",
+            "name": "plan_analysis_task",
+            "description": "对一个分析任务进行预检，并生成一个详细的执行计划。此工具不执行任何耗时操作，仅用于检查依赖项（如基因组和样本文件）并制定计划。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "description": {
+                    "srr_ids": {
                         "type": "string",
-                        "description": "根据用户的请求，为任务生成一个简短的描述。例如：'分析人类细胞系的RNA-seq数据'。"
-                    }
-                },
-                "required": ["description"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "set_samples_for_task",
-            "description": "为一个已经创建的任务设置要分析的样本。你需要提供任务ID和样本的SRR列表。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task_id": {
-                        "type": "string",
-                        "description": "由 'create_rna_seq_task' 返回的任务唯一标识符。"
-                    },
-                    "srr_list": {
-                        "type": "string",
-                        "description": "一个包含一个或多个 SRR (Sequence Read Archive) 运行编号的字符串，可以由逗号或空格分隔。例如: 'SRR12345, SRR67890'"
-                    }
-                },
-                "required": ["task_id", "srr_list"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "set_genome_for_task",
-            "description": "为一个已经创建的任务设置参考基因组。你需要提供任务ID和基因组名称。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task_id": {
-                        "type": "string",
-                        "description": "由 'create_rna_seq_task' 返回的任务唯一标识符。"
+                        "description": "一个或多个用逗号分隔的 SRA Run Accession ID，例如 'SRR123456,SRR123457'。"
                     },
                     "genome_name": {
                         "type": "string",
-                        "description": "要用于分析的基因组的名称。可以使用 'list_available_genomes' 工具查看可用选项。"
+                        "description": "要使用的参考基因组的名称，例如 'hg38'。必须是 `list_available_genomes` 返回的名称之一。"
                     }
                 },
-                "required": ["task_id", "genome_name"]
+                "required": ["srr_ids", "genome_name"]
             }
         }
     },
     {
         "type": "function",
         "function": {
-            "name": "set_analysis_parameters",
-            "description": "为一个已经创建的任务设置特定的分析工具参数。这是一个高级选项，仅当用户明确要求修改时使用。",
+            "name": "execute_planned_task",
+            "description": "在用户确认后，执行一个由 `plan_analysis_task` 生成的计划。此工具会真正地启动后台计算任务。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "task_id": {
-                        "type": "string",
-                        "description": "由 'create_rna_seq_task' 返回的任务唯一标识符。"
-                    },
-                    "tool_name": {
-                        "type": "string",
-                        "enum": ["fastp", "featureCounts"],
-                        "description": "要配置参数的工具名称。"
-                    },
-                    "params": {
+                    "plan": {
                         "type": "object",
-                        "description": "一个包含参数名和值的字典。例如: '{\"fastp_q_val\": 25, \"fc_is_paired_end\": false}'"
-                    }
-                },
-                "required": ["task_id", "tool_name", "params"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_task_summary",
-            "description": "在收集完所有必要信息后，调用此工具来获取任务的最终配置摘要，以便向用户进行确认。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task_id": {
+                        "description": "一个完整的、未经修改的、从 `plan_analysis_task` 工具返回的 JSON 计划对象。"
+                    },
+                    "description": {
                         "type": "string",
-                        "description": "由 'create_rna_seq_task' 返回的任务唯一标识符。"
+                        "description": "对本次任务的简短描述，例如 'Analysis of SRR123 and SRR456 with hg38'。"
                     }
                 },
-                "required": ["task_id"]
+                "required": ["plan", "description"]
             }
         }
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "launch_task",
-            "description": "在用户最终确认了任务配置后，调用此工具来启动实际的 Nextflow 分析流程。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task_id": {
-                        "type": "string",
-                        "description": "由 'create_rna_seq_task' 返回并经过用户确认的任务唯一标识符。"
-                    }
-                },
-                "required": ["task_id"]
-            }
-        }
-    },
-    # --- 2. 状态与文件管理 ---
     {
         "type": "function",
         "function": {
             "name": "get_task_status",
-            "description": "当用户想要查询一个已经提交或正在运行的任务的状态时，调用此工具。",
+            "description": "查询一个已启动任务的当前状态、进度和日志。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "task_id": {
                         "type": "string",
-                        "description": "任务的唯一标识符，例如 'task_1' 或 'download_hg38'。"
+                        "description": "要查询的任务ID，例如 'task_1'。"
                     }
                 },
                 "required": ["task_id"]
@@ -179,69 +91,11 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "list_files",
-            "description": "列出指定路径下的文件和目录。路径是相对于 'data' 目录的。用于检查流程输出或已下载的文件。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "要查看的目录路径，相对于 'data' 目录。例如，要查看 'data/results'，请提供 'results'。如果省略，则默认为 'data' 的根目录。"
-                    }
-                },
-                "required": []
-            }
-        }
-    },
-    # --- 3. 基因组管理 ---
-    {
-        "type": "function",
-        "function": {
             "name": "list_available_genomes",
-            "description": "当用户想要查询当前服务器上有哪些可用的基因组时调用此工具。",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": []
-            }
+            "description": "列出所有当前已配置且可供分析使用的参考基因组。",
+            "parameters": {"type": "object", "properties": {}}
         }
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "add_genome_to_config",
-            "description": "将一个新的基因组条目添加到配置文件中。这个操作只更新配置，不执行下载。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "genome_name": {"type": "string", "description": "为该基因组指定一个简短且唯一的名称，例如 'hg19'。"},
-                    "species": {"type": "string", "description": "该基因组所属的物种，例如 'human'。"},
-                    "version": {"type": "string", "description": "该基因组的版本号，例如 'hg19'。"},
-                    "fasta_url": {"type": "string", "description": "指向 FASTA 文件的完整 URL。"},
-                    "gtf_url": {"type": "string", "description": "指向 GTF 文件的完整 URL。"}
-                },
-                "required": ["genome_name", "species", "version", "fasta_url", "gtf_url"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "download_genome_files",
-            "description": "为一个已经存在于配置文件中的基因组启动后台下载任务。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "genome_name": {
-                        "type": "string",
-                        "description": "要下载的基因组的名称，这个名称必须已经存在于配置文件中。"
-                    }
-                },
-                "required": ["genome_name"]
-            }
-        }
-    },
-    # --- 4. 兜底工具 ---
     {
         "type": "function",
         "function": {
@@ -252,7 +106,7 @@ TOOLS = [
                 "properties": {
                     "user_request": {
                         "type": "string",
-                        "description": "用户的原始请求字符串。"
+                        "description": "用户原始的、无法处理的请求文本。"
                     }
                 },
                 "required": ["user_request"]

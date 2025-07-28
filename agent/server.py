@@ -165,21 +165,15 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
             # --- 最终重构：完全统一的工具调用逻辑 ---
             # --- 新的、模块化的工具集 ---
             available_tools = {
-                # 任务构建
-                "create_rna_seq_task": tool_module.create_rna_seq_task,
-                "set_samples_for_task": tool_module.set_samples_for_task,
-                "set_genome_for_task": tool_module.set_genome_for_task,
-                "set_analysis_parameters": tool_module.set_analysis_parameters,
-                "get_task_summary": tool_module.get_task_summary,
-                "launch_task": tool_module.launch_task,
-                # 任务与文件管理
+                # v5.2 Tools
+                "plan_analysis_task": tool_module.plan_analysis_task,
+                "execute_planned_task": tool_module.execute_planned_task,
                 "get_task_status": tool_module.get_task_status,
-                "list_files": tool_module.list_files,
-                # 基因组管理
                 "list_available_genomes": tool_module.list_available_genomes,
-                "add_genome_to_config": tool_module.add_genome_to_config,
-                "download_genome_files": tool_module.download_genome_files,
-                # 兜底工具
+                # Legacy tools to be removed or refactored
+                # "list_files": tool_module.list_files,
+                # "add_genome_to_config": tool_module.add_genome_to_config,
+                # "download_genome_files": tool_module.download_genome_files,
                 "unsupported_request": tool_module.unsupported_request,
             }
             
@@ -196,11 +190,10 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
 
                     # 定义哪些工具需要哪些共享资源
                     TOOLS_NEEDING_DB = {
-                        "create_rna_seq_task", "set_samples_for_task", "set_genome_for_task",
-                        "set_analysis_parameters", "get_task_summary", "launch_task",
-                        "get_task_status", "download_genome_files"
+                        "execute_planned_task",
+                        "get_task_status",
                     }
-                    TOOLS_NEEDING_COUNTER = {"create_rna_seq_task", "download_genome_files"}
+                    TOOLS_NEEDING_COUNTER = {"execute_planned_task"}
 
                     # 注入数据库和锁
                     if function_name in TOOLS_NEEDING_DB:
