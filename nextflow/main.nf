@@ -25,6 +25,7 @@ params.fc_is_paired_end = true
 params.fc_strand_spec = 2
 
 // Orchestration parameters (controlled by the agent's plan)
+params.run_genome_download = false
 params.run_genome_prep = false
 params.run_download_fastq = false
 params.run_analysis = false
@@ -32,6 +33,7 @@ params.run_analysis = false
 
 // --- 2. Module Imports ---
 // Include the building blocks of our pipeline.
+include { DOWNLOAD_GENOME } from './modules/download_genome'
 include { GENOME_PREP } from './modules/genome_prep'
 include { DOWNLOAD_FASTQ } from './modules/download_fastq'
 include { ANALYSIS } from './modules/analysis'
@@ -41,10 +43,11 @@ include { ANALYSIS } from './modules/analysis'
 workflow {
     log.info """
     --- RNA-Seq Pipeline ---
-    Run Flags:
-      - Genome Prep:    ${params.run_genome_prep}
-      - FASTQ Download: ${params.run_download_fastq}
-      - Analysis:       ${params.run_analysis}
+     Run Flags:
+       - Genome Download:  ${params.run_genome_download}
+       - Genome Prep:    ${params.run_genome_prep}
+       - FASTQ Download: ${params.run_download_fastq}
+       - Analysis:       ${params.run_analysis}
     Input FASTQ:      ${params.reads ?: 'None'}
     Input SRR IDs:    ${params.srr_ids ?: 'None'}
     Genome FASTA:     ${params.fasta ?: 'None'}
@@ -61,14 +64,42 @@ workflow {
 
     // --- Module Execution Logic ---
 
-    // Step 1: Genome Preparation (Optional)
-    if (params.run_genome_prep) {
-        if (!params.fasta || !params.gtf) {
-            error "To run genome prep, --fasta and --gtf must be provided."
+    // Step 1: Genome Download (Optional)
+    if (params.run_genome_download) {
+        // This step is controlled by the agent, which gets info from genomes.json
+        // We create a channel that emits a single tuple: [genome_name, genome_info_map]
+        def genomes_config = new groovy.json.JsonSlurper().parseText(file("/app/config/genomes.json").text)
+        def genome_info = genomes_config[params.genome_name]
+        if (!genome_info) {
+            error "Genome '${params.genome_name}' not found in config/genomes.json"
         }
-        fasta_ch = Channel.fromPath(params.fasta)
-        gtf_ch = Channel.fromPath(params.gtf)
-        GENOME_PREP(fasta_ch, gtf_ch)
+        DOWNLOAD_GENOME(Channel.of([params.genome_name, genome_info]))
+    }
+
+    // Step 2: Genome Preparation (Optional)
+    // This logic is now robust. It creates a unified channel `ch_genome_files_for_prep`
+    // which gets populated EITHER from the download module's output OR from the initial params.
+    // This ensures GENOME_PREP only runs when it has a valid input file channel.
+    if (params.run_genome_prep) {
+        ch_genome_files_for_prep = Channel.empty()
+
+        if (params.run_genome_download) {
+            // Data flows directly from the download module
+            ch_genome_files_for_prep = DOWNLOAD_GENOME.out.genome_files
+        } else {
+            // Data flows from the command-line parameters
+            if (!params.fasta || !params.gtf) {
+                error "To run genome prep without download, --fasta and --gtf must be provided."
+            }
+            ch_genome_files_for_prep = Channel.of([params.genome_name, file(params.fasta), file(params.gtf)])
+        }
+
+        // GENOME_PREP takes the unified channel as input
+        // We need to separate the tuple into individual channels for fasta and gtf
+        ch_fasta_for_prep = ch_genome_files_for_prep.map { genome_name, fasta, gtf -> fasta }
+        ch_gtf_for_prep = ch_genome_files_for_prep.map { genome_name, fasta, gtf -> gtf }
+        
+        GENOME_PREP(ch_fasta_for_prep, ch_gtf_for_prep)
         ch_star_index = GENOME_PREP.out.star_index
     } else if (params.run_analysis) {
         // If not running prep but running analysis, the index must already exist.
@@ -96,7 +127,10 @@ workflow {
         }
         ch_reads_for_analysis = Channel
             .fromFilePairs(params.reads, size: -1) { file ->
-                file.name.replaceAll(/_?[12]\.fastq\.gz$|_\.fastq\.gz$/, "")
+                // 更健壮的文件名处理，支持单端和双端测序
+                def name = file.name
+                // 移除 _1.fastq.gz, _2.fastq.gz, .fastq.gz 后缀
+                name.replaceAll(/_[12]\.fastq\.gz$|\.fastq\.gz$/, "")
             }
             .map { sample_id, files ->
                 tuple(sample_id, files.sort())
@@ -105,10 +139,26 @@ workflow {
 
     // Step 3: Core Analysis (Optional)
     if (params.run_analysis) {
-        if (!params.gtf) {
-            error "Analysis requires a GTF file. Please provide it via --gtf."
+        // The GTF file for analysis can come from the download step or initial params.
+        // We use the same logic as for GENOME_PREP to determine the source.
+        def gtf_for_analysis
+        if (params.run_genome_download) {
+            // GTF comes from the download step
+            gtf_for_analysis = DOWNLOAD_GENOME.out.genome_files.map { genome_name, fasta, gtf -> gtf }
+        } else {
+            // GTF comes from initial params or from the genome config
+            if (params.gtf) {
+                gtf_for_analysis = Channel.fromPath(params.gtf)
+            } else {
+                // Use GTF from genome config
+                def genomes_config = new groovy.json.JsonSlurper().parseText(file("/app/config/genomes.json").text)
+                def genome_info = genomes_config[params.genome_name]
+                if (!genome_info) {
+                    error "Genome '${params.genome_name}' not found in config/genomes.json"
+                }
+                gtf_for_analysis = Channel.fromPath(genome_info.gtf)
+            }
         }
-        gtf_ch_for_analysis = Channel.fromPath(params.gtf)
-        ANALYSIS(ch_reads_for_analysis, ch_star_index, gtf_ch_for_analysis)
+        ANALYSIS(ch_reads_for_analysis, ch_star_index, gtf_for_analysis)
     }
 }

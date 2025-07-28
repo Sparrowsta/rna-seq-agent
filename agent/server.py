@@ -30,14 +30,6 @@ class StandardMessage(BaseModel):
 class ChatInput(BaseModel):
     messages: List[StandardMessage]
 
-class PipelineRunInput(BaseModel):
-    srr_list: str
-
-class ToolCallInput(BaseModel):
-    """用于直接调用工具的测试端点的数据模型"""
-    tool_name: str
-    params: Dict[str, Any]
-
 
 # --- 2. 创建 FastAPI 应用实例 ---
 app = FastAPI(
@@ -58,7 +50,7 @@ load_dotenv()
 # 从环境变量中获取配置
 api_key = os.getenv("OPENAI_API_KEY")
 base_url = os.getenv("OPENAI_API_BASE")
-model_name = os.getenv("OPENAI_MODEL_NAME", "default-model") # 提供一个默认值
+model_name = os.getenv("OPENAI_MODEL_NAME", "default-model") 
 
 if not api_key or not base_url:
     raise ValueError("请在项目根目录的 .env 文件中设置 OPENAI_API_KEY 和 OPENAI_API_BASE")
@@ -170,10 +162,9 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
                 "execute_planned_task": tool_module.execute_planned_task,
                 "get_task_status": tool_module.get_task_status,
                 "list_available_genomes": tool_module.list_available_genomes,
-                # Legacy tools to be removed or refactored
-                # "list_files": tool_module.list_files,
-                # "add_genome_to_config": tool_module.add_genome_to_config,
-                # "download_genome_files": tool_module.download_genome_files,
+                "list_files": tool_module.list_files,
+                "add_genome_to_config": tool_module.add_genome_to_config,
+                "download_genome_files": tool_module.download_genome_files,
                 "unsupported_request": tool_module.unsupported_request,
             }
             

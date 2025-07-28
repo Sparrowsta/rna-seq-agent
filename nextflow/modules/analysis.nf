@@ -20,8 +20,7 @@ workflow ANALYSIS {
         STAR_ALIGN(ch_for_alignment)
 
         // 3. Quantification
-        ch_bam_files = STAR_ALIGN.out.bam_ch.map { it[1] }.collect()
-        FEATURECOUNTS(ch_bam_files, gtf_ch)
+        FEATURECOUNTS(STAR_ALIGN.out.bam_ch.map { sample_id, bam_file -> bam_file }.collect(), gtf_ch)
 
     emit:
         counts = FEATURECOUNTS.out.counts
@@ -101,12 +100,17 @@ process FEATURECOUNTS {
         extra_params += " -p"
     }
     extra_params += " -s ${params.fc_strand_spec}"
+    
+    // 确保bams是一个列表
+    def bam_files = bams instanceof List ? bams : [bams]
+    def bam_args = bam_files.join(' ')
+    
     """
     source activate quant_env
     featureCounts -a ${gtf} \\
                   -o counts.txt \\
                   -T ${task.cpus} \\
                   ${extra_params} \\
-                  ${bams.join(' ')}
+                  ${bam_args}
     """
 }

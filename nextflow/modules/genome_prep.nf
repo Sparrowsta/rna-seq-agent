@@ -17,9 +17,8 @@ workflow GENOME_PREP {
 }
 
 process STAR_GENOME_GENERATE {
-    // The publishDir now points to a generic 'genomes' directory.
-    // The agent will know the full path based on species and genome_version.
-    publishDir "${params.outdir}/genomes/${params.species}/${params.genome_version}/", mode: 'copy'
+    // The publishDir now points to the genomes directory.
+    publishDir "data/genomes/${params.species}/${params.genome_version}/", mode: 'copy'
     
     label 'large_mem_process'
 
