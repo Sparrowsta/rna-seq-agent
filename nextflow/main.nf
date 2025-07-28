@@ -2,222 +2,113 @@
 nextflow.enable.dsl=2
 
 // --- 1. Parameter Definitions ---
-params.reads = null
-params.outdir = './results'      // Set a default output directory
+// These parameters are the public API of the pipeline, controlled by the agent.
 
-// Genome-related parameters - MUST be provided by the agent
-params.fasta = null
-params.gtf = null
-params.species = null
-params.genome_version = null
+// Input data
+params.reads = null           // Glob pattern for existing FASTQ files, e.g., 'data/fastq/SRR*/*_{1,2}.fastq.gz'
+params.srr_ids = null         // Comma-separated list of SRR IDs to download, e.g., "SRR123,SRR456"
 
-// Parameters for tools
+// Genome resources
+params.fasta = null           // Path to genome FASTA file
+params.gtf = null             // Path to gene annotation GTF file
+params.species = "unknown"
+params.genome_version = "unknown"
+
+// Output directory
+params.outdir = './results'
+
+// Tool-specific parameters
 params.fastp_q_val = 20
 params.fastp_unqual_pct = 40
 params.fastp_len_req = 50
 params.fc_is_paired_end = true
 params.fc_strand_spec = 2
 
-// Parameters for downstream analysis
-params.run_de_analysis = false
-params.meta_file = null
-params.control_group = null
-params.experiment_group = null
+// Orchestration parameters (controlled by the agent's plan)
+params.run_genome_prep = false
+params.run_download_fastq = false
+params.run_analysis = false
 
 
-// --- 2. Workflow Definition ---
+// --- 2. Module Imports ---
+// Include the building blocks of our pipeline.
+include { GENOME_PREP } from './modules/genome_prep'
+include { DOWNLOAD_FASTQ } from './modules/download_fastq'
+include { ANALYSIS } from './modules/analysis'
+
+
+// --- 3. Workflow Orchestration ---
 workflow {
-    // --- 1. Input Channel Setup ---
-    if (!params.reads) {
-        error "Input reads not specified. Please provide a glob pattern for FASTQ files via --reads, e.g., 'path/to/*_{1,2}.fastq.gz'"
-    }
+    log.info """
+    --- RNA-Seq Pipeline ---
+    Run Flags:
+      - Genome Prep:    ${params.run_genome_prep}
+      - FASTQ Download: ${params.run_download_fastq}
+      - Analysis:       ${params.run_analysis}
+    Input FASTQ:      ${params.reads ?: 'None'}
+    Input SRR IDs:    ${params.srr_ids ?: 'None'}
+    Genome FASTA:     ${params.fasta ?: 'None'}
+    ---------------------------
+    """
 
-    ch_reads = Channel
-        .fromFilePairs(params.reads, size: -1) { file ->
-            file.name.replaceAll(/_?[12]\.fastq\.gz$|_\.fastq\.gz$/, "")
-        }
-        .map { sample_id, files ->
-            tuple(sample_id, files.sort())
-        }
-
-    // --- 2. Genome Index Management ---
-    def published_index = file(params.fasta).parent.resolve('star_index')
+    // Channel for the STAR index. It will be populated either by the
+    // GENOME_PREP module or by an existing path provided by the agent.
     ch_star_index = Channel.empty()
-    if (published_index.exists() && published_index.isDirectory()) {
-        log.info "Found published STAR index: ${published_index}"
-        ch_star_index = Channel.fromPath(published_index)
-    } else {
-        log.info "Published STAR index not found, generating..."
-        STAR_GENOME_GENERATE(
-            Channel.fromPath(params.fasta),
-            Channel.fromPath(params.gtf)
-        )
-        ch_star_index = STAR_GENOME_GENERATE.out
-    }
 
-    // --- 3. 智能 Quality Control ---
-    ch_reads.filter { sid, _ ->
-        !file("${params.outdir}/fastp/${sid}/${sid}_trimmed_1.fastq.gz").exists()
-    }.set { ch_reads_to_run_fastp }
+    // Channel for the input reads. It will be populated either by the
+    // DOWNLOAD_FASTQ module or by a glob pattern of existing files.
+    ch_reads_for_analysis = Channel.empty()
 
-    ch_reads.filter { sid, _ ->
-        file("${params.outdir}/fastp/${sid}/${sid}_trimmed_1.fastq.gz").exists()
-    }.set { ch_reads_existing_fastp }
+    // --- Module Execution Logic ---
 
-    FASTP(ch_reads_to_run_fastp)
-
-    ch_fastp_results_from_existing = ch_reads_existing_fastp.map { sid, _ ->
-        log.info "Skipping FASTP for ${sid}: published files found."
-        def r1 = file("${params.outdir}/fastp/${sid}/${sid}_trimmed_1.fastq.gz")
-        def r2 = file("${params.outdir}/fastp/${sid}/${sid}_trimmed_2.fastq.gz")
-        return tuple(sid, r2.exists() ? [r1, r2] : [r1])
-    }
-    ch_trimmed_reads = FASTP.out.reads.mix(ch_fastp_results_from_existing)
-
-    // --- 4. 智能 Alignment ---
-    ch_for_alignment = ch_trimmed_reads.combine(ch_star_index)
-
-    ch_for_alignment.filter { sid, _reads, _index ->
-        !file("${params.outdir}/bam/${sid}/${sid}.bam").exists()
-    }.set { ch_to_run_align }
-
-    ch_for_alignment.filter { sid, _reads, _index ->
-        file("${params.outdir}/bam/${sid}/${sid}.bam").exists()
-    }.set { ch_existing_align }
-
-    STAR_ALIGN(ch_to_run_align)
-
-    ch_star_results_from_existing = ch_existing_align.map { sid, _reads, _index ->
-        log.info "Skipping STAR Alignment for ${sid}: published BAM found."
-        return tuple(sid, file("${params.outdir}/bam/${sid}/${sid}.bam"))
-    }
-    ch_aligned_bams = STAR_ALIGN.out.bam_ch.mix(ch_star_results_from_existing)
-
-    // --- 5. 智能 Quantification ---
-    def final_counts_file = file("${params.outdir}/featurecounts/counts.txt")
-    if (final_counts_file.exists()) {
-        log.info "Final counts file found. Skipping quantification."
-    } else {
-        // .collect() is necessary here as featureCounts takes a list of files
-        ch_bam_files = ch_aligned_bams.map { it[1] }.collect()
-        FEATURECOUNTS(ch_bam_files, Channel.fromPath(params.gtf))
-    }
-
-    // --- 6. (Optional) Differential Expression Analysis ---
-    if (params.run_de_analysis) {
-        if (!params.meta_file || !params.control_group || !params.experiment_group) {
-            error "To run DE analysis, --meta_file, --control_group, and --experiment_group must be provided."
+    // Step 1: Genome Preparation (Optional)
+    if (params.run_genome_prep) {
+        if (!params.fasta || !params.gtf) {
+            error "To run genome prep, --fasta and --gtf must be provided."
         }
-        // Placeholder for future DE analysis module
+        fasta_ch = Channel.fromPath(params.fasta)
+        gtf_ch = Channel.fromPath(params.gtf)
+        GENOME_PREP(fasta_ch, gtf_ch)
+        ch_star_index = GENOME_PREP.out.star_index
+    } else if (params.run_analysis) {
+        // If not running prep but running analysis, the index must already exist.
+        // The agent is responsible for providing the correct path via params.fasta.
+        def existing_index_path = file(params.fasta).parent.resolve('star_index')
+        if (!existing_index_path.exists() || !existing_index_path.isDirectory()) {
+            error "Analysis requires a STAR index. Path not found: ${existing_index_path}"
+        }
+        ch_star_index = Channel.fromPath(existing_index_path)
     }
-}
 
-// --- 3. Process Definitions ---
-
-process STAR_GENOME_GENERATE {
-    publishDir path: "${file(params.fasta).parent}", mode: 'copy'
-    
-    label 'large_mem_process'
-
-    input:
-    path fasta
-    path gtf
-
-    output:
-    path "star_index"
-
-    script:
-    """
-    source activate align_env
-    mkdir star_index
-    STAR --runMode genomeGenerate \\
-         --genomeDir star_index \\
-         --genomeFastaFiles ${fasta} \\
-         --sjdbGTFfile ${gtf} \\
-         --runThreadN ${task.cpus}
-    """
-}
-
-process FASTP {
-    publishDir "${params.outdir}/fastp/${sample_id}", mode: 'copy'
-
-    label 'default_process'
-
-    input:
-    tuple val(sample_id), path(reads)
-
-    output:
-    tuple val(sample_id), path("${sample_id}_trimmed_{1,2}.fastq.gz"), emit: reads
-    path "${sample_id}.html", emit: html
-    path "${sample_id}.json", emit: json
-
-    script:
-    def (r1, r2) = reads
-    def r1_out = "${sample_id}_trimmed_1.fastq.gz"
-    def r2_out = r2 ? "${sample_id}_trimmed_2.fastq.gz" : ''
-    def html_out = "${sample_id}.html"
-    def json_out = "${sample_id}.json"
-    def extra_args = r2 ? "-I ${r2} -O ${r2_out}" : ""
-
-    """
-    source activate qc_env
-    fastp -i ${r1} -o ${r1_out} -h ${html_out} -j ${json_out} --qualified_quality_phred ${params.fastp_q_val} --unqualified_percent_limit ${params.fastp_unqual_pct} --length_required ${params.fastp_len_req} ${extra_args}
-    """
-}
-
-process STAR_ALIGN {
-    publishDir "${params.outdir}/bam/${sample_id}", mode: 'copy', pattern: "*.{bam,log}"
-    
-    label 'large_mem_process'
-
-    input:
-    tuple val(sample_id), path(reads), path(star_index)
-
-    output:
-    tuple val(sample_id), path("${sample_id}.bam"), emit: bam_ch
-    path "${sample_id}.log", emit: log_ch
-
-    script:
-    def read_files_str = reads instanceof List ? reads.join(' ') : reads
-    """
-    source activate align_env
-    STAR --genomeDir ${star_index} \\
-         --readFilesIn ${read_files_str} \\
-         --readFilesCommand zcat \\
-         --runThreadN ${task.cpus} \\
-         --outFileNamePrefix "${sample_id}_" \\
-         --outSAMtype BAM SortedByCoordinate
-         
-    mv ${sample_id}_Aligned.sortedByCoord.out.bam ${sample_id}.bam
-    mv ${sample_id}_Log.final.out ${sample_id}.log
-    """
-}
-
-process FEATURECOUNTS {
-    publishDir "${params.outdir}/featurecounts", mode: 'copy'
-
-    label 'default_process'
-
-    input:
-    path bams
-    path gtf
-
-    output:
-    path "counts.txt"
-    path "counts.txt.summary"
-
-    script:
-    def extra_params = ""
-    if (params.fc_is_paired_end) {
-        extra_params += " -p"
+    // Step 2: FASTQ Download (Optional)
+    if (params.run_download_fastq) {
+        if (!params.srr_ids) {
+            error "To run FASTQ download, --srr_ids must be provided."
+        }
+        srr_ids_ch = Channel.from(params.srr_ids)
+        DOWNLOAD_FASTQ(srr_ids_ch)
+        ch_reads_for_analysis = DOWNLOAD_FASTQ.out.reads
+    } else if (params.run_analysis) {
+        // If not running download but running analysis, the reads must already exist.
+        // The agent is responsible for providing the correct glob pattern via params.reads.
+        if (!params.reads) {
+            error "Analysis requires input reads. Please provide a glob pattern via --reads."
+        }
+        ch_reads_for_analysis = Channel
+            .fromFilePairs(params.reads, size: -1) { file ->
+                file.name.replaceAll(/_?[12]\.fastq\.gz$|_\.fastq\.gz$/, "")
+            }
+            .map { sample_id, files ->
+                tuple(sample_id, files.sort())
+            }
     }
-    extra_params += " -s ${params.fc_strand_spec}"
-    """
-    source activate quant_env
-    featureCounts -a ${gtf} \\
-                  -o counts.txt \\
-                  -T ${task.cpus} \\
-                  ${extra_params} \\
-                  ${bams.join(' ')}
-    """
+
+    // Step 3: Core Analysis (Optional)
+    if (params.run_analysis) {
+        if (!params.gtf) {
+            error "Analysis requires a GTF file. Please provide it via --gtf."
+        }
+        gtf_ch_for_analysis = Channel.fromPath(params.gtf)
+        ANALYSIS(ch_reads_for_analysis, ch_star_index, gtf_ch_for_analysis)
+    }
 }
