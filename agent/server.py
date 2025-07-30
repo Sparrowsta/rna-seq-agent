@@ -106,6 +106,7 @@ async def list_models():
 async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, None]:
     """
     一个由 LLM 驱动的、支持工具调用的 Agent 响应生成器。
+    现在支持React模式：思考-行动-观察循环。
     """
     # 1. 准备发送给 LLM 的消息，确保我们的系统提示是唯一的
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -114,132 +115,359 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
         if msg.role != "system":
             messages.append({"role": msg.role, "content": msg.content})
 
-    # 2. 第一次调用 LLM，让它决定是否使用工具
-    print(f"--- 第一次调用 LLM (模型: {model_name}) ---")
-    print(f"发送的消息: {messages}")
-    print(f"可用的工具: {TOOLS}")
+    # React模式状态跟踪
+    react_cycle_count = 0
+    max_react_cycles = 100  # 防止无限循环
     
-    try:
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=messages,
-            tools=TOOLS,
-            tool_choice="required",
-            temperature=0.0
-        )
-    except Exception as e:
-        print(f"调用 LLM API 时发生错误: {e}")
-        yield f"data: {json.dumps({'error': str(e)})}\n\n"
-        yield "data: [DONE]\n\n"
-        return
+    while react_cycle_count < max_react_cycles:
+        react_cycle_count += 1
+        
+        # 2. 调用 LLM，让它进行思考并决定行动
+        print(f"--- React循环 {react_cycle_count}: 调用 LLM (模型: {model_name}) ---")
+        print(f"发送的消息: {messages}")
+        print(f"可用的工具: {TOOLS}")
+        
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                tools=TOOLS,
+                temperature=0.0
+            )
+        except Exception as e:
+            print(f"调用 LLM API 时发生错误: {e}")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
 
-    response_message = response.choices[0].message
-    tool_calls = response_message.tool_calls
+        response_message = response.choices[0].message
+        tool_calls = response_message.tool_calls
 
-    # 3. 检查 LLM 是否决定调用工具
-    if tool_calls:
-        print(f"--- LLM 决定调用工具: {tool_calls} ---")
-        messages.append(response_message)  # 将 assistant 的回复（包括工具调用请求）添加到历史记录中
-
-        # 4. 执行所有工具调用
-        for tool_call in tool_calls:
-            function_name = tool_call.function.name
+            # 3. 发送思考阶段的信息
+        thought_chunk = {
+            "id": response.id, 
+            "object": "chat.completion.chunk", 
+            "created": response.created, 
+            "model": response.model,
+            "choices": [{"index": 0, "delta": {"content": f"🤔 思考阶段 (循环 {react_cycle_count}): LLM正在分析当前情况并制定行动计划...\n"}, "finish_reason": None}]
+            }
+        yield f"data: {json.dumps(thought_chunk)}\n\n"
             
-            try:
-                function_args = json.loads(tool_call.function.arguments)
-            except json.JSONDecodeError:
-                function_response = f"错误: LLM 返回了无效的 JSON 参数: {tool_call.function.arguments}"
-                messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": function_response})
+            # 强制立即显示
+        yield f"data: {json.dumps({'id': response.id, 'object': 'chat.completion.chunk', 'created': response.created, 'model': response.model, 'choices': [{'index': 0, 'delta': {'content': ''}, 'finish_reason': None}]})}\n\n"
+
+        # 4. 检查 LLM 是否决定调用工具
+        if tool_calls:
+            print(f"--- React循环 {react_cycle_count}: LLM 决定调用工具: {tool_calls} ---")
+            messages.append(response_message)  # 将 assistant 的回复（包括工具调用请求）添加到历史记录中
+
+            # 5. 执行所有工具调用（行动阶段）
+            action_chunk = {
+                "id": response.id, 
+                "object": "chat.completion.chunk", 
+                "created": response.created, 
+                "model": response.model,
+                "choices": [{"index": 0, "delta": {"content": f"🔧 行动阶段 (循环 {react_cycle_count}): 执行 {len(tool_calls)} 个工具调用..."}, "finish_reason": None}]
+            }
+            yield f"data: {json.dumps(action_chunk)}\n\n"
+
+            for tool_call in tool_calls:
+                function_name = tool_call.function.name
+                
+                try:
+                    function_args = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError:
+                    print(f"❌ JSON解析错误: {tool_call.function.arguments}")
+                    function_response = f"错误: LLM 返回了无效的 JSON 参数: {tool_call.function.arguments}"
+                    messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": function_response})
+                    continue
+                
+                # 检查是否有特殊token或错误格式
+                if "REDACTED_SPECIAL_TOKEN" in tool_call.function.arguments:
+                    print(f"❌ 检测到特殊token: {tool_call.function.arguments}")
+                    function_response = f"错误: 检测到特殊token，请使用标准的工具调用格式"
+                    messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": function_response})
+                    continue
+                
+                # 检查是否有function标签
+                if "function" in tool_call.function.arguments:
+                    print(f"❌ 检测到function标签: {tool_call.function.arguments}")
+                    function_response = f"错误: 检测到function标签，请使用标准的工具调用格式"
+                    messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": function_response})
+                    continue
+                
+                # 检查是否有JSON标签
+                if "<JSON>" in tool_call.function.arguments:
+                    print(f"❌ 检测到JSON标签: {tool_call.function.arguments}")
+                    function_response = f"错误: 检测到JSON标签，请使用标准的工具调用格式"
+                    messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": function_response})
+                    continue
+                
+                # 尝试清理和修复参数格式
+                cleaned_args = tool_call.function.arguments
+                if "REDACTED_SPECIAL_TOKEN" in cleaned_args:
+                    # 尝试提取JSON部分
+                    import re
+                    json_match = re.search(r'\{[^}]*\}', cleaned_args)
+                    if json_match:
+                        cleaned_args = json_match.group(0)
+                        print(f"🔧 尝试清理参数: {cleaned_args}")
+                        try:
+                            function_args = json.loads(cleaned_args)
+                        except json.JSONDecodeError:
+                            print(f"❌ 清理后的参数仍然无效: {cleaned_args}")
+                            function_response = f"错误: 无法解析工具参数，请重新调用工具"
+                            messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": function_response})
+                            continue
+                    else:
+                        print(f"❌ 无法从参数中提取有效JSON: {cleaned_args}")
+                        function_response = f"错误: 无法解析工具参数，请重新调用工具"
+                        messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": function_response})
+                        continue
+                
+                # 检查是否包含多个REDACTED_SPECIAL_TOKEN（更严格的检查）
+                if cleaned_args.count("REDACTED_SPECIAL_TOKEN") > 1:
+                    print(f"❌ 检测到多个REDACTED_SPECIAL_TOKEN: {cleaned_args}")
+                    function_response = f"错误: 检测到多个REDACTED_SPECIAL_TOKEN，请使用标准的工具调用格式"
+                    messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": function_response})
+                    continue
+
+                print(f"🔧 执行工具: {function_name}")
+                print(f"📝 参数: {function_args}")
+                print(f"🔍 参数类型: {type(function_args)}")
+
+                # 实时输出工具调用信息
+                tool_call_chunk = {
+                    "id": response.id, 
+                    "object": "chat.completion.chunk", 
+                    "created": response.created, 
+                    "model": response.model,
+                    "choices": [{"index": 0, "delta": {"content": f"🔧 调用工具: {function_name} (参数: {function_args})\n"}, "finish_reason": None}]
+                }
+                yield f"data: {json.dumps(tool_call_chunk)}\n\n"
+                
+                # 强制立即显示
+                yield f"data: {json.dumps({'id': response.id, 'object': 'chat.completion.chunk', 'created': response.created, 'model': response.model, 'choices': [{'index': 0, 'delta': {'content': ''}, 'finish_reason': None}]})}\n\n"
+
+                # --- 最终重构：完全统一的工具调用逻辑 ---
+                # --- 新的、模块化的工具集 ---
+                available_tools = {
+                    # v5.2 Tools
+                    "get_task_status": tool_module.get_task_status,
+                    "list_available_genomes": tool_module.list_available_genomes,
+                    "list_files": tool_module.list_files,
+                    "add_genome_to_config": tool_module.add_genome_to_config,
+                    "download_genome_files": tool_module.download_genome_files,
+                    "unsupported_request": tool_module.unsupported_request,
+                    # React模式工具
+                    "check_environment_tool": tool_module.check_environment_tool,
+                    "setup_environment_tool": tool_module.setup_environment_tool,
+                    "search_genome_tool": tool_module.search_genome_tool,
+                    "search_fastq_tool": tool_module.search_fastq_tool,
+                    "download_genome_tool": tool_module.download_genome_tool,
+                    "download_fastq_tool": tool_module.download_fastq_tool,
+                    "validate_fastq_tool": tool_module.validate_fastq_tool,
+                    "check_files_exist_tool": tool_module.check_files_exist_tool,
+                    "build_star_index_tool": tool_module.build_star_index_tool,
+                    "run_fastp_tool": tool_module.run_fastp_tool,
+                    "run_star_align_tool": tool_module.run_star_align_tool,
+                    "run_featurecounts_tool": tool_module.run_featurecounts_tool,
+                    "collect_results_tool": tool_module.collect_results_tool,
+                    "generate_report_tool": tool_module.generate_report_tool,
+                    # React模式专用工具
+                    "react_status_tool": tool_module.react_status_tool,
+                    "react_plan_tool": tool_module.react_plan_tool,
+                    "react_evaluate_tool": tool_module.react_evaluate_tool,
+                    "react_summary_tool": tool_module.react_summary_tool,
+                    "validate_tool_call_format": tool_module.validate_tool_call_format,
+                }
+                
+                global task_id_counter
+                function_response = ""
+
+                try:
+                    function_to_call = available_tools.get(function_name)
+                    if not function_to_call:
+                        function_response = f"错误：未知的工具名称 '{function_name}'"
+                    else:
+                        # --- 新的、更清晰的依赖注入逻辑 ---
+                        tool_kwargs = function_args.copy()
+
+                        # 定义哪些工具需要哪些共享资源
+                        TOOLS_NEEDING_DB = {
+                            "get_task_status",
+                        }
+                        TOOLS_NEEDING_COUNTER = {}
+
+                        # 注入数据库和锁
+                        if function_name in TOOLS_NEEDING_DB:
+                            tool_kwargs["task_database"] = TASK_DATABASE
+                            tool_kwargs["db_lock"] = db_lock
+                        
+                        # 注入任务ID计数器
+                        if function_name in TOOLS_NEEDING_COUNTER:
+                            # 传递当前的计数器值
+                            tool_kwargs["task_id_counter"] = task_id_counter
+
+                        # 调用工具
+                        tool_result = function_to_call(**tool_kwargs)
+
+                        # 如果工具更新了计数器，则同步回全局计数器
+                        # 这是为了让 create_task 和 download_genome 都能安全地增加ID
+                        if function_name in TOOLS_NEEDING_COUNTER and isinstance(tool_result, dict):
+                            with db_lock:
+                                task_id_counter = tool_result.get("updated_task_id_counter", task_id_counter)
+
+                        # 统一处理返回结果
+                        # 如果结果是字典，序列化为 JSON 字符串
+                        if isinstance(tool_result, dict):
+                            function_response = json.dumps(tool_result, ensure_ascii=False, indent=2)
+                            # 提取关键信息用于显示
+                            if "message" in tool_result:
+                                display_message = tool_result["message"]
+                            elif "status" in tool_result:
+                                display_message = f"状态: {tool_result['status']}"
+                            else:
+                                display_message = "执行完成"
+                        else:
+                            # 否则，直接使用返回的字符串
+                            function_response = str(tool_result)
+                            display_message = function_response
+
+                        # 实时输出工具执行结果
+                        tool_result_chunk = {
+                            "id": response.id, 
+                            "object": "chat.completion.chunk", 
+                            "created": response.created, 
+                            "model": response.model,
+                            "choices": [{"index": 0, "delta": {"content": f"✅ 工具 {function_name} 执行完成: {display_message}\n\n"}, "finish_reason": None}]
+                        }
+                        yield f"data: {json.dumps(tool_result_chunk)}\n\n"
+                        
+                        # 强制刷新输出
+                        yield f"data: {json.dumps({'id': response.id, 'object': 'chat.completion.chunk', 'created': response.created, 'model': response.model, 'choices': [{'index': 0, 'delta': {'content': ''}, 'finish_reason': None}]})}\n\n"
+
+                except Exception as e:
+                    # 统一的异常处理
+                    function_response = f"执行工具 '{function_name}' 时发生严重错误: {e}"
+                    
+                    # 实时输出工具执行错误
+                    tool_error_chunk = {
+                        "id": response.id, 
+                        "object": "chat.completion.chunk", 
+                        "created": response.created, 
+                        "model": response.model,
+                        "choices": [{"index": 0, "delta": {"content": f"❌ 工具 {function_name} 执行失败: {e}"}, "finish_reason": None}]
+                    }
+                    yield f"data: {json.dumps(tool_error_chunk)}\n\n"
+
+                # 6. 将工具执行结果添加到消息历史中
+                messages.append(
+                    {
+                        "tool_call_id": tool_call.id,
+                        "role": "tool",
+                        "name": function_name,
+                        "content": function_response,
+                    }
+                )
+            
+            # 7. 观察阶段 - 分析工具执行结果
+            observation_chunk = {
+                "id": response.id, 
+                "object": "chat.completion.chunk", 
+                "created": response.created, 
+                "model": response.model,
+                "choices": [{"index": 0, "delta": {"content": f"👀 观察阶段 (循环 {react_cycle_count}): 正在分析工具执行结果并评估下一步行动...\n"}, "finish_reason": None}]
+            }
+            yield f"data: {json.dumps(observation_chunk)}\n\n"
+            
+            # 强制立即显示
+            yield f"data: {json.dumps({'id': response.id, 'object': 'chat.completion.chunk', 'created': response.created, 'model': response.model, 'choices': [{'index': 0, 'delta': {'content': ''}, 'finish_reason': None}]})}\n\n"
+            
+            # 8. 检查是否需要继续React循环
+            # 分析工具执行结果，决定是否继续循环
+            should_continue = False
+            
+            for tool_call in tool_calls:
+                function_name = tool_call.function.name
+                
+                # 检查是否是计划工具，如果是，需要继续执行
+                if function_name in ["plan_analysis_task", "react_plan_tool"]:
+                    should_continue = True
+                    break
+                
+                # 检查是否有需要进一步处理的工具（如长时间运行的任务）
+                if function_name in ["download_genome_files"]:
+                    should_continue = True
+                    break
+                
+                # 检查是否是查询工具，如果是，需要继续执行（让LLM决定下一步）
+                if function_name in ["get_task_status", "list_available_genomes", "list_files", "search_genome_tool", "search_fastq_tool", "validate_fastq_tool", "check_environment_tool", "check_files_exist_tool", "build_star_index_tool"]:
+                    should_continue = True
+                    break
+                
+                # 检查是否是分析工具，如果是，需要继续执行（让LLM决定下一步）
+                if function_name in ["run_fastp_tool", "run_star_align_tool", "run_featurecounts_tool", "collect_results_tool"]:
+                    should_continue = True
+                    break
+                
+                # 检查是否是最终工具，如果是，可以结束循环
+                if function_name in ["generate_report_tool", "react_summary_tool"]:
+                    should_continue = False
+                    break
+            
+            if should_continue:
+                # 继续React循环，让LLM决定下一步行动
+                print(f"--- React循环 {react_cycle_count}: 继续循环，等待LLM决定下一步 ---")
+                continue
+            else:
+                # 所有工具都执行完成，准备生成最终回复
+                print(f"--- React循环 {react_cycle_count}: 所有工具执行完成，准备生成最终回复 ---")
+                break
+
+        else:
+            # LLM没有调用工具，可能只是输出思考
+            print(f"--- React循环 {react_cycle_count}: LLM 输出内容，无工具调用 ---")
+            content = response_message.content or ""
+            
+            # 将LLM的思考内容以OpenAI格式发送到前端，但不终止React循环
+            if content.strip():
+                # 以OpenAI格式发送思考内容，让CherryStudio能够正常显示
+                response_chunk = {
+                    "id": response.id, 
+                    "object": "chat.completion.chunk", 
+                    "created": response.created, 
+                    "model": response.model,
+                    "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}]
+                }
+                yield f"data: {json.dumps(response_chunk)}\n\n"
+            
+            # 将LLM的回复添加到消息历史中
+            messages.append(response_message)
+            
+            # 检查内容是否包含明确的结束信号
+            if any(keyword in content.lower() for keyword in ["分析完成", "流程结束", "任务完成", "报告生成完成", "最终总结", "分析报告"]):
+                print(f"--- React循环 {react_cycle_count}: 检测到完成信号，结束循环 ---")
+                break
+            else:
+                # 继续React循环，让LLM决定下一步行动
+                print(f"--- React循环 {react_cycle_count}: 继续循环，等待LLM决定下一步 ---")
                 continue
 
-            print(f"执行工具: {function_name}，参数: {function_args}")
-
-            # --- 最终重构：完全统一的工具调用逻辑 ---
-            # --- 新的、模块化的工具集 ---
-            available_tools = {
-                # v5.2 Tools
-                "plan_analysis_task": tool_module.plan_analysis_task,
-                "execute_planned_task": tool_module.execute_planned_task,
-                "get_task_status": tool_module.get_task_status,
-                "list_available_genomes": tool_module.list_available_genomes,
-                "list_files": tool_module.list_files,
-                "add_genome_to_config": tool_module.add_genome_to_config,
-                "download_genome_files": tool_module.download_genome_files,
-                "unsupported_request": tool_module.unsupported_request,
-            }
-            
-            global task_id_counter
-            function_response = ""
-
-            try:
-                function_to_call = available_tools.get(function_name)
-                if not function_to_call:
-                    function_response = f"错误：未知的工具名称 '{function_name}'"
-                else:
-                    # --- 新的、更清晰的依赖注入逻辑 ---
-                    tool_kwargs = function_args.copy()
-
-                    # 定义哪些工具需要哪些共享资源
-                    TOOLS_NEEDING_DB = {
-                        "execute_planned_task",
-                        "get_task_status",
-                    }
-                    TOOLS_NEEDING_COUNTER = {"execute_planned_task"}
-
-                    # 注入数据库和锁
-                    if function_name in TOOLS_NEEDING_DB:
-                        tool_kwargs["task_database"] = TASK_DATABASE
-                        tool_kwargs["db_lock"] = db_lock
-                    
-                    # 注入任务ID计数器
-                    if function_name in TOOLS_NEEDING_COUNTER:
-                        # 传递当前的计数器值
-                        tool_kwargs["task_id_counter"] = task_id_counter
-
-                    # 调用工具
-                    tool_result = function_to_call(**tool_kwargs)
-
-                    # 如果工具更新了计数器，则同步回全局计数器
-                    # 这是为了让 create_task 和 download_genome 都能安全地增加ID
-                    if function_name in TOOLS_NEEDING_COUNTER and isinstance(tool_result, dict):
-                        with db_lock:
-                            task_id_counter = tool_result.get("updated_task_id_counter", task_id_counter)
-
-                    # 统一处理返回结果
-                    # 如果结果是字典，序列化为 JSON 字符串
-                    if isinstance(tool_result, dict):
-                        function_response = json.dumps(tool_result, ensure_ascii=False, indent=2)
-                    else:
-                        # 否则，直接使用返回的字符串（例如 "任务 task_1 已成功启动。"）
-                        function_response = str(tool_result)
-
-            except Exception as e:
-                # 统一的异常处理
-                function_response = f"执行工具 '{function_name}' 时发生严重错误: {e}"
-
-            # 5. 将工具执行结果添加到消息历史中
-            messages.append(
-                {
-                    "tool_call_id": tool_call.id,
-                    "role": "tool",
-                    "name": function_name,
-                    "content": function_response,
-                }
-            )
-        
-        # 6. 第二次调用 LLM，让它根据工具结果生成最终回复
-        print(f"--- 第二次调用 LLM (携带工具结果) ---")
+    # 9. 最终回复阶段 - 生成总结性回复
+    if react_cycle_count > 0:
+        print(f"--- 生成最终回复 (React循环完成: {react_cycle_count}) ---")
         print(f"发送的消息: {messages}")
         
         try:
-            second_response = client.chat.completions.create(
+            final_response = client.chat.completions.create(
                 model=model_name,
                 messages=messages,
                 stream=True, # 以流式模式获取最终回复
                 temperature=0.0
             )
-            # 7. 流式传输最终回复
-            for chunk in second_response:
+            # 流式传输最终回复
+            for chunk in final_response:
                 content = chunk.choices[0].delta.content
                 if content:
                     response_chunk = {
@@ -248,20 +476,8 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
                     }
                     yield f"data: {json.dumps(response_chunk)}\n\n"
         except Exception as e:
-            print(f"第二次调用 LLM API 时发生错误: {e}")
+            print(f"生成最终回复时发生错误: {e}")
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
-
-    else:
-        # 如果 LLM 不需要调用工具，直接流式返回它的回复
-        print("--- LLM 无需调用工具，直接回复 ---")
-        content = response_message.content or ""
-        for char in content:
-            response_chunk = {
-                "id": response.id, "object": "chat.completion.chunk", "created": response.created, "model": response.model,
-                "choices": [{"index": 0, "delta": {"content": char}, "finish_reason": None}]
-            }
-            yield f"data: {json.dumps(response_chunk)}\n\n"
-            await asyncio.sleep(0.02)
 
     # 发送结束标志
     final_chunk = {
