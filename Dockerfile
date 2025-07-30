@@ -41,14 +41,14 @@ RUN ln -s $CONDA_DIR/bin/conda /usr/local/bin/conda && \
 RUN conda install -y -c conda-forge mamba
 
 
-RUN mamba create -y -n sra_env -c conda-forge -c bioconda sra-tools=3.2.0
+RUN mamba create -y -n sra_env -c conda-forge -c bioconda sra-tools=3.2.0 aspera-cli=4.20.0
 RUN mamba create -y -n qc_env -c conda-forge -c bioconda fastp=1.0.1
 RUN mamba create -y -n align_env -c conda-forge -c bioconda samtools=1.22.1 star=2.7.11b
 RUN mamba create -y -n quant_env -c conda-forge -c bioconda subread=2.1.1
 
 
 # 直接在全局 Python 环境中安装依赖
-RUN pip3 install --no-cache-dir pandas python-dotenv 'langchain>=0.2.0' 'langchain-openai>=0.1.0' 'fastapi>=0.110.0' 'pydantic>=2.0.0' sse-starlette tabulate requests mcp
+RUN pip install --no-cache-dir pandas python-dotenv 'langchain>=0.2.0' 'langchain-openai>=0.1.0' 'fastapi>=0.110.0' 'pydantic>=2.0.0' sse-starlette tabulate requests mcp
 
 
 # Create a dedicated environment for differential expression analysis with R

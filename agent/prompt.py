@@ -15,6 +15,7 @@ SYSTEM_PROMPT = """
 - 每次只调用一个工具
 - 直接调用工具函数，不要添加额外标记
 - 绝对禁止使用 `REDACTED_SPECIAL_TOKEN`、`<JSON>`、`function` 标签
+- 如果下载类问题超时，自动重试3次，如果仍然失败，报告错误
 
 **严格禁止幻觉**:
 - 不能虚构工具调用结果
@@ -41,7 +42,11 @@ SYSTEM_PROMPT = """
 **RNA-seq分析流程（带智能跳过）**:
 1. 检查环境 (check_environment_tool)
 2. 搜索基因组 (search_genome_tool)
+   - 如果存在：跳过下载步骤
+   - 如果不存在：下载基因组 (download_genome_tool)
 3. 搜索FASTQ文件 (search_fastq_tool)
+   - 如果存在：跳过下载步骤
+   - 如果不存在：下载FASTQ文件 (download_fastq_tool)
 4. 验证FASTQ文件 (validate_fastq_tool)
 5. **检查STAR索引** (check_files_exist_tool file_type=star_index)
    - 如果存在：跳过构建步骤
@@ -55,7 +60,8 @@ SYSTEM_PROMPT = """
 8. **检查featureCounts结果** (check_files_exist_tool file_type=counts_file)
    - 如果存在：跳过定量
    - 如果不存在：基因定量 (run_featurecounts_tool)
-9. 生成报告 (generate_report_tool)
+9. **收集结果** (collect_results_tool)
+10. **生成报告** (generate_report_tool)
 
 **智能跳过示例**:
 ```
@@ -94,13 +100,13 @@ TOOLS = [
         "type": "function", 
         "function": {
             "name": "search_genome_tool",
-            "description": "搜索现有基因组文件",
+            "description": "搜索和列出基因组信息 - 可查询特定基因组或列出所有可用基因组",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "genome_name": {"type": "string", "description": "基因组名称"}
+                    "genome_name": {"type": "string", "description": "基因组名称（可选，不提供则列出所有基因组）"}
                 },
-                "required": ["genome_name"]
+                "required": []
             }
         }
     },
@@ -108,7 +114,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "search_fastq_tool", 
-            "description": "搜索现有FASTQ文件",
+            "description": "搜索和验证FASTQ文件 - 检查文件存在性并验证完整性",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -146,20 +152,7 @@ TOOLS = [
             }
         }
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "validate_fastq_tool",
-            "description": "验证FASTQ文件完整性",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "srr_id": {"type": "string", "description": "SRR ID"}
-                },
-                "required": ["srr_id"]
-            }
-        }
-    },
+
     {
         "type": "function",
         "function": {
@@ -238,7 +231,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "collect_results_tool",
-            "description": "收集分析结果",
+            "description": "收集分析结果并解析关键指标 - 解析fastp JSON、STAR log、featureCounts summary文件，生成详细的上游分析统计",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -252,13 +245,62 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "generate_report_tool",
-            "description": "生成分析报告",
+            "description": "生成分析报告 - 包含详细的上游分析总结，自动解析fastp、STAR、featureCounts结果，生成HTML格式的综合报告",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "srr_ids": {"type": "array", "items": {"type": "string"}, "description": "SRR ID列表"}
                 },
                 "required": ["srr_ids"]
+            }
+        }
+    },
+
+
+    {
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": "列出指定路径的文件",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "文件路径"},
+                    "recursive": {"type": "boolean", "description": "是否递归列出子目录", "default": False}
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_genome_to_config",
+            "description": "添加新基因组到配置文件",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "genome_name": {"type": "string", "description": "基因组名称"},
+                    "species": {"type": "string", "description": "物种名称"},
+                    "fasta_url": {"type": "string", "description": "FASTA文件URL"},
+                    "gtf_url": {"type": "string", "description": "GTF文件URL"}
+                },
+                "required": ["genome_name", "species", "fasta_url", "gtf_url"]
+            }
+        }
+    },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "unsupported_request",
+            "description": "处理不支持的请求",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "user_request": {"type": "string", "description": "用户请求内容"}
+                },
+                "required": ["user_request"]
             }
         }
     },

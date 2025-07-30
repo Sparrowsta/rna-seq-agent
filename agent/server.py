@@ -108,12 +108,44 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
     一个由 LLM 驱动的、支持工具调用的 Agent 响应生成器。
     现在支持React模式：思考-行动-观察循环。
     """
+    # 检查是否为首次交互（只有一条用户消息且没有历史记录）
+    is_first_interaction = len(chat_input.messages) == 1 and chat_input.messages[0].role == "user"
+    
     # 1. 准备发送给 LLM 的消息，确保我们的系统提示是唯一的
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     # 过滤掉任何可能从上游传入的 system 消息，只保留 user 和 assistant 的消息
     for msg in chat_input.messages:
         if msg.role != "system":
             messages.append({"role": msg.role, "content": msg.content})
+    
+    # 如果是首次交互，发送欢迎信息
+    if is_first_interaction:
+        welcome_message = """👋 欢迎使用RNA-seq 分析平台
+
+您可以这样开始：
+1. 输入SRR号和参考基因组名，例如：`帮我分析SRR17469059 基因组用mm10`
+2. 系统会自动完成数据下载、质量控制、比对、定量和报告生成。
+3. 支持智能跳过已完成步骤，节省计算资源。
+
+常用命令：
+- 查看可用基因组：`列出可用基因组`
+- 添加新基因组：`添加基因组 mm10 物种 mouse ...`
+- 查询分析进度：`查询任务状态`
+
+祝您分析顺利！"""
+        
+        # 发送欢迎信息
+        welcome_chunk = {
+            "id": "welcome",
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "model": "welcome",
+            "choices": [{"index": 0, "delta": {"content": welcome_message}, "finish_reason": None}]
+        }
+        yield f"data: {json.dumps(welcome_chunk)}\n\n"
+        
+        # 添加欢迎信息到消息历史
+        messages.append({"role": "assistant", "content": welcome_message})
 
     # React模式状态跟踪
     react_cycle_count = 0
@@ -254,10 +286,8 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
                 available_tools = {
                     # v5.2 Tools
                     "get_task_status": tool_module.get_task_status,
-                    "list_available_genomes": tool_module.list_available_genomes,
                     "list_files": tool_module.list_files,
                     "add_genome_to_config": tool_module.add_genome_to_config,
-                    "download_genome_files": tool_module.download_genome_files,
                     "unsupported_request": tool_module.unsupported_request,
                     # React模式工具
                     "check_environment_tool": tool_module.check_environment_tool,
@@ -274,7 +304,6 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
                     "run_featurecounts_tool": tool_module.run_featurecounts_tool,
                     "collect_results_tool": tool_module.collect_results_tool,
                     "generate_report_tool": tool_module.generate_report_tool,
-                    # React模式专用工具
                     "react_status_tool": tool_module.react_status_tool,
                     "react_plan_tool": tool_module.react_plan_tool,
                     "react_evaluate_tool": tool_module.react_evaluate_tool,

@@ -97,15 +97,13 @@ def _monitor_and_parse_logs(task_id: str, log_file: Path, task_database: dict, d
                 with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
                     f.seek(cursor)
                     for line in f:
-                        step_name, cleaned_line = parse_log_line(line)
+                        # 简化的日志处理，不再使用复杂的解析
+                        cleaned_line = line.strip()
                         with db_lock:
                             if task_id not in task_database: continue
-                            for step in task_database[task_id]['details']['steps']:
-                                if step['name'] == step_name:
-                                    if step['status'] == 'pending':
-                                        step['status'] = 'running'
-                                    step['logs'].append(cleaned_line)
-                                    break
+                            # 直接添加到第一个步骤的日志中
+                            if task_database[task_id]['details']['steps']:
+                                task_database[task_id]['details']['steps'][0]['logs'].append(cleaned_line)
                     cursor = f.tell()
         except Exception as e:
             print(f"[{task_id}] Error reading log file: {e}")
@@ -548,13 +546,42 @@ def unsupported_request(user_request: str) -> dict:
 
 # --- New Search Tools ---
 
-def search_genome_tool(genome_name: str, **kwargs) -> dict:
+def search_genome_tool(genome_name: str = None, **kwargs) -> dict:
     """
-    搜索现有基因组文件
+    搜索和列出基因组信息 - 可查询特定基因组或列出所有可用基因组
     """
     print(f"Tool 'search_genome_tool' called for genome '{genome_name}'.")
     project_root = _get_project_root()
     genomes_config = _get_genomes_config()
+    
+    # 如果没有指定基因组名称，列出所有可用基因组
+    if not genome_name:
+        available_genomes = []
+        for name, info in genomes_config.items():
+            fasta_path = project_root / info['fasta']
+            gtf_path = project_root / info['gtf']
+            star_index_path = fasta_path.parent / 'star_index'
+            
+            files_exist = fasta_path.is_file() and gtf_path.is_file()
+            star_index_exists = star_index_path.is_dir() and (star_index_path / 'SA').is_file()
+            
+            available_genomes.append({
+                "name": name,
+                "species": info['species'],
+                "version": info['version'],
+                "exists_in_filesystem": files_exist,
+                "star_index_exists": star_index_exists,
+                "fasta_path": str(fasta_path),
+                "gtf_path": str(gtf_path),
+                "star_index_path": str(star_index_path)
+            })
+        
+        return {
+            "status": "success",
+            "message": f"找到 {len(available_genomes)} 个可用基因组",
+            "available_genomes": available_genomes,
+            "total_count": len(available_genomes)
+        }
     
     # 检查配置中是否存在
     genome_info = genomes_config.get(genome_name)
@@ -589,7 +616,7 @@ def search_genome_tool(genome_name: str, **kwargs) -> dict:
 
 def search_fastq_tool(srr_id: str, **kwargs) -> dict:
     """
-    搜索现有 FASTQ 文件
+    搜索和验证FASTQ文件 - 检查文件存在性并验证完整性
     """
     print(f"Tool 'search_fastq_tool' called for SRR '{srr_id}'.")
     project_root = _get_project_root()
@@ -603,6 +630,36 @@ def search_fastq_tool(srr_id: str, **kwargs) -> dict:
     r1_exists = r1_path.is_file()
     r2_exists = r2_path.is_file()
     
+    # 验证文件完整性
+    validation_results = {}
+    if r1_exists:
+        try:
+            # 检查文件大小
+            r1_size = r1_path.stat().st_size
+            validation_results["r1_size"] = r1_size
+            validation_results["r1_valid"] = r1_size > 0
+        except Exception as e:
+            validation_results["r1_valid"] = False
+            validation_results["r1_error"] = str(e)
+    
+    if r2_exists:
+        try:
+            # 检查文件大小
+            r2_size = r2_path.stat().st_size
+            validation_results["r2_size"] = r2_size
+            validation_results["r2_valid"] = r2_size > 0
+        except Exception as e:
+            validation_results["r2_valid"] = False
+            validation_results["r2_error"] = str(e)
+    
+    # 检查是否为配对端数据
+    is_paired = r1_exists and r2_exists
+    is_single = r1_exists and not r2_exists
+    
+    # 综合验证结果
+    overall_valid = (r1_exists and validation_results.get("r1_valid", False)) and \
+                   (not is_paired or (r2_exists and validation_results.get("r2_valid", False)))
+    
     return {
         "status": "success",
         "srr_id": srr_id,
@@ -610,8 +667,11 @@ def search_fastq_tool(srr_id: str, **kwargs) -> dict:
         "r2_exists": r2_exists,
         "r1_path": str(r1_path),
         "r2_path": str(r2_path),
-        "is_paired": r1_exists and r2_exists,
-        "is_single": r1_exists and not r2_exists
+        "is_paired": is_paired,
+        "is_single": is_single,
+        "validation_results": validation_results,
+        "overall_valid": overall_valid,
+        "message": f"FASTQ文件验证完成 - {'有效' if overall_valid else '存在问题'}"
     }
 
 # --- Environment Management Tools ---
@@ -631,7 +691,8 @@ def check_environment_tool(**kwargs) -> dict:
         "STAR": {"env": "align_env", "description": "比对工具"}, 
         "featureCounts": {"env": "quant_env", "description": "定量工具"},
         "samtools": {"env": "align_env", "description": "BAM处理工具"},
-        "nextflow": {"env": None, "description": "工作流管理工具"}
+        "nextflow": {"env": None, "description": "工作流管理工具"},
+        "ascp": {"env": None, "description": "Aspera传输工具"}
     }
     
     for tool, info in key_tools.items():
@@ -854,7 +915,7 @@ def setup_environment_tool(environment_type: str = "conda", **kwargs) -> dict:
 
 def download_genome_tool(genome_name: str, **kwargs) -> dict:
     """
-    下载基因组文件
+    下载基因组文件 - 带超时和错误处理
     """
     print(f"Tool 'download_genome_tool' called for genome '{genome_name}'.")
     project_root = _get_project_root()
@@ -879,19 +940,75 @@ def download_genome_tool(genome_name: str, **kwargs) -> dict:
     gtf_path.parent.mkdir(parents=True, exist_ok=True)
     
     try:
-        # 下载 FASTA 文件
-        os.system(f"wget --quiet -O {fasta_path}.gz '{fasta_url}'")
-        os.system(f"gunzip -f {fasta_path}.gz")
+        # 下载 FASTA 文件 - 使用FTP下载带断点重连
+        print(f"开始下载FASTA文件: {fasta_url}")
+        result = subprocess.run(
+            ["wget", "--quiet", "--timeout=300", "--tries=3", "--continue", "--passive-ftp", "-O", f"{fasta_path}.gz", fasta_url],
+            capture_output=True, text=True, timeout=600  # 10分钟超时
+        )
         
-        # 下载 GTF 文件
-        os.system(f"wget --quiet -O {gtf_path}.gz '{gtf_url}'")
-        os.system(f"gunzip -f {gtf_path}.gz")
+        if result.returncode != 0:
+            return {
+                "status": "error",
+                "message": f"下载FASTA文件失败: {result.stderr}"
+            }
+        
+        # 解压FASTA文件
+        print("解压FASTA文件...")
+        result = subprocess.run(
+            ["gunzip", "-f", f"{fasta_path}.gz"],
+            capture_output=True, text=True, timeout=300
+        )
+        
+        if result.returncode != 0:
+            return {
+                "status": "error",
+                "message": f"解压FASTA文件失败: {result.stderr}"
+            }
+        
+        # 下载 GTF 文件 - 使用FTP下载带断点重连
+        print(f"开始下载GTF文件: {gtf_url}")
+        result = subprocess.run(
+            ["wget", "--quiet", "--timeout=300", "--tries=3", "--continue", "--passive-ftp", "-O", f"{gtf_path}.gz", gtf_url],
+            capture_output=True, text=True, timeout=600  # 10分钟超时
+        )
+        
+        if result.returncode != 0:
+            return {
+                "status": "error",
+                "message": f"下载GTF文件失败: {result.stderr}"
+            }
+        
+        # 解压GTF文件
+        print("解压GTF文件...")
+        result = subprocess.run(
+            ["gunzip", "-f", f"{gtf_path}.gz"],
+            capture_output=True, text=True, timeout=300
+        )
+        
+        if result.returncode != 0:
+            return {
+                "status": "error",
+                "message": f"解压GTF文件失败: {result.stderr}"
+            }
+        
+        # 验证文件是否存在
+        if not fasta_path.exists() or not gtf_path.exists():
+            return {
+                "status": "error",
+                "message": "下载完成后文件不存在，可能是网络问题"
+            }
         
         return {
             "status": "success",
             "message": f"基因组 '{genome_name}' 下载完成",
             "fasta_path": str(fasta_path),
             "gtf_path": str(gtf_path)
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "error",
+            "message": "下载超时，请检查网络连接或稍后重试"
         }
     except Exception as e:
         return {
@@ -901,7 +1018,7 @@ def download_genome_tool(genome_name: str, **kwargs) -> dict:
 
 def download_fastq_tool(srr_id: str, **kwargs) -> dict:
     """
-    下载 FASTQ 文件
+    下载 FASTQ 文件 - 使用 Aspera 加速下载
     """
     print(f"Tool 'download_fastq_tool' called for SRR '{srr_id}'.")
     project_root = _get_project_root()
@@ -910,24 +1027,149 @@ def download_fastq_tool(srr_id: str, **kwargs) -> dict:
     fastq_dir.mkdir(parents=True, exist_ok=True)
     
     try:
-        # 切换到 FASTQ 目录
-        os.chdir(fastq_dir)
+        # 检查并清理可能存在的锁文件和临时文件
+        print("检查并清理可能存在的锁文件...")
+        srr_dir = fastq_dir / srr_id
+        if srr_dir.exists():
+            for pattern in ["*.lock", "*.tmp", "*.partial"]:
+                for temp_file in srr_dir.glob(pattern):
+                    print(f"清理SRR目录中的临时文件: {temp_file}")
+                    temp_file.unlink()
         
-        # 使用 fasterq-dump 下载
-        result = os.system(f"fasterq-dump {srr_id} --split-files --gzip -O . -p")
+        # 激活conda环境
+        env = os.environ.copy()
+        env['PATH'] = f"/opt/conda/envs/sra_env/bin:{env['PATH']}"
         
-        if result == 0:
-            return {
-                "status": "success",
-                "message": f"SRR '{srr_id}' 下载完成",
-                "srr_id": srr_id,
-                "output_dir": str(fastq_dir)
-            }
+        # 检查是否可以使用 Aspera
+        aspera_available = False
+        try:
+            result = subprocess.run(["which", "ascp"], capture_output=True, text=True)
+            aspera_available = result.returncode == 0
+        except Exception:
+            pass
+        
+        if aspera_available:
+            print(f"使用 Aspera 加速下载 SRR: {srr_id}")
+            # 使用 Aspera 下载
+            prefetch_result = subprocess.run(
+                ["prefetch", "--transport", "aspera", srr_id, "-O", "."],
+                cwd=fastq_dir,
+                env=env,
+                capture_output=True, 
+                text=True, 
+                timeout=1800  # 30分钟超时
+            )
+        else:
+            print(f"使用标准下载方式 SRR: {srr_id}")
+            # 使用标准下载
+            prefetch_result = subprocess.run(
+                ["prefetch", srr_id, "-O", "."],
+                cwd=fastq_dir,
+                env=env,
+                capture_output=True, 
+                text=True, 
+                timeout=1800  # 30分钟超时
+            )
+        
+        if prefetch_result.returncode != 0:
+            # 如果是锁文件错误，尝试清理后重试
+            if "lock exists" in prefetch_result.stderr:
+                print("检测到锁文件错误，清理后重试...")
+                # 清理SRR子目录中的锁文件
+                srr_dir = fastq_dir / srr_id
+                if srr_dir.exists():
+                    for lock_file in srr_dir.glob("*.lock"):
+                        print(f"清理SRR目录中的锁文件: {lock_file}")
+                        lock_file.unlink()
+                
+                # 重试prefetch（使用相同的传输方式）
+                if aspera_available:
+                    print(f"使用 Aspera 重试下载 SRR: {srr_id}")
+                    prefetch_result = subprocess.run(
+                        ["prefetch", "--transport", "aspera", srr_id, "-O", "."],
+                        cwd=fastq_dir,
+                        env=env,
+                        capture_output=True, 
+                        text=True, 
+                        timeout=1800  # 30分钟超时
+                    )
+                else:
+                    print(f"使用标准方式重试下载 SRR: {srr_id}")
+                    prefetch_result = subprocess.run(
+                        ["prefetch", srr_id, "-O", "."],
+                        cwd=fastq_dir,
+                        env=env,
+                        capture_output=True, 
+                        text=True, 
+                        timeout=1800  # 30分钟超时
+                    )
+                
+                if prefetch_result.returncode != 0:
+                    return {
+                        "status": "error",
+                        "message": f"prefetch下载SRA文件失败（重试后）: {prefetch_result.stderr}"
+                    }
+            else:
+                return {
+                    "status": "error",
+                    "message": f"prefetch下载SRA文件失败: {prefetch_result.stderr}"
+                }
+        
+        # 第二步：使用fasterq-dump转换SRA文件为FASTQ
+        print(f"使用fasterq-dump转换SRA文件: {srr_id}")
+        result = subprocess.run(
+            ["fasterq-dump", srr_id, "--split-files", "-O", ".", "-p"],
+            cwd=fastq_dir,
+            env=env,
+            capture_output=True, 
+            text=True, 
+            timeout=1800  # 30分钟超时
+        )
+        
+        if result.returncode == 0:
+            # 检查输出文件（fasterq-dump输出未压缩的fastq文件）
+            r1_path = fastq_dir / f"{srr_id}_1.fastq"
+            r2_path = fastq_dir / f"{srr_id}_2.fastq"
+            
+            if r1_path.exists() and r2_path.exists():
+                # 压缩文件以节省空间
+                print("压缩FASTQ文件...")
+                subprocess.run(["gzip", str(r1_path)], check=True)
+                subprocess.run(["gzip", str(r2_path)], check=True)
+                
+                # 清理SRA文件以节省空间
+                sra_file = fastq_dir / f"{srr_id}.sra"
+                if sra_file.exists():
+                    print("清理SRA文件...")
+                    sra_file.unlink()
+                
+                # 更新路径为压缩后的文件
+                r1_path_gz = fastq_dir / f"{srr_id}_1.fastq.gz"
+                r2_path_gz = fastq_dir / f"{srr_id}_2.fastq.gz"
+                
+                return {
+                    "status": "success",
+                    "message": f"SRR '{srr_id}' 下载完成",
+                    "srr_id": srr_id,
+                    "output_dir": str(fastq_dir),
+                    "r1_path": str(r1_path_gz),
+                    "r2_path": str(r2_path_gz)
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": f"下载完成但文件不存在: {srr_id}"
+                }
         else:
             return {
                 "status": "error",
-                "message": f"下载 SRR '{srr_id}' 失败"
+                "message": f"下载 SRR '{srr_id}' 失败: {result.stderr}"
             }
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "error",
+            "message": f"下载SRR '{srr_id}' 超时，请检查网络连接或稍后重试"
+        }
     except Exception as e:
         return {
             "status": "error",
@@ -1066,7 +1308,7 @@ def build_star_index_tool(genome_name: str, **kwargs) -> dict:
 
 def run_fastp_tool(srr_id: str, **kwargs) -> dict:
     """
-    运行 fastp 质量控制 - 直接调用独立的fastp.nf脚本
+    运行 fastp 质量控制 - 直接调用 fastp 命令
     """
     print(f"Tool 'run_fastp_tool' called for SRR '{srr_id}'.")
     
@@ -1085,26 +1327,33 @@ def run_fastp_tool(srr_id: str, **kwargs) -> dict:
         }
     
     try:
-        # 直接调用独立的fastp.nf脚本
+        # 创建输出目录
+        output_dir = work_dir / 'results' / 'fastp' / srr_id
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 构建 fastp 命令
         command = [
-            "nextflow", "run", str(project_root / "nextflow" / "modules" / "fastp.nf"),
-            "--reads", str(fastq_dir / f"{srr_id}_*.fastq.gz"),
-            "--outdir", str(work_dir / 'results'),
-            "-resume"
+            "fastp",
+            "--in1", str(r1_path),
+            "--in2", str(r2_path),
+            "--out1", str(output_dir / f"{srr_id}_1.clean.fastq.gz"),
+            "--out2", str(output_dir / f"{srr_id}_2.clean.fastq.gz"),
+            "--html", str(output_dir / f"{srr_id}.html"),
+            "--json", str(output_dir / f"{srr_id}.json"),
+            "--thread", "4"
         ]
         
-        # 设置环境变量
+        # 设置环境变量，激活 qc_env
         env = os.environ.copy()
-        env['NXF_HOME'] = str(work_dir / '.nextflow')
+        env['PATH'] = f"/opt/conda/envs/qc_env/bin:{env['PATH']}"
         
-        print(f"执行Nextflow FASTP命令: {' '.join(command)}")
+        print(f"执行 fastp 命令: {' '.join(command)}")
         
         # 执行命令
         result = subprocess.run(command, env=env, capture_output=True, text=True)
         
         if result.returncode == 0:
             # 检查输出文件
-            output_dir = work_dir / 'results' / 'fastp' / srr_id
             html_file = output_dir / f"{srr_id}.html"
             json_file = output_dir / f"{srr_id}.json"
             
@@ -1120,7 +1369,7 @@ def run_fastp_tool(srr_id: str, **kwargs) -> dict:
         else:
             return {
                 "status": "error",
-                "message": f"fastp 质量控制失败: ",
+                "message": f"fastp 质量控制失败: {result.stderr}",
                 "stdout": result.stdout,
                 "stderr": result.stderr
             }
@@ -1132,7 +1381,7 @@ def run_fastp_tool(srr_id: str, **kwargs) -> dict:
 
 def run_star_align_tool(srr_id: str, genome_name: str, **kwargs) -> dict:
     """
-    运行 STAR 比对 - 直接调用独立的star.nf脚本
+    运行 STAR 比对 - 直接调用 STAR 命令
     """
     print(f"Tool 'run_star_align_tool' called for SRR '{srr_id}' with genome '{genome_name}'.")
     
@@ -1148,33 +1397,52 @@ def run_star_align_tool(srr_id: str, genome_name: str, **kwargs) -> dict:
             "message": f"基因组 '{genome_name}' 在配置中未找到"
         }
     
-    # 获取STAR索引路径（由LLM决定是否已存在）
-    star_index_path = project_root / genome_info['fasta'].replace('.fa', '/star_index')
+    # 获取STAR索引路径
+    fasta_path = project_root / genome_info['fasta']
+    star_index_path = fasta_path.parent / 'star_index'
+    
+    # 检查输入文件
+    fastq_dir = work_dir / 'fastq'
+    r1_path = fastq_dir / f"{srr_id}_1.fastq.gz"
+    r2_path = fastq_dir / f"{srr_id}_2.fastq.gz"
+    
+    if not r1_path.is_file():
+        return {
+            "status": "error",
+            "message": f"输入文件不存在: {r1_path}"
+        }
     
     try:
-        # 直接调用独立的star.nf脚本
+        # 创建输出目录
+        output_dir = work_dir / 'results' / 'bam' / srr_id
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 构建 STAR 命令
         command = [
-            "nextflow", "run", str(project_root / "nextflow" / "modules" / "star.nf"),
-            "--reads", str(work_dir / 'fastq' / f"{srr_id}_*.fastq.gz"),
-            "--star_index", str(star_index_path),
-            "--outdir", str(work_dir / 'results'),
-            "-resume"
+            "STAR",
+            "--runMode", "alignReads",
+            "--runThreadN", "4",
+            "--genomeDir", str(star_index_path),
+            "--readFilesIn", str(r1_path), str(r2_path),
+            "--readFilesCommand", "zcat",
+            "--outFileNamePrefix", str(output_dir / f"{srr_id}."),
+            "--outSAMtype", "BAM", "SortedByCoordinate",
+            "--outBAMsortingThreadN", "4"
         ]
         
-        # 设置环境变量
+        # 设置环境变量，激活 align_env
         env = os.environ.copy()
-        env['NXF_HOME'] = str(work_dir / '.nextflow')
+        env['PATH'] = f"/opt/conda/envs/align_env/bin:{env['PATH']}"
         
-        print(f"执行Nextflow STAR命令: {' '.join(command)}")
+        print(f"执行 STAR 命令: {' '.join(command)}")
         
         # 执行命令
         result = subprocess.run(command, env=env, capture_output=True, text=True)
         
         if result.returncode == 0:
             # 检查输出文件
-            output_dir = work_dir / 'results' / 'bam' / srr_id
-            bam_file = output_dir / f"{srr_id}.bam"
-            log_file = output_dir / f"{srr_id}.log"
+            bam_file = output_dir / f"{srr_id}.Aligned.sortedByCoord.out.bam"
+            log_file = output_dir / f"{srr_id}.Log.final.out"
             
             return {
                 "status": "success",
@@ -1188,7 +1456,7 @@ def run_star_align_tool(srr_id: str, genome_name: str, **kwargs) -> dict:
         else:
             return {
                 "status": "error",
-                "message": f"STAR 比对失败: ",
+                "message": f"STAR 比对失败: {result.stderr}",
                 "stdout": result.stdout,
                 "stderr": result.stderr
             }
@@ -1202,7 +1470,7 @@ def run_star_align_tool(srr_id: str, genome_name: str, **kwargs) -> dict:
 
 def run_featurecounts_tool(srr_ids: List[str], genome_name: str, **kwargs) -> dict:
     """
-    运行 featureCounts 定量分析 - 直接调用独立的featurecounts.nf脚本
+    运行 featureCounts 定量分析 - 直接调用 featureCounts 命令
     """
     print(f"Tool 'run_featurecounts_tool' called for SRRs {srr_ids} with genome '{genome_name}'.")
     
@@ -1218,30 +1486,44 @@ def run_featurecounts_tool(srr_ids: List[str], genome_name: str, **kwargs) -> di
             "message": f"基因组 '{genome_name}' 在配置中未找到"
         }
     
-    # 获取GTF文件路径（由LLM决定是否已存在）
+    # 获取GTF文件路径
     gtf_path = project_root / genome_info['gtf']
     
-    # 获取BAM文件路径（由LLM决定是否已存在）
+    # 获取BAM文件路径
     bam_files = []
     for srr_id in srr_ids:
-        bam_file = work_dir / 'results' / 'bam' / srr_id / f"{srr_id}.bam"
+        bam_file = work_dir / 'results' / 'bam' / srr_id / f"{srr_id}.Aligned.sortedByCoord.out.bam"
+        if not bam_file.exists():
+            return {
+                "status": "error",
+                "message": f"BAM文件不存在: {bam_file}"
+            }
         bam_files.append(str(bam_file))
     
     try:
-        # 直接调用独立的featurecounts.nf脚本
+        # 创建输出目录
+        output_dir = work_dir / 'results' / 'featurecounts'
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 构建 featureCounts 命令
         command = [
-            "nextflow", "run", str(project_root / "nextflow" / "modules" / "featurecounts.nf"),
-            "--bams", ",".join(bam_files),
-            "--gtf", str(gtf_path),
-            "--outdir", str(work_dir / 'results'),
-            "-resume"
+            "featureCounts",
+            "-p",  # 配对末端
+            "-t", "exon",  # 特征类型
+            "-g", "gene_id",  # 属性类型
+            "-a", str(gtf_path),  # 注释文件
+            "-o", str(output_dir / "counts.txt"),  # 输出文件
+            "-T", "4"  # 线程数
         ]
         
-        # 设置环境变量
-        env = os.environ.copy()
-        env['NXF_HOME'] = str(work_dir / '.nextflow')
+        # 添加所有BAM文件
+        command.extend(bam_files)
         
-        print(f"执行Nextflow FEATURECOUNTS命令: {' '.join(command)}")
+        # 设置环境变量，激活 quant_env
+        env = os.environ.copy()
+        env['PATH'] = f"/opt/conda/envs/quant_env/bin:{env['PATH']}"
+        
+        print(f"执行 featureCounts 命令: {' '.join(command)}")
         
         # 执行命令
         result = subprocess.run(command, env=env, capture_output=True, text=True)
@@ -1251,12 +1533,14 @@ def run_featurecounts_tool(srr_ids: List[str], genome_name: str, **kwargs) -> di
                 "status": "success",
                 "message": f"featureCounts 定量分析完成",
                 "srr_ids": srr_ids,
-                "output_dir": str(work_dir / 'results' / 'featurecounts')
+                "output_dir": str(output_dir),
+                "counts_file": str(output_dir / "counts.txt"),
+                "stdout": result.stdout
             }
         else:
             return {
                 "status": "error",
-                "message": f"featureCounts 定量分析失败: ",
+                "message": f"featureCounts 定量分析失败: {result.stderr}",
                 "stdout": result.stdout,
                 "stderr": result.stderr
             }
@@ -1266,9 +1550,103 @@ def run_featurecounts_tool(srr_ids: List[str], genome_name: str, **kwargs) -> di
             "message": f"运行 featureCounts 时发生错误: {e}"
         }
 
+def _parse_fastp_json(json_file_path: str) -> dict:
+    """
+    解析 fastp JSON 报告文件
+    """
+    try:
+        with open(json_file_path, 'r') as f:
+            data = json.load(f)
+        
+        summary = data.get('summary', {})
+        before_filtering = summary.get('before_filtering', {})
+        after_filtering = summary.get('after_filtering', {})
+        
+        return {
+            "total_reads": before_filtering.get('total_reads', 0),
+            "total_bases": before_filtering.get('total_bases', 0),
+            "q20_rate": before_filtering.get('q20_rate', 0),
+            "q30_rate": before_filtering.get('q30_rate', 0),
+            "clean_reads": after_filtering.get('total_reads', 0),
+            "clean_bases": after_filtering.get('total_bases', 0),
+            "clean_q20_rate": after_filtering.get('q20_rate', 0),
+            "clean_q30_rate": after_filtering.get('q30_rate', 0),
+            "filtered_reads": before_filtering.get('total_reads', 0) - after_filtering.get('total_reads', 0),
+            "filter_rate": (before_filtering.get('total_reads', 0) - after_filtering.get('total_reads', 0)) / before_filtering.get('total_reads', 1) * 100
+        }
+    except Exception as e:
+        return {"error": f"解析fastp JSON失败: {e}"}
+
+def _parse_star_log(log_file_path: str) -> dict:
+    """
+    解析 STAR log 文件
+    """
+    try:
+        with open(log_file_path, 'r') as f:
+            lines = f.readlines()
+        
+        result = {}
+        for line in lines:
+            line = line.strip()
+            if "Number of input reads" in line:
+                result["input_reads"] = int(line.split()[-1])
+            elif "Uniquely mapped reads number" in line:
+                result["unique_mapped"] = int(line.split()[-1])
+            elif "Number of reads mapped to multiple loci" in line:
+                result["multi_mapped"] = int(line.split()[-1])
+            elif "Number of reads unmapped" in line:
+                result["unmapped"] = int(line.split()[-1])
+            elif "Uniquely mapped reads %" in line:
+                result["unique_mapping_rate"] = float(line.split()[-1].replace('%', ''))
+            elif "Number of reads mapped to too many loci" in line:
+                result["too_many_loci"] = int(line.split()[-1])
+            elif "Number of reads unmapped: too many mismatches" in line:
+                result["too_many_mismatches"] = int(line.split()[-1])
+            elif "Number of reads unmapped: too short" in line:
+                result["too_short"] = int(line.split()[-1])
+            elif "Number of reads unmapped: other" in line:
+                result["unmapped_other"] = int(line.split()[-1])
+        
+        if "input_reads" in result and result["input_reads"] > 0:
+            result["total_mapping_rate"] = (result.get("unique_mapped", 0) + result.get("multi_mapped", 0)) / result["input_reads"] * 100
+        
+        return result
+    except Exception as e:
+        return {"error": f"解析STAR log失败: {e}"}
+
+def _parse_featurecounts_summary(summary_file_path: str) -> dict:
+    """
+    解析 featureCounts summary 文件
+    """
+    try:
+        with open(summary_file_path, 'r') as f:
+            lines = f.readlines()
+        
+        result = {}
+        for line in lines:
+            line = line.strip()
+            if line and '\t' in line:
+                parts = line.split('\t')
+                if len(parts) >= 2:
+                    status = parts[0]
+                    count = int(parts[1])
+                    result[status] = count
+        
+        # 计算总reads和assigned比例
+        total_reads = sum(result.values())
+        assigned_reads = result.get("Assigned", 0)
+        
+        if total_reads > 0:
+            result["assigned_rate"] = assigned_reads / total_reads * 100
+            result["total_reads"] = total_reads
+        
+        return result
+    except Exception as e:
+        return {"error": f"解析featureCounts summary失败: {e}"}
+
 def collect_results_tool(srr_ids: List[str], **kwargs) -> dict:
     """
-    收集分析结果
+    收集分析结果并解析关键指标
     """
     print(f"Tool 'collect_results_tool' called for SRRs {srr_ids}.")
     project_root = _get_project_root()
@@ -1278,46 +1656,63 @@ def collect_results_tool(srr_ids: List[str], **kwargs) -> dict:
     results = {
         "fastp_results": [],
         "star_results": [],
-        "featurecounts_results": []
+        "featurecounts_results": {},
+        "analysis_summary": {}
     }
     
+    # 解析每个样本的结果
     for srr_id in srr_ids:
-        # fastp 结果
+        sample_summary = {"srr_id": srr_id}
+        
+        # fastp 结果解析
         fastp_dir = data_dir / 'results' / 'fastp' / srr_id
-        if fastp_dir.is_dir():
+        json_file = fastp_dir / f"{srr_id}.json"
+        if json_file.exists():
+            fastp_stats = _parse_fastp_json(str(json_file))
+            sample_summary["fastp_stats"] = fastp_stats
             results["fastp_results"].append({
                 "srr_id": srr_id,
                 "html_report": str(fastp_dir / f"{srr_id}.html"),
-                "json_report": str(fastp_dir / f"{srr_id}.json")
+                "json_report": str(json_file),
+                "stats": fastp_stats
             })
         
-        # STAR 结果
+        # STAR 结果解析
         bam_dir = data_dir / 'results' / 'bam' / srr_id
-        if bam_dir.is_dir():
+        log_file = bam_dir / f"{srr_id}.Log.final.out"
+        if log_file.exists():
+            star_stats = _parse_star_log(str(log_file))
+            sample_summary["star_stats"] = star_stats
             results["star_results"].append({
                 "srr_id": srr_id,
-                "bam_file": str(bam_dir / f"{srr_id}.bam"),
-                "log_file": str(bam_dir / f"{srr_id}.log")
+                "bam_file": str(bam_dir / f"{srr_id}.Aligned.sortedByCoord.out.bam"),
+                "log_file": str(log_file),
+                "stats": star_stats
             })
+        
+        results["analysis_summary"][srr_id] = sample_summary
     
-    # featureCounts 结果
+    # featureCounts 结果解析
     featurecounts_dir = data_dir / 'results' / 'featurecounts'
-    if featurecounts_dir.is_dir():
+    summary_file = featurecounts_dir / "counts.txt.summary"
+    if summary_file.exists():
+        featurecounts_stats = _parse_featurecounts_summary(str(summary_file))
         results["featurecounts_results"] = {
             "counts_file": str(featurecounts_dir / "counts.txt"),
-            "summary_file": str(featurecounts_dir / "counts.txt.summary")
+            "summary_file": str(summary_file),
+            "stats": featurecounts_stats
         }
     
     return {
         "status": "success",
-        "message": f"结果收集完成",
+        "message": f"结果收集和解析完成",
         "srr_ids": srr_ids,
         "results": results
     }
 
 def generate_report_tool(srr_ids: List[str], **kwargs) -> dict:
     """
-    生成分析报告
+    生成分析报告 - 包含详细的上游分析总结
     """
     print(f"Tool 'generate_report_tool' called for SRR IDs: {srr_ids}")
     project_root = _get_project_root()
@@ -1325,6 +1720,13 @@ def generate_report_tool(srr_ids: List[str], **kwargs) -> dict:
     results_dir = data_dir / 'results'
     
     try:
+        # 收集并解析结果数据
+        results_data = collect_results_tool(srr_ids)
+        if results_data["status"] != "success":
+            return results_data
+        
+        results = results_data["results"]
+        
         # 创建报告目录
         report_dir = results_dir / 'reports'
         report_dir.mkdir(parents=True, exist_ok=True)
@@ -1335,33 +1737,108 @@ def generate_report_tool(srr_ids: List[str], **kwargs) -> dict:
         <head>
             <title>RNA-seq 分析报告</title>
             <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                .header {{ background-color: #f0f0f0; padding: 10px; border-radius: 5px; }}
-                .section {{ margin: 20px 0; }}
+                body {{ font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }}
+                .header {{ background-color: #f0f0f0; padding: 20px; border-radius: 5px; margin-bottom: 20px; }}
+                .section {{ margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }}
                 .success {{ color: green; }}
                 .error {{ color: red; }}
+                .warning {{ color: orange; }}
+                table {{ border-collapse: collapse; width: 100%; margin: 10px 0; }}
+                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                th {{ background-color: #f2f2f2; }}
+                .metric {{ font-weight: bold; color: #333; }}
+                .value {{ font-family: monospace; }}
+                .summary-box {{ background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 10px 0; }}
             </style>
         </head>
         <body>
             <div class="header">
                 <h1>RNA-seq 分析报告</h1>
-                <p>分析时间: {time.strftime('%Y-%m-%d %H:%M:%S')}</p>
+                <p><strong>分析时间:</strong> {time.strftime('%Y-%m-%d %H:%M:%S')}</p>
+                <p><strong>分析样本:</strong> {', '.join(srr_ids)}</p>
             </div>
             
             <div class="section">
-                <h2>分析样本</h2>
-                <ul>
+                <h2>📊 上游分析总结</h2>
         """
         
+        # 添加每个样本的详细统计
         for srr_id in srr_ids:
-            report_content += f"<li>{srr_id}</li>\n"
+            sample_summary = results["analysis_summary"].get(srr_id, {})
+            report_content += f"""
+                <div class="summary-box">
+                    <h3>样本: {srr_id}</h3>
+            """
+            
+            # fastp 统计
+            if "fastp_stats" in sample_summary:
+                fastp_stats = sample_summary["fastp_stats"]
+                if "error" not in fastp_stats:
+                    report_content += f"""
+                        <h4>🔍 质量控制 (fastp)</h4>
+                        <table>
+                            <tr><th>指标</th><th>原始数据</th><th>过滤后</th></tr>
+                            <tr><td>总reads数</td><td class="value">{fastp_stats.get('total_reads', 0):,}</td><td class="value">{fastp_stats.get('clean_reads', 0):,}</td></tr>
+                            <tr><td>总碱基数</td><td class="value">{fastp_stats.get('total_bases', 0):,}</td><td class="value">{fastp_stats.get('clean_bases', 0):,}</td></tr>
+                            <tr><td>Q20比例</td><td class="value">{fastp_stats.get('q20_rate', 0):.2f}%</td><td class="value">{fastp_stats.get('clean_q20_rate', 0):.2f}%</td></tr>
+                            <tr><td>Q30比例</td><td class="value">{fastp_stats.get('q30_rate', 0):.2f}%</td><td class="value">{fastp_stats.get('clean_q30_rate', 0):.2f}%</td></tr>
+                            <tr><td>过滤reads数</td><td colspan="2" class="value">{fastp_stats.get('filtered_reads', 0):,} ({fastp_stats.get('filter_rate', 0):.2f}%)</td></tr>
+                        </table>
+                    """
+                else:
+                    report_content += f"<p class='error'>fastp统计解析失败: {fastp_stats['error']}</p>"
+            
+            # STAR 统计
+            if "star_stats" in sample_summary:
+                star_stats = sample_summary["star_stats"]
+                if "error" not in star_stats:
+                    report_content += f"""
+                        <h4>🎯 序列比对 (STAR)</h4>
+                        <table>
+                            <tr><th>指标</th><th>数值</th></tr>
+                            <tr><td>输入reads数</td><td class="value">{star_stats.get('input_reads', 0):,}</td></tr>
+                            <tr><td>唯一比对reads</td><td class="value">{star_stats.get('unique_mapped', 0):,} ({star_stats.get('unique_mapping_rate', 0):.2f}%)</td></tr>
+                            <tr><td>多重比对reads</td><td class="value">{star_stats.get('multi_mapped', 0):,}</td></tr>
+                            <tr><td>总比对率</td><td class="value">{star_stats.get('total_mapping_rate', 0):.2f}%</td></tr>
+                            <tr><td>未比对reads</td><td class="value">{star_stats.get('unmapped', 0):,}</td></tr>
+                        </table>
+                    """
+                else:
+                    report_content += f"<p class='error'>STAR统计解析失败: {star_stats['error']}</p>"
+            
+            report_content += "</div>"
+        
+        # featureCounts 统计
+        if "featurecounts_results" in results and "stats" in results["featurecounts_results"]:
+            fc_stats = results["featurecounts_results"]["stats"]
+            if "error" not in fc_stats:
+                report_content += f"""
+                    <div class="summary-box">
+                        <h3>📈 基因定量 (featureCounts)</h3>
+                        <table>
+                            <tr><th>状态</th><th>reads数</th><th>比例</th></tr>
+                """
+                
+                total_reads = fc_stats.get("total_reads", 0)
+                for status, count in fc_stats.items():
+                    if status not in ["total_reads", "assigned_rate"]:
+                        percentage = (count / total_reads * 100) if total_reads > 0 else 0
+                        report_content += f"<tr><td>{status}</td><td class='value'>{count:,}</td><td class='value'>{percentage:.2f}%</td></tr>"
+                
+                report_content += f"""
+                            <tr><td><strong>总reads</strong></td><td class='value'><strong>{total_reads:,}</strong></td><td class='value'><strong>100%</strong></td></tr>
+                        </table>
+                        <p><strong>基因分配率:</strong> <span class='value'>{fc_stats.get('assigned_rate', 0):.2f}%</span></p>
+                    </div>
+                """
+            else:
+                report_content += f"<p class='error'>featureCounts统计解析失败: {fc_stats['error']}</p>"
         
         report_content += """
-                </ul>
             </div>
             
             <div class="section">
-                <h2>分析步骤</h2>
+                <h2>✅ 分析步骤完成情况</h2>
                 <ul>
                     <li class="success">✓ 数据下载和验证</li>
                     <li class="success">✓ 质量控制 (fastp)</li>
@@ -1371,8 +1848,22 @@ def generate_report_tool(srr_ids: List[str], **kwargs) -> dict:
             </div>
             
             <div class="section">
-                <h2>结果文件</h2>
-                <p>所有结果文件已保存在 <code>data/results/</code> 目录中。</p>
+                <h2>📁 结果文件位置</h2>
+                <ul>
+                    <li><strong>质量控制结果:</strong> <code>data/results/fastp/</code></li>
+                    <li><strong>比对结果:</strong> <code>data/results/bam/</code></li>
+                    <li><strong>定量结果:</strong> <code>data/results/featurecounts/</code></li>
+                    <li><strong>分析报告:</strong> <code>data/results/reports/</code></li>
+                </ul>
+            </div>
+            
+            <div class="section">
+                <h2>💡 质量评估建议</h2>
+                <ul>
+                    <li><strong>测序质量:</strong> Q30比例应 > 80%，Q20比例应 > 90%</li>
+                    <li><strong>比对质量:</strong> 唯一比对率应 > 70%，总比对率应 > 80%</li>
+                    <li><strong>定量质量:</strong> 基因分配率应 > 60%</li>
+                </ul>
             </div>
         </body>
         </html>
@@ -1385,9 +1876,10 @@ def generate_report_tool(srr_ids: List[str], **kwargs) -> dict:
         
         return {
             "status": "success",
-            "message": "分析报告生成完成",
+            "message": "分析报告生成完成，包含详细的上游分析总结",
             "report_file": str(report_file),
-            "srr_ids": srr_ids
+            "srr_ids": srr_ids,
+            "results_summary": results["analysis_summary"]
         }
     except Exception as e:
         return {
