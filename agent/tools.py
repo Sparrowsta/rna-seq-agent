@@ -112,130 +112,6 @@ def _monitor_and_parse_logs(task_id: str, log_file: Path, task_database: dict, d
     
     print(f"[{task_id}] Log monitor thread finished.")
 
-def _execute_task(task_id: str, plan: dict, task_database: dict, db_lock: threading.Lock):
-    """
-    The main background thread that executes a planned Nextflow task.
-    It builds the command, starts the process and the log monitor,
-    and updates the final status upon completion.
-    """
-    project_root = _get_project_root()
-    work_dir = project_root / 'data'
-    log_file = work_dir / 'logs' / f"{task_id}.log"
-
-    try:
-        # 1. Build Nextflow command from the execution plan
-        command = ["nextflow", "run", str(project_root / "nextflow" / "main.nf"), "-resume"]
-        
-        # 将工具级计划转换为 Nextflow 步骤
-        tools_to_steps = {
-            'download_genome': 'genome_download',
-            'build_star_index': 'genome_prep',
-            'download_fastq': 'download_fastq',
-            'run_fastp': 'analysis',
-            'run_star_align': 'analysis',
-            'run_featurecounts': 'analysis',
-            'validate_fastq': 'analysis'
-        }
-        
-        steps_to_execute = []
-        for tool in plan.get('tools_to_execute', []):
-            if tool in tools_to_steps:
-                step = tools_to_steps[tool]
-                if step not in steps_to_execute:
-                    steps_to_execute.append(step)
-        
-        for step in steps_to_execute:
-            command.extend([f"--run_{step.lower()}", "true"])
-
-        # The main.nf script is smart enough to look up genome info from the config
-        # based on the name. We only need to provide the name.
-        command.extend(["--genome_name", plan['genome_name']])
-
-        # --- FIX: Re-fetch full genome_info to ensure 'species' and 'version' are present ---
-        # This makes _execute_task robust against LLM potentially truncating the plan['genome_info']
-        full_genome_config = _get_genomes_config()
-        genome_info = full_genome_config.get(plan['genome_name'])
-        if not genome_info:
-            raise ValueError(f"Genome '{plan['genome_name']}' not found in config/genomes.json during task execution.")
-
-        # Add species and genome_version parameters for proper directory structure
-        command.extend(["--species", genome_info['species']])
-        command.extend(["--genome_version", genome_info['version']])
-
-        # --- ENHANCED FIX: Check if genome files exist and add download step if needed ---
-        # This makes the system robust against LLM truncating the plan['tools_to_execute']
-        fasta_path = project_root / genome_info['fasta']
-        gtf_path = project_root / genome_info['gtf']
-        files_exist = fasta_path.is_file() and gtf_path.is_file()
-        
-        # Only add genome_download if files don't exist AND it's not already in the plan
-        if not files_exist and 'genome_download' not in steps_to_execute:
-            print(f"[{task_id}] WARNING: Genome files don't exist but 'genome_download' not in plan. Adding it.")
-            steps_to_execute.insert(0, 'genome_download')  # Add at beginning
-            command.insert(-2, "--run_genome_download")
-            command.insert(-1, "true")
-        elif files_exist and 'genome_download' in steps_to_execute:
-            print(f"[{task_id}] INFO: Genome files exist, removing 'genome_download' from plan.")
-            steps_to_execute.remove('genome_download')  # Remove if files exist
-
-        # Only provide FASTA/GTF paths if we are NOT downloading them,
-        # meaning they must already exist.
-        if 'genome_download' not in steps_to_execute:
-            command.extend(["--fasta", str(project_root / genome_info['fasta'])])
-            command.extend(["--gtf", str(project_root / genome_info['gtf'])])
-
-        # Provide SRR IDs for download, or a glob pattern for existing reads.
-        if 'download_fastq' in steps_to_execute:
-            command.extend(["--srr_ids", ",".join(plan['srr_ids'])])
-        elif plan['srr_ids']: # Only add --reads if there are SRR IDs to analyze
-            srr_glob = "{" + ",".join(plan['srr_ids']) + "}"
-            reads_pattern = str(work_dir / 'fastq' / f"{srr_glob}_*.fastq.gz")
-            command.extend(["--reads", reads_pattern])
-
-        with db_lock:
-            task_database[task_id]['status'] = 'running'
-            task_database[task_id]['details']['message'] = 'Nextflow process starting...'
-            task_database[task_id]['details']['command'] = " ".join(command)
-
-        # 2. Start the log monitor thread
-        monitor_thread = threading.Thread(
-            target=_monitor_and_parse_logs, args=(task_id, log_file, task_database, db_lock), daemon=True
-        )
-        monitor_thread.start()
-
-        # 3. Execute the command using our unified executor
-        #    CRITICAL: Set NXF_HOME to a writable directory inside the container
-        #    to prevent Nextflow from trying to write to the root filesystem.
-        nf_env = os.environ.copy()
-        nxf_home = work_dir / '.nextflow'
-        nxf_home.mkdir(parents=True, exist_ok=True)
-        # Ensure the directory has proper permissions
-        os.chmod(nxf_home, 0o755)
-        nf_env['NXF_HOME'] = str(nxf_home.absolute())
-
-        process = execute_with_logging(command, log_file, work_dir, env=nf_env)
-        with db_lock:
-            task_database[task_id]['details']['pid'] = process.pid
-
-        # 4. Wait for the process to complete
-        exit_code = process.wait()
-
-        # 5. Update final status in the database
-        with db_lock:
-            final_status = "completed" if exit_code == 0 else "failed"
-            task_database[task_id]['status'] = final_status
-            task_database[task_id]['end_time'] = time.time()
-            task_database[task_id]['details']['exit_code'] = exit_code
-            task_database[task_id]['details']['message'] = f"Process finished with exit code {exit_code}."
-            for step in task_database[task_id]['details']['steps']:
-                if step['status'] == 'running':
-                    step['status'] = final_status
-
-    except Exception as e:
-        print(f"[{task_id}] Critical error in _execute_task thread: {e}")
-        with db_lock:
-                task_database[task_id]['status'] = 'failed'
-                task_database[task_id]['details']['error'] = str(e)
 
 # --- New Tools for v5.2 Architecture ---
 
@@ -347,65 +223,6 @@ def plan_analysis_task(srr_ids: str, genome_name: str) -> dict:
 
     return {"status": "success", "plan": plan}
 
-def execute_planned_task(plan: dict, description: str, task_database: dict, db_lock: threading.Lock, task_id_counter: int) -> dict:
-    """
-    Executes a plan that has been confirmed by the user.
-    It creates a new task in the database, initializes the UI step structure,
-    and launches the background execution thread.
-    """
-    print(f"Tool 'execute_planned_task' called.")
-    if not plan or not plan.get('is_executable', False):
-        return {"status": "error", "message": "The provided plan is invalid or not executable."}
-
-    with db_lock:
-        task_id = f"task_{task_id_counter}"
-        
-        # 将工具级计划转换为 Nextflow 步骤
-        tools_to_steps = {
-            'download_genome': 'genome_download',
-            'build_star_index': 'genome_prep',
-            'download_fastq': 'download_fastq',
-            'run_fastp': 'analysis',
-            'run_star_align': 'analysis',
-            'run_featurecounts': 'analysis',
-            'validate_fastq': 'analysis'
-        }
-        
-        steps_to_execute = []
-        for tool in plan.get('tools_to_execute', []):
-            if tool in tools_to_steps:
-                step = tools_to_steps[tool]
-                if step not in steps_to_execute:
-                    steps_to_execute.append(step)
-        
-        steps = []
-        if 'genome_download' in steps_to_execute:
-            steps.append({"name": "WGET_GENOME_FILES", "status": "pending", "logs": []})
-        if 'genome_prep' in steps_to_execute:
-            steps.append({"name": "STAR_GENOME_GENERATE", "status": "pending", "logs": []})
-        if 'download_fastq' in steps_to_execute:
-            steps.append({"name": "FASTERQ_DUMP", "status": "pending", "logs": []})
-        if 'analysis' in steps_to_execute:
-            steps.append({"name": "FASTP", "status": "pending", "logs": []})
-            steps.append({"name": "STAR_ALIGN", "status": "pending", "logs": []})
-            steps.append({"name": "FEATURECOUNTS", "status": "pending", "logs": []})
-
-        task_database[task_id] = {
-            "type": "pipeline", "status": "starting", "creation_time": time.time(),
-            "start_time": time.time(), "end_time": None,
-            "details": {
-                "description": description, "message": "Task created, execution thread starting.",
-                "plan": plan, "steps": steps, "error": None, "pid": None
-            }
-        }
-    
-        threading.Thread(target=_execute_task, args=(task_id, plan, task_database, db_lock), daemon=True).start()
-
-        return {
-            "status": "success",
-            "message": f"Task {task_id} has been successfully launched.",
-            "task_id": task_id, "updated_task_id_counter": task_id_counter + 1
-        }
 
 def get_task_status(task_id: str, task_database: dict, db_lock: threading.Lock) -> dict:
     """
@@ -691,7 +508,6 @@ def check_environment_tool(**kwargs) -> dict:
         "STAR": {"env": "align_env", "description": "比对工具"}, 
         "featureCounts": {"env": "quant_env", "description": "定量工具"},
         "samtools": {"env": "align_env", "description": "BAM处理工具"},
-        "nextflow": {"env": None, "description": "工作流管理工具"},
         "ascp": {"env": None, "description": "Aspera传输工具"}
     }
     
@@ -2046,93 +1862,6 @@ def validate_tool_call_format(tool_name: str, arguments: str) -> dict:
             "arguments": arguments
         }
 
-def execute_rnaseq_workflow(srr_ids: List[str], genome_name: str, **kwargs) -> dict:
-    """
-    执行完整的RNA-seq分析工作流 - 通过Nextflow
-    """
-    print(f"Tool 'execute_rnaseq_workflow' called for SRRs {srr_ids} with genome '{genome_name}'.")
-    
-    # 构建完整的Nextflow命令
-    project_root = _get_project_root()
-    work_dir = project_root / 'data'
-    genomes_config = _get_genomes_config()
-    
-    # 检查基因组配置
-    genome_info = genomes_config.get(genome_name)
-    if not genome_info:
-        return {
-            "status": "error",
-            "message": f"基因组 '{genome_name}' 在配置中未找到"
-        }
-    
-    try:
-        # 检查输入文件
-        fastq_dir = work_dir / 'fastq'
-        fasta_path = project_root / genome_info['fasta']
-        gtf_path = project_root / genome_info['gtf']
-        
-        # 构建Nextflow命令
-        command = [
-            "nextflow", "run", str(project_root / "nextflow" / "main.nf"),
-            "--genome_name", genome_name,
-            "--species", genome_info['species'],
-            "--genome_version", genome_info['version'],
-            "--outdir", str(work_dir / 'results'),
-            "-resume"
-        ]
-        
-        # 根据文件存在情况决定执行哪些步骤
-        if not fasta_path.is_file() or not gtf_path.is_file():
-            command.extend(["--run_genome_download", "true"])
-            print(f"基因组文件不存在，将下载基因组: {genome_name}")
-        else:
-            command.extend(["--fasta", str(fasta_path), "--gtf", str(gtf_path)])
-            print(f"使用现有基因组文件: {genome_name}")
-        
-        # 检查FASTQ文件
-        fastq_files_exist = any((fastq_dir / f"{srr_id}_1.fastq.gz").is_file() for srr_id in srr_ids)
-        if not fastq_files_exist:
-            command.extend(["--run_download_fastq", "true", "--srr_ids", ",".join(srr_ids)])
-            print(f"FASTQ文件不存在，将下载SRR: {srr_ids}")
-        else:
-            reads_pattern = str(fastq_dir / f"{{{','.join(srr_ids)}}}_*.fastq.gz")
-            command.extend(["--reads", reads_pattern])
-            print(f"使用现有FASTQ文件: {srr_ids}")
-        
-        # 总是执行分析步骤
-        command.extend(["--run_analysis", "true"])
-        
-        # 设置环境变量
-        env = os.environ.copy()
-        env['NXF_HOME'] = str(work_dir / '.nextflow')
-        
-        print(f"执行Nextflow命令: {' '.join(command)}")
-        
-        # 执行命令
-        result = subprocess.run(command, env=env, capture_output=True, text=True)
-        
-        if result.returncode == 0:
-            return {
-                "status": "success",
-                "message": f"RNA-seq分析工作流完成 (通过Nextflow)",
-                "srr_ids": srr_ids,
-                "genome_name": genome_name,
-                "output_dir": str(work_dir / 'results'),
-                "stdout": result.stdout,
-                "stderr": result.stderr
-            }
-        else:
-            return {
-                "status": "error",
-                "message": f"RNA-seq分析工作流失败: {result.stderr}",
-                "stdout": result.stdout,
-                "stderr": result.stderr
-            }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"执行RNA-seq工作流时发生错误: {e}"
-        }
 
 
 
@@ -2339,3 +2068,14 @@ def check_files_exist_tool(file_type: str, **kwargs) -> dict:
             "status": "error",
             "message": f"检查文件时发生错误: {e}"
         }
+
+def start_analysis_tool(plan: str) -> dict:
+    """
+    确认分析计划并触发分析状态的转换。
+    这个工具是一个信号，告诉服务器从 CONVERSING 切换到 ANALYZING 状态。
+    """
+    print(f"Tool 'start_analysis_tool' called with plan: {plan}")
+    return {
+        "status": "success",
+        "message": f"分析计划已确认，准备开始执行。计划详情: {plan}"
+    }
