@@ -405,7 +405,10 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
                     # 如果在分析模式下LLM只是说话，通常意味着分析结束了
                     session_states[session_id] = SessionState.CONVERSING
                     print(f"--- 会话 {session_id}: 分析完成，状态切换 -> CONVERSING ---")
-                    break # 退出主循环
+                    break # 退出内部 react 循环
+            
+            # 分析流程已通过自然语言响应结束，现在退出主循环
+            break
 
     # 发送结束标志
     final_chunk = {
