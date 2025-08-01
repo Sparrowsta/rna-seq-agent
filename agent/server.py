@@ -207,6 +207,7 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
                         "list_files": tool_module.list_files,
                         "get_task_status": tool_module.get_task_status,
                         "check_environment_tool": tool_module.check_environment_tool,
+                        "add_genome_to_config": tool_module.add_genome_to_config 
                     }
 
                     for tool_call in tool_calls:
@@ -297,6 +298,10 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
                         
                         # --- 详细的工具调用逻辑 ---
                         available_tools = {
+                            "execute_rna_seq_pipeline": tool_module.execute_rna_seq_pipeline,
+                            "collect_results_tool": tool_module.collect_results_tool,
+                            "generate_report_tool": tool_module.generate_report_tool,
+                            "check_files_exist_tool": tool_module.check_files_exist_tool,
                             "get_task_status": tool_module.get_task_status,
                             "list_files": tool_module.list_files,
                             "add_genome_to_config": tool_module.add_genome_to_config,
@@ -305,22 +310,6 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
                             "setup_environment_tool": tool_module.setup_environment_tool,
                             "search_genome_tool": tool_module.search_genome_tool,
                             "search_fastq_tool": tool_module.search_fastq_tool,
-                            "download_genome_tool": tool_module.download_genome_tool,
-                            "download_fastq_tool": tool_module.download_fastq_tool,
-                            "validate_fastq_tool": tool_module.validate_fastq_tool,
-                            "check_files_exist_tool": tool_module.check_files_exist_tool,
-                            "build_star_index_tool": tool_module.build_star_index_tool,
-                            "run_fastp_tool": tool_module.run_fastp_tool,
-                            "run_star_align_tool": tool_module.run_star_align_tool,
-                            "run_featurecounts_tool": tool_module.run_featurecounts_tool,
-                            "collect_results_tool": tool_module.collect_results_tool,
-                            "generate_report_tool": tool_module.generate_report_tool,
-                            "start_analysis_tool": tool_module.start_analysis_tool,
-                            "react_status_tool": tool_module.react_status_tool,
-                            "react_plan_tool": tool_module.react_plan_tool,
-                            "react_evaluate_tool": tool_module.react_evaluate_tool,
-                            "react_summary_tool": tool_module.react_summary_tool,
-                            "validate_tool_call_format": tool_module.validate_tool_call_format,
                         }
                         
                         global task_id_counter
@@ -374,8 +363,8 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
                         messages.append({"tool_call_id": tool_call.id, "role": "tool", "name": function_name, "content": function_response})
 
                         # 检查任务是否完成或失败
-                        task_finished = (function_name == 'generate_report_tool' and 'error' not in function_response.lower())
-                        task_failed = 'error' in function_response.lower()
+                        task_finished = (function_name == 'execute_rna_seq_pipeline' and tool_result.get("status") == "success")
+                        task_failed = (function_name == 'execute_rna_seq_pipeline' and tool_result.get("status") == "error")
 
                         if task_finished or task_failed:
                             session_states[session_id] = SessionState.CONVERSING
