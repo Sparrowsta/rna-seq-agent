@@ -1,13 +1,17 @@
 #!/usr/bin/env nextflow
 
+nextflow.enable.dsl=2
 
 // 定义工作流参数
 // --- 输入参数 ---
 params.srr_ids = ""                          // 输入的 SRR ID 列表，用逗号分隔
 params.local_genome_path = ""                // 本地基因组文件路径
 params.local_gtf_path = ""                   // 本地GTF文件路径
-params.download_genome_url = ""              // 参考基因组下载 URL (例如, ftp://.../genome.fa.gz)
-params.download_gtf_url = ""                 // GTF 注释文件下载 URL (例如, ftp://.../annotation.gtf.gz)
+params.download_genome_url = ""              // 参考基因组下载 URL
+params.download_gtf_url = ""                 // GTF 注释文件下载 URL
+
+// --- 本地 FASTQ 文件参数 ---
+params.local_fastq_files = ""           // 本地FASTQ文件路径列表，支持通配符
 
 // --- 输出目录参数 ---
 params.data = "./data"                       // 唯一的基础路径参数
@@ -20,21 +24,7 @@ params.run_fastp = false                     // 是否执行 fastp 质控
 params.run_star_align = false                // 是否执行 STAR 比对
 params.run_featurecounts = false             // 是否执行 featureCounts 定量
 
-// --- 其他参数 ---
-params.resume = false                        // 是否从上次中断的地方继续
-params.star_overhang = 100                   // STAR sjdbOverhang 值
-params.star_threads = 4                      // STAR 运行线程数
-params.fastp_threads = 4                     // fastp 运行线程数
-params.featurecounts_threads = 4             // featureCounts 运行线程数
 
-
-
-// 将 SRR ID 字符串转换为列表，并创建输入通道
-srr_ids_ch = Channel.empty()
-if (params.run_download_srr) {
-    srr_list = params.srr_ids.split(',').collect { it.trim() }.unique()
-    srr_ids_ch = Channel.fromList(srr_list)
-}
 
 // 定义日志处理器
 log.info """
@@ -42,8 +32,11 @@ log.info """
 RNA-seq 分析工作流（参数化控制版）
 ================================================
 SRR ID 列表: ${params.srr_ids ?: "未提供"}
-参考基因组 URL: ${params.genome_url ?: "未提供"}
-GTF URL: ${params.gtf_url ?: "未提供"}
+本地基因组路径: ${params.local_genome_path ?: "未提供"}
+本地GTF路径: ${params.local_gtf_path ?: "未提供"}
+基因组下载URL: ${params.download_genome_url ?: "未提供"}
+GTF下载URL: ${params.download_gtf_url ?: "未提供"}
+本地FASTQ文件列表: ${params.local_fastq_files ?: "未提供"}
 主输出目录: ${params.data}/results
 ------------------------------------------------
 流程控制:
@@ -54,9 +47,23 @@ GTF URL: ${params.gtf_url ?: "未提供"}
   STAR 比对: ${params.run_star_align}
   FeatureCounts 定量: ${params.run_featurecounts}
 ------------------------------------------------
-恢复模式: ${params.resume}
 ================================================
 """
+
+// 辅助函数定义
+def extractSampleId(file) {
+    // 从文件路径提取样本标识符
+    return file.baseName.replaceAll(/[._](R?[12]|1|2)$/, '')
+}
+
+def cleanSampleId(sample_id) {
+    // 清理样本标识符，确保符合文件命名规范
+    return sample_id
+        .replaceAll(/[^a-zA-Z0-9_-]/, '_')  // 替换特殊字符
+        .replaceAll(/_{2,}/, '_')           // 合并多个下划线
+        .replaceAll(/^_+|_+$/, '')         // 移除首尾下划线
+        .isEmpty() ? "sample_${System.currentTimeMillis()}" : sample_id
+}
 
 // 流程定义
 
@@ -65,46 +72,46 @@ process download_srr_data {
     label 'process_low'
     
     input:
-    val srr_id from srr_ids_ch
+    val srr_id
     
     output:
     path "${srr_id}_1.fastq.gz", emit: read1
     path "${srr_id}_2.fastq.gz", emit: read2, optional: true
     path "${srr_id}.single.fastq.gz", emit: read_single, optional: true
-    path "${params.status_dir}/${srr_id}.srr.downloaded", emit: status_file
+    path "${srr_id}.srr.downloaded", emit: status_file
     
     script:
-    // 创建输出目录
-    sra_output_dir = file("${params.sra_dir}/${srr_id}")
-    fastq_output_dir = file("${params.fastq_dir}/${srr_id}")
-    status_output_dir = file(params.status_dir)
-    
     """
-    mkdir -p ${sra_output_dir}
-    mkdir -p ${fastq_output_dir}
-    mkdir -p ${status_output_dir}
+    # 创建临时目录
+    mkdir -p ./sra_temp
+    mkdir -p ./fastq_temp
     
     # 下载 SRA 数据
-    conda run -n sra_env prefetch ${srr_id} -O ${sra_output_dir}
+    conda run -n sra_env prefetch ${srr_id} -O ./sra_temp
     
-    # 转换为 FASTQ 格式并压缩
-    conda run -n sra_env fasterq-dump ${sra_output_dir}/${srr_id}.sra -O ${fastq_output_dir} --split-files --threads ${task.cpus}
+    # 转换为 FASTQ 格式
+    conda run -n sra_env fasterq-dump ./sra_temp/${srr_id}.sra -O ./fastq_temp --split-files --threads ${task.cpus}
     
-    # 检查是否为双端测序
-    if [ -f "${fastq_output_dir}/${srr_id}_2.fastq" ]; then
-        mv ${fastq_output_dir}/${srr_id}_1.fastq ${fastq_output_dir}/${srr_id}_1.fastq.gz
-        mv ${fastq_output_dir}/${srr_id}_2.fastq ${fastq_output_dir}/${srr_id}_2.fastq.gz
+    # 检查是否为双端测序并压缩
+    if [ -f "./fastq_temp/${srr_id}_2.fastq" ]; then
+        gzip ./fastq_temp/${srr_id}_1.fastq
+        gzip ./fastq_temp/${srr_id}_2.fastq
+        mv ./fastq_temp/${srr_id}_1.fastq.gz ${srr_id}_1.fastq.gz
+        mv ./fastq_temp/${srr_id}_2.fastq.gz ${srr_id}_2.fastq.gz
     else
-        mv ${fastq_output_dir}/${srr_id}.fastq ${fastq_output_dir}/${srr_id}.single.fastq.gz
+        gzip ./fastq_temp/${srr_id}.fastq
+        mv ./fastq_temp/${srr_id}.fastq.gz ${srr_id}.single.fastq.gz
     fi
     
-    # 清理 SRA 文件以节省空间
-    rm -rf ${sra_output_dir}
+    # 清理临时文件
+    rm -rf ./sra_temp ./fastq_temp
     
     # 创建状态文件
-    echo "SRR数据下载完成: ${srr_id}" > ${params.status_dir}/${srr_id}.srr.downloaded
+    echo "SRR数据下载完成: ${srr_id}" > ${srr_id}.srr.downloaded
     """
     
+    publishDir "${params.data}/fastq", mode: 'copy', pattern: "*.fastq.gz"
+    publishDir "${params.data}/logs", mode: 'copy', pattern: "*.downloaded"
 }
 
 process download_reference_genome {
@@ -130,8 +137,8 @@ process download_reference_genome {
     touch "genome.downloaded"
     """
     
-    publishDir "${params.data}/genome", mode: 'copy'
-    publishDir "${params.data}/status", mode: 'copy', pattern: "*.downloaded"
+    publishDir "${file(params.local_genome_path)}", mode: 'copy'
+    publishDir "${file(params.local_genome_path)}/logs", mode: 'copy', pattern: "*.downloaded"
     
 }
 
@@ -158,15 +165,15 @@ process build_star_index {
         --genomeDir ${index_output_dir} \\
         --genomeFastaFiles ${genome_fasta} \\
         --sjdbGTFfile ${genome_gtf} \\
-        --sjdbOverhang ${params.star_overhang} \\
-        --runThreadN ${params.star_threads}
+        --sjdbOverhang 100 \\
+        --runThreadN ${task.cpus}
         
     # 创建状态文件
     touch "star_index.built"
     """
     
     publishDir "${file(params.local_genome_path).getParent()}", mode: 'copy', overwrite: false, pattern: "star_index"
-    publishDir "${params.data}/status", mode: 'copy', pattern: "*.built"
+    publishDir "${file(params.local_genome_path).getParent()}/logs", mode: 'copy', pattern: "*.built"
 }
 
 process run_fastp {
@@ -193,7 +200,7 @@ process run_fastp {
             -o ${srr_id}.single.trimmed.fastq.gz \\
             --html ${srr_id}.fastp.html \\
             --json ${srr_id}.fastp.json \\
-            --thread ${params.fastp_threads}
+            --thread ${task.cpus}
     else
         # 双端测序
         conda run -n qc_env fastp \\
@@ -203,15 +210,15 @@ process run_fastp {
             -O ${srr_id}_2.trimmed.fastq.gz \\
             --html ${srr_id}.fastp.html \\
             --json ${srr_id}.fastp.json \\
-            --thread ${params.fastp_threads}
+            --thread ${task.cpus}
     fi
     
     # 创建状态文件
     touch "${srr_id}.fastp.done"
     """
     
-    publishDir "${params.data}/results/fastp", mode: 'copy'
-    publishDir "${params.data}/status", mode: 'copy', pattern: "*.fastp.done"
+    publishDir "${params.data}/results/fastp/${srr_id}", mode: 'copy', pattern: "*.{html,json,fastq.gz}"
+    publishDir "${params.data}/logs", mode: 'copy', pattern: "*.fastp.done"
 }
 
 process run_star_align {
@@ -232,7 +239,7 @@ process run_star_align {
     if [ -f "${read_single}" ]; then
         # 单端测序
         conda run -n align_env STAR \\
-            --runThreadN ${params.star_threads} \\
+            --runThreadN ${task.cpus} \\
             --genomeDir ${index_dir} \\
             --readFilesIn ${read_single} \\
             --readFilesCommand zcat \\
@@ -243,7 +250,7 @@ process run_star_align {
     else
         # 双端测序
         conda run -n align_env STAR \\
-            --runThreadN ${params.star_threads} \\
+            --runThreadN ${task.cpus} \\
             --genomeDir ${index_dir} \\
             --readFilesIn ${read1} ${read2} \\
             --readFilesCommand zcat \\
@@ -266,160 +273,8 @@ process run_star_align {
     touch "${srr_id}.bam.done"
     """
     
-    publishDir "${params.data}/results/bam", mode: 'copy'
-    publishDir "${params.data}/status", mode: 'copy', pattern: "*.bam.done"
-}
-
-process run_featurecounts {
-    tag "FeatureCounts 定量"
-    label 'process_medium'
-    
-    input:
-    path index_dir // 用于推断GTF文件位置
-    tuple val(srr_id), path(bam_file)
-    
-    output:
-    path "all_samples.counts.txt", emit: counts_matrix
-    path "all_samples.counts.txt.summary", emit: counts_summary
-    path "${params.status_dir}/featurecounts.done", emit: status_file
-    
-    script:
-    featurecounts_output_dir = file(params.featurecounts_dir)
-    status_output_dir = file(params.status_dir)
-    // 假设GTF文件与索引在同一目录，或由用户通过params.gtf_path明确指定
-    // 这里我们尝试从索引目录中找到GTF文件
-    gtf_file_path = file("${index_dir}/../annotation.gtf") // 相对于索引目录的GTF路径
-    if (!gtf_file_path.exists() && params.gtf_url) {
-        // 如果索引目录下没有，尝试从主基因组目录找
-        gtf_file_path = file("${params.genome_dir}/annotation.gtf")
-    }
-    
-    """
-    mkdir -p ${featurecounts_output_dir}
-    mkdir -p ${status_output_dir}
-    cd ${featurecounts_output_dir}
-    
-    # 创建一个包含所有BAM文件路径的临时文件
-    # echo "${bam_file}" > bam_files_list.txt
-    
-    # 运行featureCounts
-    conda run -n quant_env featureCounts \\
-        -T ${params.featurecounts_threads} \\
-        -a ${gtf_file_path} \\
-        -o all_samples.counts.txt \\
-        ${bam_file} # 如果bam_file是单个文件路径
-        
-    # 创建状态文件
-    echo "featureCounts基因定量完成" > ${params.status_dir}/featurecounts.done
-    """
-    
-    publishDir "${params.featurecounts_dir}", mode: 'copy', overwrite: false
-}
-
-// 主工作流 - 根据参数选择性执行步骤
-workflow {
-    // 1. 处理参考基因组
-    if (params.run_download_genome) {
-        // 下载参考基因组
-        downloaded_genome = download_reference_genome()
-        // 将下载的基因组路径设置为后续流程的参数
-        params.genome_fasta = downloaded_genome.out.genome_fasta
-        params.gtf_path = downloaded_genome.out.genome_gtf
-    } else {
-        // 直接使用提供的路径
-        downloaded_genome = [ genome_fasta: file(params.local_genome_path), genome_gtf: file(params.local_gtf_path) ]
-    }
-
-    // 2. 构建 STAR 索引
-    if (params.run_build_star_index) {
-        star_index = build_star_index(downloaded_genome.out.genome_fasta, downloaded_genome.out.genome_gtf)
-    } else {
-        // 如果不构建索引，则假定索引存在于本地基因组文件旁边
-        def star_index_path = file(params.local_genome_path).getParent() + "/star_index"
-        if (!file(star_index_path).exists()) error "STAR索引目录未找到: ${star_index_path}。请运行索引构建或提供正确路径。"
-        // 创建虚拟通道
-        star_index = [ index_dir: file(star_index_path) ]
-    }
-
-    // 3. 下载 SRR 数据
-    trimmed_reads_ch = Channel.empty()
-    if (params.run_download_srr) {
-        raw_fastq_ch = download_srr_data(srr_ids_ch)
-        
-        // 4. 运行 Fastp
-        if (params.run_fastp) {
-            // 重新组织 raw_fastq_ch 的输出以匹配 run_fastp 的输入
-            // raw_fastq_ch 输出: read1, read2, read_single
-            // run_fastp 输入: tuple val(srr_id), path(read1), path(read2), path(read_single)
-            // 需要从文件名中提取 srr_id
-            raw_fastq_ch.out.read1.map { read1 -> [ read1.baseName.replace('_1.fastq', ''), read1, null, null ] }.mix(
-                raw_fastq_ch.out.read2.map { read2 -> [ read2.baseName.replace('_2.fastq', ''), null, read2, null ] }
-            ).mix(
-                raw_fastq_ch.out.read_single.map { read_single -> [ read_single.baseName.replace('.single.fastq', ''), null, null, read_single ] }
-            ).groupTuple().map { srr_id, r1, r2, rs -> [srr_id, r1[0], r2[0], rs[0]] }.set { fastp_input_ch }
-            
-            trimmed_reads_ch = run_fastp(fastp_input_ch)
-        } else {
-            // 如果不运行fastp，则使用原始fastq作为比对输入
-            // 需要将原始fastq的输出组织成与trimmed_reads_ch相同的格式
-            raw_fastq_ch.out.read1.map { read1 -> [ read1.baseName.replace('_1.fastq', ''), read1, null, null ] }.mix(
-                raw_fastq_ch.out.read2.map { read2 -> [ read2.baseName.replace('_2.fastq', ''), null, read2, null ] }
-            ).mix(
-                raw_fastq_ch.out.read_single.map { read_single -> [ read_single.baseName.replace('.single.fastq', ''), null, null, read_single ] }
-            ).groupTuple().map { srr_id, r1, r2, rs -> [srr_id, r1[0], r2[0], rs[0]] }.set { trimmed_reads_ch }
-        }
-    }
-
-    // 5. 运行 STAR 比对
-    bam_files_ch = Channel.empty()
-    if (params.run_star_align) {
-        // 检查是否有reads数据（经过fastp或原始）
-        if (trimmed_reads_ch) {
-            // star_index.out.index_dir 是一个路径
-            // trimmed_reads_ch 的输出格式需要匹配 run_star_align 的输入
-            // run_star_align 输入: tuple val(srr_id), path(read1), path(read2), path(read_single), path(index_dir)
-            // trimmed_reads_ch 输出: tuple val(srr_id), path(trimmed_read1), path(trimmed_read2), path(trimmed_single_read) (可选)
-            
-            // 重新组织 trimmed_reads_ch 的输出
-            star_align_input_ch = trimmed_reads_ch.out.trimmed_paired_reads.map { srr_id, r1, r2 -> [srr_id, r1, r2, null] }.mix(
-                trimmed_reads_ch.out.trimmed_single_read.map { srr_id, rs -> [srr_id, null, null, rs] }
-            ).combine(star_index.out.index_dir) // 组合索引路径
-            
-            bam_files_ch = run_star_align(star_align_input_ch)
-        } else {
-            log.warn "跳过STAR比对，因为没有可用的reads数据。请确保SRR下载已启用并成功。"
-        }
-    }
-
-    // 6. 运行 FeatureCounts
-    if (params.run_featurecounts) {
-        if (bam_files_ch) {
-            // featureCounts 需要所有BAM文件和一个GTF文件
-            // 当前 run_featurecounts 设计为处理单个BAM文件，这是不正确的。
-            // 我们需要收集所有BAM文件，然后一次性运行featureCounts。
-            
-            // 收集所有BAM文件路径
-            all_bams = bam_files_ch.out.bam.collect()
-            
-            // 将GTF文件路径也传递进去
-            // 假设GTF路径来自 downloaded_genome 或 params.gtf_path
-            gtf_for_featurecounts = params.run_download_genome ? downloaded_genome.out.genome_gtf : file(params.gtf_path)
-            
-            // 修改 run_featurecounts 以接收BAM文件列表和GTF文件
-            // 由于原始的 run_featurecounts 输入定义不同，我们需要调整或创建一个新流程
-            // 为了快速实现，我们在这里直接调用featureCounts，而不是通过单独的process
-            // 这违背了Nextflow的原则，但为了快速修改...
-            // 更好的做法是重构 run_featurecounts
-            
-            // 临时解决方案：在workflow块中直接执行shell命令（不推荐，但为了快速演示）
-            // 或者，我们创建一个简化的 process 来处理这个情况。
-            // 这里我们选择创建一个新的 process `run_featurecounts_batch`
-            
-            run_featurecounts_batch(all_bams, gtf_for_featurecounts)
-        } else {
-            log.warn "跳过FeatureCounts，因为没有可用的BAM文件。请确保STAR比对已启用并成功。"
-        }
-    }
+    publishDir "${params.data}/results/bam/${srr_id}", mode: 'copy', pattern: "*.{bam,bai}"
+    publishDir "${params.data}/logs", mode: 'copy', pattern: "*.bam.done"
 }
 
 // 新增：批量运行featureCounts的流程
@@ -443,7 +298,7 @@ process run_featurecounts_batch {
     """
     # 运行featureCounts
     conda run -n quant_env featureCounts \\
-        -T ${params.featurecounts_threads} \\
+        -T ${task.cpus} \\
         -a ${gtf_file} \\
         -o all_samples.counts.txt \\
         ${bam_files_str}
@@ -453,7 +308,124 @@ process run_featurecounts_batch {
     """
     
     publishDir "${params.data}/results/featurecounts", mode: 'copy'
-    publishDir "${params.data}/status", mode: 'copy', pattern: "*.done"
+    publishDir "${params.data}/logs", mode: 'copy', pattern: "*.done"
+}
+
+
+// 主工作流 - 根据参数选择性执行步骤
+workflow {
+    // 创建SRR ID输入通道
+    srr_ids_ch = params.run_download_srr ?
+        Channel.fromList(params.srr_ids.split(',').collect { it.trim() }.unique()) :
+        Channel.empty()
+    // 1. 处理参考基因组 - 使用Channel.empty() + mix模式
+    downloaded_genome_ch = params.run_download_genome ?
+        download_reference_genome() :
+        Channel.empty()
+    
+    local_genome_ch = params.run_download_genome ?
+        Channel.empty() :
+        Channel.of([
+            genome_fasta: file(params.local_genome_path),
+            genome_gtf: file(params.local_gtf_path)
+        ])
+    
+    // 合并下载和本地基因组Channel
+    genome_files_ch = downloaded_genome_ch.mix(local_genome_ch)
+
+    // 2. 构建 STAR 索引 - 使用Channel.empty() + mix模式
+    built_index_ch = params.run_build_star_index ?
+        genome_files_ch.map { genome -> build_star_index(genome.genome_fasta, genome.genome_gtf) }.flatten() :
+        Channel.empty()
+    
+    local_index_ch = params.run_build_star_index ?
+        Channel.empty() :
+        Channel.of([
+            index_dir: file(params.local_genome_path ?
+                file(params.local_genome_path).getParent() + "/star_index" :
+                "./data/genomes/star_index")
+        ])
+    
+    // 合并构建和本地索引Channel
+    star_index_ch = built_index_ch.mix(local_index_ch)
+
+    // 3. 准备输入数据 - 使用Channel.empty() + mix模式处理SRR下载
+    // SRR下载数据Channel
+    srr_fastq_ch = params.run_download_srr ?
+        download_srr_data(srr_ids_ch) :
+        Channel.empty()
+    
+    // 组织SRR下载数据为统一格式
+    srr_organized_ch = params.run_download_srr ?
+        srr_fastq_ch.read1.map { read1 ->
+            [ read1.baseName.replace('_1.fastq', ''), read1, null, null ]
+        }.mix(
+            srr_fastq_ch.read2.map { read2 ->
+                [ read2.baseName.replace('_2.fastq', ''), null, read2, null ]
+            }
+        ).mix(
+            srr_fastq_ch.read_single.map { read_single ->
+                [ read_single.baseName.replace('.single.fastq', ''), null, null, read_single ]
+            }
+        ).groupTuple().map { srr_id, r1, r2, rs ->
+            [srr_id, r1[0], r2[0], rs[0]]
+        } :
+        Channel.empty()
+    
+    // 本地FASTQ文件Channel（统一使用 local_fastq_files 参数）
+    local_fastq_ch = (params.local_fastq_files && !params.run_download_srr) ?
+        Channel.fromPath(params.local_fastq_files.split(','))
+            .filter { file -> file.exists() }
+            .map { file ->
+                def sample_id = extractSampleId(file)
+                def cleaned_id = cleanSampleId(sample_id)
+                // 判断是否为单端或双端测序文件
+                if (file.name.contains('_1.') || file.name.contains('_R1')) {
+                    return [cleaned_id, file, null, null] // 双端测序的 read1
+                } else if (file.name.contains('_2.') || file.name.contains('_R2')) {
+                    return [cleaned_id, null, file, null] // 双端测序的 read2
+                } else {
+                    return [cleaned_id, null, null, file] // 单端测序
+                }
+            }
+            .groupTuple()
+            .map { sample_id, r1_list, r2_list, single_list ->
+                def r1 = r1_list.find { it != null }
+                def r2 = r2_list.find { it != null }
+                def single = single_list.find { it != null }
+                return [sample_id, r1, r2, single]
+            } :
+        Channel.empty()
+    
+    // 合并所有输入数据源
+    raw_reads_ch = srr_organized_ch.mix(local_fastq_ch)
+    
+    // 4. 运行 Fastp（如果启用）
+    if (params.run_fastp) {
+        trimmed_reads_ch = run_fastp(raw_reads_ch)
+    } else {
+        // 如果不运行fastp，直接使用原始数据
+        trimmed_reads_ch = raw_reads_ch
+    }
+
+    // 5. 运行 STAR 比对 - 使用Channel.empty() + mix模式
+    star_align_input_ch = params.run_star_align ?
+        trimmed_reads_ch.combine(star_index_ch.map { it.index_dir }) :
+        Channel.empty()
+    
+    bam_files_ch = params.run_star_align ?
+        run_star_align(star_align_input_ch) :
+        Channel.empty()
+
+    // 6. 运行 FeatureCounts - 使用Channel.empty() + mix模式
+    featurecounts_input_ch = params.run_featurecounts ?
+        bam_files_ch.bam.collect()
+            .combine(genome_files_ch.map { it.genome_gtf }) :
+        Channel.empty()
+    
+    featurecounts_results_ch = params.run_featurecounts ?
+        run_featurecounts_batch(featurecounts_input_ch) :
+        Channel.empty()
 }
 
 
@@ -465,7 +437,7 @@ workflow.onComplete {
     执行时间: ${workflow.duration}
     成功: ${workflow.success}
     主输出目录: ${params.data}/results
-    状态目录: ${params.data}/status
+    日志目录: ${params.data}/logs
     """
 }
 
@@ -478,7 +450,9 @@ workflow.onError {
     """
     
     // 将错误信息写入文件
-    file("${params.data}/status/error.txt").text = """
+    def errorFile = file("${params.data}/logs/error.txt")
+    errorFile.getParent().mkdirs()
+    errorFile.text = """
     工作流执行失败！
     
     错误信息: ${workflow.errorMessage}

@@ -207,7 +207,9 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
                         "list_files": tool_module.list_files,
                         "get_task_status": tool_module.get_task_status,
                         "check_environment_tool": tool_module.check_environment_tool,
-                        "add_genome_to_config": tool_module.add_genome_to_config 
+                        "add_genome_to_config": tool_module.add_genome_to_config,
+                        "unsupported_request": tool_module.unsupported_request,
+                        "setup_environment_tool": tool_module.setup_environment_tool
                     }
 
                     for tool_call in tool_calls:
@@ -301,15 +303,7 @@ async def stream_agent_response(chat_input: ChatInput) -> AsyncGenerator[str, No
                             "execute_rna_seq_pipeline": tool_module.execute_rna_seq_pipeline,
                             "collect_results_tool": tool_module.collect_results_tool,
                             "generate_report_tool": tool_module.generate_report_tool,
-                            "check_files_exist_tool": tool_module.check_files_exist_tool,
-                            "get_task_status": tool_module.get_task_status,
-                            "list_files": tool_module.list_files,
-                            "add_genome_to_config": tool_module.add_genome_to_config,
-                            "unsupported_request": tool_module.unsupported_request,
-                            "check_environment_tool": tool_module.check_environment_tool,
-                            "setup_environment_tool": tool_module.setup_environment_tool,
-                            "search_genome_tool": tool_module.search_genome_tool,
-                            "search_fastq_tool": tool_module.search_fastq_tool,
+                            "check_files_exist_tool":tool_module.check_files_exist_tool
                         }
                         
                         global task_id_counter

@@ -4,10 +4,10 @@ import time
 import json
 import threading
 import subprocess
+import logging
 from pathlib import Path
 from typing import Dict, Any, List
-
-# --- New Imports ---
+from datetime import datetime
 
 
 # 移除进度条模块导入
@@ -1245,24 +1245,24 @@ def start_analysis_tool(plan: str) -> dict:
 
 def run_nextflow_pipeline(
     srr_ids: str = "",
-    genome_url: str = "",
-    gtf_url: str = "",
+    local_genome_path: str = "",
+    local_gtf_path: str = "",
+    download_genome_url: str = "",
+    download_gtf_url: str = "",
+    fastq_dir: str = "",
+    fastq_pattern: str = "*_{1,2}.fastq.gz",
+    data: str = "./data",
     run_download_srr: bool = False,
     run_download_genome: bool = False,
     run_build_star_index: bool = False,
     run_fastp: bool = False,
     run_star_align: bool = False,
     run_featurecounts: bool = False,
-    outdir: str = "./results",
     resume: bool = False,
     star_overhang: int = 100,
     star_threads: int = 4,
     fastp_threads: int = 4,
     featurecounts_threads: int = 4,
-    local_genome_path: str = None,
-    local_gtf_path: str = None,
-    download_genome_url: str = None,
-    download_gtf_url: str = None,
     **kwargs
 ) -> dict:
     """
@@ -1280,28 +1280,27 @@ def run_nextflow_pipeline(
         }
 
     # 构建 Nextflow 命令
-    command = ["nextflow", "run", str(main_nf_path)]
+    command = ["nextflow", "run", str(main_nf_path), "-with-trace"]
 
-    # 添加参数
+    # --- 添加所有参数 ---
     if srr_ids:
         command.extend(["--srr_ids", srr_ids])
-    
-    # 处理基因组文件路径和URL
     if local_genome_path:
-        command.extend(["--genome_url", local_genome_path])
-    elif download_genome_url:
-        command.extend(["--genome_url", download_genome_url])
-    elif genome_url:
-        command.extend(["--genome_url", genome_url])
-    
+        command.extend(["--local_genome_path", local_genome_path])
     if local_gtf_path:
-        command.extend(["--gtf_url", local_gtf_path])
-    elif download_gtf_url:
-        command.extend(["--gtf_url", download_gtf_url])
-    elif gtf_url:
-        command.extend(["--gtf_url", gtf_url])
-    
-    # 添加布尔控制参数
+        command.extend(["--local_gtf_path", local_gtf_path])
+    if download_genome_url:
+        command.extend(["--download_genome_url", download_genome_url])
+    if download_gtf_url:
+        command.extend(["--download_gtf_url", download_gtf_url])
+    if fastq_dir:
+        command.extend(["--fastq_dir", fastq_dir])
+    if fastq_pattern:
+        command.extend(["--fastq_pattern", fastq_pattern])
+    if data:
+        command.extend(["--data", data])
+
+    # --- 添加布尔控制参数 ---
     if run_download_srr:
         command.append("--run_download_srr")
     if run_download_genome:
@@ -1315,10 +1314,9 @@ def run_nextflow_pipeline(
     if run_featurecounts:
         command.append("--run_featurecounts")
     
-    # 添加其他参数
-    command.extend(["--outdir", outdir])
+    # --- 添加其他参数 ---
     if resume:
-        command.append("--resume")
+        command.append("-resume") # Nextflow resume flag
     command.extend(["--star_overhang", str(star_overhang)])
     command.extend(["--star_threads", str(star_threads)])
     command.extend(["--fastp_threads", str(fastp_threads)])
@@ -1330,7 +1328,7 @@ def run_nextflow_pipeline(
         # 设置环境变量
         env = os.environ.copy()
         # 确保 NXF_HOME 设置在项目目录内，以避免权限问题
-        env['NXF_HOME'] = str(project_root / 'data' / '.nextflow')
+        env['NXF_HOME'] = str(project_root / '.nextflow')
         
         # 执行命令
         result = subprocess.run(
@@ -1347,7 +1345,7 @@ def run_nextflow_pipeline(
                 "message": "Nextflow 工作流执行成功",
                 "stdout": result.stdout,
                 "stderr": result.stderr,
-                "command": " ".join(command)
+                "command": " ".join(command),
             }
         else:
             return {
@@ -1355,7 +1353,7 @@ def run_nextflow_pipeline(
                 "message": "Nextflow 工作流执行失败",
                 "stdout": result.stdout,
                 "stderr": result.stderr,
-                "command": " ".join(command)
+                "command": " ".join(command),
             }
     except FileNotFoundError:
         return {
@@ -1373,20 +1371,51 @@ def run_nextflow_pipeline(
             "message": f"运行 Nextflow 工作流时发生错误: {e}"
         }
 
+def _setup_pipeline_logger() -> logging.Logger:
+    """
+    设置 RNA-seq 流程专用的日志记录器
+    """
+    project_root = _get_project_root()
+    log_file = project_root / 'para.log.txt'
+    
+    # 创建日志记录器
+    logger = logging.getLogger('rna_seq_pipeline')
+    logger.setLevel(logging.INFO)
+    
+    # 避免重复添加处理器
+    if not logger.handlers:
+        # 创建文件处理器
+        file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
+        file_handler.setLevel(logging.INFO)
+        
+        # 创建格式化器
+        formatter = logging.Formatter(
+            '%(asctime)s - [RNA-seq Pipeline] - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        file_handler.setFormatter(formatter)
+        
+        # 添加处理器到日志记录器
+        logger.addHandler(file_handler)
+    
+    return logger
+
 def execute_rna_seq_pipeline(
-    srr_ids: str,
-    genome_name: str,
-    run_download_srr: bool,
-    run_build_star_index: bool,
+    srr_ids: str = "",
+    local_genome_path: str = "",
+    local_gtf_path: str = "",
+    download_genome_url: str = "",
+    download_gtf_url: str = "",
+    fastq_dir: str = "",
+    fastq_pattern: str = "*_{1,2}.fastq.gz",
+    data: str = "./data",
+    run_download_srr: bool = False,
     run_download_genome: bool = False,
-    local_genome_path: str = None,
-    local_gtf_path: str = None,
-    download_genome_url: str = None,
-    download_gtf_url: str = None,
-    run_fastp: bool = True,
-    run_star_align: bool = True,
-    run_featurecounts: bool = True,
-    resume: bool = True,
+    run_build_star_index: bool = False,
+    run_fastp: bool = False,
+    run_star_align: bool = False,
+    run_featurecounts: bool = False,
+    resume: bool = False,
     star_overhang: int = 100,
     star_threads: int = 4,
     fastp_threads: int = 4,
@@ -1396,63 +1425,95 @@ def execute_rna_seq_pipeline(
     """
     在 ANALYZING 状态下，运行完整的 RNA-seq 分析工作流。
     此工具接收所有必要的参数，并一次性启动 Nextflow 流程。
-    所有布尔参数都应由 LLM 在 CONVERSING 状态下通过调用信息查询工具提前确定。
-
-    Args:
-        srr_ids (str): 需要分析的 SRR ID 列表，以逗号分隔。
-        genome_name (str): 参考基因组的名称，必须在 config/genomes.json 中定义。
-        run_download_srr (bool): 是否需要下载 SRR 文件。
-        run_build_star_index (bool): 是否需要构建 STAR 索引。
-        run_download_genome (bool): 是否需要下载基因组文件。默认为 False。
-        local_genome_path (str): 本地基因组文件路径。如果提供，将使用此路径。
-        local_gtf_path (str): 本地GTF文件路径。如果提供，将使用此路径。
-        download_genome_url (str): 基因组文件下载URL。如果run_download_genome为True，将使用此URL。
-        download_gtf_url (str): GTF文件下载URL。如果run_download_genome为True，将使用此URL。
-        run_fastp (bool): 是否执行 fastp 质量控制。默认为 True。
-        run_star_align (bool): 是否执行 STAR 比对。默认为 True。
-        run_featurecounts (bool): 是否执行 featureCounts 定量。默认为 True。
-        resume (bool): 是否使用 Nextflow 的 resume 功能。默认为 True。
-        star_overhang (int): STAR overhang参数。默认为 100。
-        star_threads (int): STAR线程数。默认为 4。
-        fastp_threads (int): fastp线程数。默认为 4。
-        featurecounts_threads (int): featureCounts线程数。默认为 4。
-
-    Returns:
-        dict: Nextflow 进程的启动结果。
     """
-    print(f"Tool 'execute_rna_seq_pipeline' called for genome '{genome_name}' and SRRs '{srr_ids}'.")
-    project_root = _get_project_root()
-    genomes_config = _get_genomes_config()
+    # 设置日志记录器
+    logger = _setup_pipeline_logger()
     
-    # 检查基因组配置
-    genome_info = genomes_config.get(genome_name)
-    if not genome_info:
-        return {
-            "status": "error",
-            "message": f"基因组 '{genome_name}' 在配置中未找到"
-        }
+    # 记录函数开始执行和参数信息
+    logger.info("=" * 80)
+    logger.info("开始执行 RNA-seq 分析流程")
+    logger.info(f"执行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info("输入参数:")
+    logger.info(f"  - srr_ids: {srr_ids}")
+    logger.info(f"  - local_genome_path: {local_genome_path}")
+    logger.info(f"  - local_gtf_path: {local_gtf_path}")
+    logger.info(f"  - download_genome_url: {download_genome_url}")
+    logger.info(f"  - download_gtf_url: {download_gtf_url}")
+    logger.info(f"  - fastq_dir: {fastq_dir}")
+    logger.info(f"  - fastq_pattern: {fastq_pattern}")
+    logger.info(f"  - data: {data}")
+    logger.info(f"  - run_download_srr: {run_download_srr}")
+    logger.info(f"  - run_download_genome: {run_download_genome}")
+    logger.info(f"  - run_build_star_index: {run_build_star_index}")
+    logger.info(f"  - run_fastp: {run_fastp}")
+    logger.info(f"  - run_star_align: {run_star_align}")
+    logger.info(f"  - run_featurecounts: {run_featurecounts}")
+    logger.info(f"  - resume: {resume}")
+    logger.info(f"  - star_overhang: {star_overhang}")
+    logger.info(f"  - star_threads: {star_threads}")
+    logger.info(f"  - fastp_threads: {fastp_threads}")
+    logger.info(f"  - featurecounts_threads: {featurecounts_threads}")
     
-    # 调用 Nextflow 工作流
-    # outdir 设置为项目根目录下的 data/results
-    nextflow_outdir = str(project_root / 'data' / 'results' / f"{genome_name}_{srr_ids.replace(',', '_')}")
-
-    return run_nextflow_pipeline(
-        srr_ids=srr_ids,
-        run_download_srr=run_download_srr,
-        run_download_genome=run_download_genome,
-        run_build_star_index=run_build_star_index,
-        run_fastp=run_fastp,
-        run_star_align=run_star_align,
-        run_featurecounts=run_featurecounts,
-        outdir=nextflow_outdir,
-        resume=resume,
-        star_overhang=star_overhang,
-        star_threads=star_threads,
-        fastp_threads=fastp_threads,
-        featurecounts_threads=featurecounts_threads,
-        local_genome_path=local_genome_path,
-        local_gtf_path=local_gtf_path,
-        download_genome_url=download_genome_url,
-        download_gtf_url=download_gtf_url,
-        **kwargs
-    )
+    print(f"Tool 'execute_rna_seq_pipeline' called.")
+    
+    try:
+        # 记录开始调用 Nextflow 工作流
+        logger.info("开始调用 run_nextflow_pipeline 函数")
+        
+        # 调用 Nextflow 工作流
+        result = run_nextflow_pipeline(
+            srr_ids=srr_ids,
+            local_genome_path=local_genome_path,
+            local_gtf_path=local_gtf_path,
+            download_genome_url=download_genome_url,
+            download_gtf_url=download_gtf_url,
+            fastq_dir=fastq_dir,
+            fastq_pattern=fastq_pattern,
+            data=data,
+            run_download_srr=run_download_srr,
+            run_download_genome=run_download_genome,
+            run_build_star_index=run_build_star_index,
+            run_fastp=run_fastp,
+            run_star_align=run_star_align,
+            run_featurecounts=run_featurecounts,
+            resume=resume,
+            star_overhang=star_overhang,
+            star_threads=star_threads,
+            fastp_threads=fastp_threads,
+            featurecounts_threads=featurecounts_threads,
+            **kwargs
+        )
+        
+        # 记录执行结果
+        if result.get('status') == 'success':
+            logger.info("✅ run_nextflow_pipeline 执行成功")
+            logger.info(f"执行的命令: {result.get('command', 'N/A')}")
+            if result.get('stdout'):
+                logger.info("标准输出:")
+                for line in result['stdout'].split('\n'):
+                    if line.strip():
+                        logger.info(f"  {line}")
+        else:
+            logger.error("❌ run_nextflow_pipeline 执行失败")
+            logger.error(f"错误信息: {result.get('message', 'N/A')}")
+            logger.error(f"执行的命令: {result.get('command', 'N/A')}")
+            if result.get('stderr'):
+                logger.error("标准错误输出:")
+                for line in result['stderr'].split('\n'):
+                    if line.strip():
+                        logger.error(f"  {line}")
+        
+        # 记录函数完成状态
+        logger.info(f"RNA-seq 分析流程执行完成，状态: {result.get('status', 'unknown')}")
+        logger.info("=" * 80)
+        
+        return result
+        
+    except Exception as e:
+        # 记录异常信息
+        logger.error(f"❌ 执行 RNA-seq 分析流程时发生异常: {str(e)}")
+        logger.error(f"异常类型: {type(e).__name__}")
+        logger.error("=" * 80)
+        
+        # 重新抛出异常，保持原有的错误处理逻辑
+        raise e
