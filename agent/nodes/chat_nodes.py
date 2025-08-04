@@ -1,7 +1,6 @@
 from langchain_core.messages import HumanMessage
-from langchain.tools.render import render_text_description
 from ..state import AgentState
-from ..core import prompt, llm_with_tools, tools
+from ..core import prompt, llm_with_tools
 
 
 def get_user_input(state: AgentState):
@@ -15,8 +14,8 @@ def get_user_input(state: AgentState):
 
 def call_model(state: AgentState):
     chain = prompt | llm_with_tools
-    rendered_tools = render_text_description(tools)
     response = chain.invoke(
-        {"messages": state["messages"], "tools": rendered_tools}
+        {"messages": state["messages"]},
+        {"recursion_limit": 50}
     )
     return {"messages": [response]}
