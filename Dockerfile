@@ -1,5 +1,5 @@
 # 1. 使用官方Ubuntu 22.04作为基础镜像
-FROM ubuntu:22.04
+FROM docker.m.daocloud.io/ubuntu:22.04
 
 # 2. 设置一些环境变量，避免安装过程中的交互提示
 ENV DEBIAN_FRONTEND=noninteractive
@@ -48,7 +48,7 @@ RUN mamba create -y -n quant_env -c conda-forge -c bioconda subread=2.1.1
 
 
 # 直接在全局 Python 环境中安装依赖
-RUN pip install --no-cache-dir pandas python-dotenv 'langchain>=0.2.0' 'langchain-openai>=0.1.0' 'fastapi>=0.110.0' 'pydantic>=2.0.0' sse-starlette tabulate requests mcp
+RUN pip install --no-cache-dir pandas python-dotenv 'langchain>=0.2.0' 'langchain-openai>=0.1.0' 'fastapi>=0.110.0' 'pydantic>=2.0.0' sse-starlette tabulate requests mcp langgraph langchain-google-genai
 
 
 # Create a dedicated environment for differential expression analysis with R
@@ -65,10 +65,25 @@ RUN conda run --no-capture-output -n de_env R -e "if (!requireNamespace('BiocMan
 
 RUN mamba clean -y -a
 
-# 7. 创建工作目录并将项目文件复制到镜像中
+# 7. 创建工作目录并精确复制项目文件
 WORKDIR /app
-COPY . .
+
+# 7.1. 创建数据目录
+# 我们使用 RUN mkdir -p 来创建 data 目录，因为它当前不存在于项目中。
+# 这避免了在本地创建一个空目录再复制进来的需要，保持了构建上下文的整洁。
+RUN mkdir -p /app/data
+
+# 7.2. 复制配置文件和 Nextflow 脚本 (作为不常变动的文件)
+COPY main.nf ./
+
+COPY config/genomes.json ./config/
+COPY config/nextflow.config ./config/
+# 7.3. 复制应用入口文件
+COPY main.py ./
+
+# 7.4. 复制核心应用代码 (最常变动，放在最后)
+COPY agent/ ./agent/
 
 # 8. 定义容器启动时要执行的默认命令
 # 直接使用全局的 python3 运行服务器脚本，彻底绕开 conda run
-CMD ["python3", "-u", "-m", "agent.server"]
+CMD ["python3", "-u", "main.py"]

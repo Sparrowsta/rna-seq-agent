@@ -1,7 +1,32 @@
-# Ignore data directory
+# Python virtual environment
+.venv/
+venv/
+
+# Git directory
+.git/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE and editor configuration
+.idea/
+.vscode/
+
+# Local data and environment files (should not be in the image)
 data/
-datatest
 .env
-# Ignore documentation
+*.env
+
+# Documentation and temporary files
 README.md
-temp
+temp/
+*.tmp
+
+# Memory Bank - not needed for production deployment
+memory-bank/
+
+# Test data
+datatest/
