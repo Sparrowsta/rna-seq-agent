@@ -48,7 +48,7 @@ RUN mamba create -y -n quant_env -c conda-forge -c bioconda subread=2.1.1
 
 
 # 直接在全局 Python 环境中安装依赖
-RUN pip install --no-cache-dir pandas python-dotenv 'langchain>=0.2.0' 'langchain-openai>=0.1.0' 'fastapi>=0.110.0' 'pydantic>=2.0.0' sse-starlette tabulate requests mcp langgraph langchain-google-genai
+RUN pip install --no-cache-dir pandas python-dotenv 'langchain>=0.2.0' 'langchain-openai>=0.1.0' 'fastapi>=0.110.0' 'pydantic>=2.0.0' sse-starlette tabulate requests mcp langgraph langchain-google-genai 
 
 
 # Create a dedicated environment for differential expression analysis with R
