@@ -19,3 +19,6 @@ PROGRESS_BAR_USAGE.md
 .gitignore
 temp
 #memory-bank
+run_comprehensive_tests.sh
+TEST_USAGE.md
+README_重构说明.md
