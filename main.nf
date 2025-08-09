@@ -298,9 +298,21 @@ process prepare_input_data {
         def srr_commands = srr_list.collect { srr_id ->
             """
             # 下载和处理 ${srr_id}
+            echo "开始下载SRR数据: ${srr_id}"
             mkdir -p ./sra_temp_${srr_id} ./fastq_temp_${srr_id}
             
+            # 使用set +e临时允许命令失败，以便我们可以检查结果
+            set +e
             conda run -n sra_env prefetch ${srr_id} -O ./sra_temp_${srr_id}
+            prefetch_exit=\$?
+            set -e
+            
+            if [ \$prefetch_exit -ne 0 ]; then
+                echo "错误: SRR数据下载失败: ${srr_id}"
+                echo "请检查SRR ID是否有效，或网络连接是否正常"
+                exit 1
+            fi
+            
             conda run -n sra_env fasterq-dump ./sra_temp_${srr_id}/${srr_id}/${srr_id}.sra -O ./fastq_temp_${srr_id} --split-files --threads ${task.cpus}
             
             if [ -f "./fastq_temp_${srr_id}/${srr_id}_2.fastq" ]; then
@@ -322,6 +334,9 @@ process prepare_input_data {
     } else if (params.local_fastq_files) {
         // 使用本地FASTQ文件
         """
+        # 检查是否找到任何匹配的文件
+        found_files=0
+        
         # 创建本地文件的软链接并重命名为标准格式
         for pattern in ${params.local_fastq_files.split(',').join(' ')}; do
             for file in ${projectDir}/\$pattern; do
@@ -330,11 +345,19 @@ process prepare_input_data {
                     filename=\$(basename "\$file")
                     ln -s \$(realpath "\$file") "\$filename"
                     echo "链接文件: \$file -> \$filename"
+                    found_files=\$((found_files + 1))
                 fi
             done
         done
         
-        echo "本地FASTQ文件准备完成" > local_fastq.input.prepared
+        # 如果没有找到任何文件，报错退出
+        if [ \$found_files -eq 0 ]; then
+            echo "错误: 没有找到匹配的FASTQ文件: ${params.local_fastq_files}"
+            echo "请检查文件路径是否正确"
+            exit 1
+        fi
+        
+        echo "本地FASTQ文件准备完成，共找到 \$found_files 个文件" > local_fastq.input.prepared
         """
     } else {
         error "必须提供SRR ID列表或本地FASTQ文件路径"

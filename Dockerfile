@@ -3,7 +3,8 @@ FROM docker.m.daocloud.io/ubuntu:22.04
 
 # 2. 设置一些环境变量，避免安装过程中的交互提示
 ENV DEBIAN_FRONTEND=noninteractive
-
+ENV TZ=Asia/Shanghai
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 # 3. 更换apt源为清华源，然后更新包管理器并安装一些基础工具
 RUN sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && \
     sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && \
