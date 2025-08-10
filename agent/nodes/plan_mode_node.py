@@ -8,6 +8,7 @@ from typing import Dict, Any, List
 from langchain_core.messages import HumanMessage, AIMessage
 from ..state import AgentState, update_state_mode, update_nextflow_config, add_plan_step
 from ..core import create_chain_for_mode, create_structured_chain_for_mode
+from ..ui_manager import get_ui_manager
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -270,6 +271,13 @@ def plan_mode_node(state: AgentState) -> Dict[str, Any]:
     logger.info("Entering plan mode node")
     
     try:
+        # 获取UI管理器
+        ui_manager = get_ui_manager()
+        
+        # 显示模式切换信息
+        if state.get("mode") != "plan":
+            ui_manager.show_mode_switch(state.get("mode", "normal"), "plan", "开始制定分析计划")
+        
         # 创建处理器实例
         handler = PlanModeHandler()
         
@@ -277,6 +285,8 @@ def plan_mode_node(state: AgentState) -> Dict[str, Any]:
         mode_switch_result = handler.handle_mode_switch_request(state)
         if mode_switch_result:
             logger.info("Mode switch detected in plan mode")
+            if mode_switch_result.get("mode") == "execute":
+                ui_manager.show_mode_switch("plan", "execute", "计划已确认，开始执行")
             return mode_switch_result
         
         # 检查是否是初次进入plan模式（需要制定新计划）
@@ -286,6 +296,7 @@ def plan_mode_node(state: AgentState) -> Dict[str, Any]:
         # 只有在没有计划或明确要求重新制定时才创建新计划
         if not current_plan and plan_status != "created":
             logger.info("Creating new analysis plan")
+            ui_manager.show_info("正在制定RNA-seq分析计划...")
             result = handler.process_plan_request(state)
             # 标记计划已创建，避免重复制定
             result["plan_status"] = "created"

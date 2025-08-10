@@ -12,6 +12,7 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage, AIMessage
 from ..state import AgentState, update_execution_status
 from ..core import create_chain_for_mode, create_structured_chain_for_mode
+from ..ui_manager import get_ui_manager
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -378,6 +379,13 @@ def execute_mode_node(state: AgentState) -> Dict[str, Any]:
     logger.info("Entering execute mode node")
     
     try:
+        # 获取UI管理器
+        ui_manager = get_ui_manager()
+        
+        # 显示模式切换信息
+        if state.get("mode") != "execute":
+            ui_manager.show_mode_switch(state.get("mode", "plan"), "execute", "开始执行RNA-seq分析流程")
+        
         # 创建处理器实例
         handler = ExecuteModeHandler()
         
@@ -388,6 +396,7 @@ def execute_mode_node(state: AgentState) -> Dict[str, Any]:
         if execution_status == "idle":
             # 开始执行
             logger.info("Starting nextflow execution")
+            ui_manager.show_info("正在启动Nextflow执行流程...")
             result = handler.execute_nextflow(state)
             
             # 确保返回值包含必要的状态更新
@@ -399,6 +408,7 @@ def execute_mode_node(state: AgentState) -> Dict[str, Any]:
         elif execution_status == "running":
             # 监控执行
             logger.info("Monitoring execution progress")
+            ui_manager.show_info("正在监控执行进度...")
             result = handler.monitor_execution(state)
             
             # 确保返回值包含必要的状态更新
@@ -410,6 +420,7 @@ def execute_mode_node(state: AgentState) -> Dict[str, Any]:
         elif execution_status == "completed":
             # 收集结果
             logger.info("Collecting execution results")
+            ui_manager.show_success("执行完成，正在收集结果...")
             result = handler.collect_results(state)
             
             # 确保返回值包含必要的状态更新
@@ -421,6 +432,7 @@ def execute_mode_node(state: AgentState) -> Dict[str, Any]:
         elif execution_status == "failed":
             # 处理失败情况
             logger.info("Handling execution failure")
+            ui_manager.show_error("执行失败")
             return {
                 "messages": [AIMessage(content="执行失败。请检查配置和日志文件，然后重试。")],
                 "mode": "execute",
@@ -430,6 +442,7 @@ def execute_mode_node(state: AgentState) -> Dict[str, Any]:
         else:
             # 未知状态，默认开始执行
             logger.warning(f"Unknown execution status: {execution_status}, defaulting to idle")
+            ui_manager.show_warning(f"未知执行状态: {execution_status}，重新开始执行")
             result = handler.execute_nextflow(state)
             
             # 确保返回值包含必要的状态更新

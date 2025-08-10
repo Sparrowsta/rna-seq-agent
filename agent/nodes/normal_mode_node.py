@@ -129,22 +129,26 @@ class NormalModeHandler:
 
 def get_user_input(state: AgentState) -> Dict[str, Any]:
     """
-    获取用户输入的节点函数
+    获取用户输入的节点函数 - 使用增强的UI管理器
     
     遵循单一职责原则：专门处理用户输入获取
     """
     try:
+        from ..ui_manager import get_ui_manager
+        
+        ui_manager = get_ui_manager()
+        
         # 显示AI的最后回复（如果有）
         if state.get("messages"):
             last_message = state["messages"][-1]
             if hasattr(last_message, "type") and last_message.type == "ai":
-                print(f"\nAI: {last_message.content}")
+                ui_manager.show_ai_response(last_message.content, "normal")
         
         # 获取用户输入
-        user_input = input("\n您: ").strip()
+        user_input = ui_manager.get_user_input("请告诉我您的需求", "normal")
         
-        if not user_input:
-            return {"messages": [HumanMessage(content="请输入您的问题或需求")]}
+        if not user_input or user_input.lower() in ["exit", "quit", "退出"]:
+            return {"messages": [HumanMessage(content="exit")]}
         
         logger.info(f"User input received: {user_input[:50]}...")
         
