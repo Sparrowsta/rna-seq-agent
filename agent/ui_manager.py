@@ -1,13 +1,16 @@
 """
 用户界面管理器
 遵循单一职责原则：专门处理用户界面交互和UTF-8编码问题
+集成输入清理功能，解决中文输入法的隐藏字符问题
 """
 
 import sys
 import os
 import locale
 import logging
-from typing import Optional, Dict, Any, List
+import re
+import unicodedata
+from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 
 # 配置日志
@@ -37,7 +40,7 @@ class EnhancedUIManager:
     
     def _setup_encoding(self):
         """
-        设置UTF-8编码环境
+        设置UTF-8编码环境并初始化输入清理器
         
         应用KISS原则：简单有效的编码设置
         """
@@ -63,8 +66,65 @@ class EnhancedUIManager:
             # 设置环境变量
             os.environ['PYTHONIOENCODING'] = 'utf-8'
             
+            # 初始化输入清理器
+            self._setup_input_sanitizer()
+            
         except Exception as e:
             logger.error(f"编码设置失败: {e}")
+    
+    def _setup_input_sanitizer(self):
+        """
+        设置输入清理器，解决中文输入法的隐藏字符问题
+        """
+        # 常见的问题字符模式
+        self.problematic_patterns = [
+            # 零宽字符
+            r'[\u200b-\u200f\u2028-\u202f\u205f-\u206f]',
+            # 控制字符（保留换行符和制表符）
+            r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]',
+            # BOM标记
+            r'[\ufeff]',
+            # 其他不可见字符
+            r'[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180e\u3164\uffa0]'
+        ]
+        
+        # 编译正则表达式
+        self.cleanup_pattern = re.compile('|'.join(self.problematic_patterns))
+        
+        # 中文输入法常见的问题字符映射
+        self.char_replacements = {
+            # 全角字符转半角
+            '　': ' ',  # 全角空格
+            '，': ',',
+            '。': '.',
+            '；': ';',
+            '：': ':',
+            '？': '?',
+            '！': '!',
+            '（': '(',
+            '）': ')',
+            '【': '[',
+            '】': ']',
+            '｛': '{',
+            '｝': '}',
+            '＂': '"',
+            '＇': "'",
+            '｀': '`',
+            '～': '~',
+            '＠': '@',
+            '＃': '#',
+            '％': '%',
+            '＾': '^',
+            '＆': '&',
+            '＊': '*',
+            '－': '-',
+            '＿': '_',
+            '＋': '+',
+            '＝': '=',
+            '｜': '|',
+            '＼': '\\',
+            '／': '/',
+        }
     
     def _setup_ui_components(self):
         """
@@ -166,7 +226,7 @@ class EnhancedUIManager:
     
     def _clean_text(self, text: str) -> str:
         """
-        清理文本，处理编码问题
+        清理文本，处理编码问题（增强版）
         
         应用KISS原则：简单有效的文本清理
         """
@@ -174,16 +234,87 @@ class EnhancedUIManager:
             if isinstance(text, bytes):
                 text = text.decode('utf-8', errors='ignore')
             
-            # 移除无效字符
-            cleaned = text.encode('utf-8', errors='ignore').decode('utf-8')
+            # Unicode标准化
+            text = unicodedata.normalize('NFC', text)
             
-            # 移除控制字符但保留换行符和制表符
-            import re
-            cleaned = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]', '', cleaned)
+            # 移除问题字符
+            cleaned = self.cleanup_pattern.sub('', text)
             
-            return cleaned
+            # 全角字符转换（仅对显示文本，不对用户输入）
+            # 这里保持原样，因为这是显示用的
+            
+            # 确保最终结果是有效的UTF-8
+            try:
+                cleaned.encode('utf-8')
+                return cleaned
+            except UnicodeEncodeError:
+                # 如果仍有编码问题，强制清理
+                return cleaned.encode('utf-8', errors='ignore').decode('utf-8')
+            
         except Exception:
             return "文本包含无效字符，已清理"
+    
+    def _sanitize_input(self, user_input: str) -> Tuple[str, bool]:
+        """
+        清理用户输入，解决中文输入法的隐藏字符问题
+        
+        Args:
+            user_input: 原始用户输入
+            
+        Returns:
+            Tuple[str, bool]: (清理后的输入, 是否进行了清理)
+        """
+        if not user_input:
+            return user_input, False
+        
+        original_input = user_input
+        was_cleaned = False
+        
+        try:
+            # 1. 处理编码问题
+            if isinstance(user_input, bytes):
+                user_input = user_input.decode('utf-8', errors='ignore')
+                was_cleaned = True
+            
+            # 2. Unicode标准化
+            normalized = unicodedata.normalize('NFC', user_input)
+            if normalized != user_input:
+                user_input = normalized
+                was_cleaned = True
+            
+            # 3. 移除问题字符
+            cleaned = self.cleanup_pattern.sub('', user_input)
+            if cleaned != user_input:
+                was_cleaned = True
+                user_input = cleaned
+            
+            # 4. 全角字符转换（对用户输入进行转换）
+            for full_char, half_char in self.char_replacements.items():
+                if full_char in user_input:
+                    user_input = user_input.replace(full_char, half_char)
+                    was_cleaned = True
+            
+            # 5. 清理多余的空白字符
+            original_stripped = user_input
+            user_input = re.sub(r'\s+', ' ', user_input.strip())
+            if user_input != original_stripped:
+                was_cleaned = True
+            
+            # 6. 确保最终结果是有效的UTF-8
+            try:
+                user_input.encode('utf-8')
+            except UnicodeEncodeError:
+                # 如果仍有编码问题，强制清理
+                user_input = user_input.encode('utf-8', errors='ignore').decode('utf-8')
+                was_cleaned = True
+            
+            return user_input, was_cleaned
+            
+        except Exception as e:
+            logger.error(f"输入清理失败: {e}")
+            # 如果清理过程出错，返回安全的ASCII版本
+            safe_input = original_input.encode('ascii', errors='ignore').decode('ascii')
+            return safe_input, True
     
     def show_welcome_banner(self):
         """
@@ -235,8 +366,9 @@ class EnhancedUIManager:
                     console=self.console
                 )
             else:
-                # 使用基础输入
-                self.safe_print(f"{icon} {prompt_text}: ", 'primary', end='')
+                # 使用基础输入 - 先打印提示文本，再获取输入
+                self.safe_print(f"{icon} {prompt_text}: ", 'primary')
+                # 使用单独的input()调用，不与提示文本在同一行
                 user_input = input()
             
             # 确保返回UTF-8字符串
@@ -406,7 +538,7 @@ class EnhancedUIManager:
                 from rich.prompt import Confirm
                 return Confirm.ask(f"[yellow]{message}[/]", console=self.console)
             else:
-                self.safe_print(f"❓ {message} (y/n): ", 'warning', end='')
+                self.safe_print(f"❓ {message} (y/n): ", 'warning')
                 response = input().strip().lower()
                 return response in ['y', 'yes', '是', '确认']
         
@@ -439,6 +571,43 @@ class EnhancedUIManager:
         except Exception:
             # 如果清屏失败，打印空行
             self.safe_print("\n" * 50)
+    
+    def debug_input(self, user_input: str) -> str:
+        """
+        调试输入，显示详细的字符信息
+        
+        Args:
+            user_input: 用户输入
+            
+        Returns:
+            str: 调试信息
+        """
+        if not user_input:
+            return "输入为空"
+        
+        debug_info = []
+        debug_info.append(f"原始长度: {len(user_input)}")
+        debug_info.append(f"字节长度: {len(user_input.encode('utf-8', errors='ignore'))}")
+        
+        # 显示每个字符的详细信息
+        debug_info.append("字符详情:")
+        for i, char in enumerate(user_input):
+            char_info = f"  [{i}] '{char}' (U+{ord(char):04X})"
+            
+            # 添加字符类别信息
+            category = unicodedata.category(char)
+            char_info += f" {category}"
+            
+            # 添加字符名称（如果有）
+            try:
+                name = unicodedata.name(char)
+                char_info += f" ({name})"
+            except ValueError:
+                char_info += " (无名称)"
+            
+            debug_info.append(char_info)
+        
+        return "\n".join(debug_info)
 
 # ============================================================================
 # 全局UI管理器实例 - 应用单例模式

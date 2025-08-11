@@ -373,8 +373,8 @@ process prepare_genome_data {
     publishDir "${getGenomeDir(params.genome_version)}/logs", mode: 'copy', pattern: "*.prepared"
     
     output:
-    path "genome.fa", emit: genome_fasta
-    path "annotation.gtf", emit: genome_gtf
+    path "${params.genome_version}.fa", emit: genome_fasta
+    path "${params.genome_version}.gtf", emit: genome_gtf
     path "genome.prepared", emit: status_file
     
     script:
@@ -386,12 +386,12 @@ process prepare_genome_data {
         // 下载基因组数据
         """
         # 下载基因组
-        wget ${local_genome_paths.fasta_url} -O genome.fa.gz
-        gunzip genome.fa.gz
+        wget ${local_genome_paths.fasta_url} -O ${params.genome_version}.fa.gz
+        gunzip ${params.genome_version}.fa.gz
         
         # 下载 GTF
-        wget ${local_genome_paths.gtf_url} -O annotation.gtf.gz
-        gunzip annotation.gtf.gz
+        wget ${local_genome_paths.gtf_url} -O ${params.genome_version}.gtf.gz
+        gunzip ${params.genome_version}.gtf.gz
         
         echo "基因组数据下载完成: ${params.genome_version}" > genome.prepared
         """
@@ -410,8 +410,8 @@ process prepare_genome_data {
         fi
         
         # 创建软链接
-        ln -s \$(realpath "${fasta_path}") genome.fa
-        ln -s \$(realpath "${gtf_path}") annotation.gtf
+        ln -s \$(realpath "${fasta_path}") ${params.genome_version}.fa
+        ln -s \$(realpath "${gtf_path}") ${params.genome_version}.gtf
         
         echo "本地基因组数据准备完成: ${params.genome_version}" > genome.prepared
         """

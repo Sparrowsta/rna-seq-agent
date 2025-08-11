@@ -7,7 +7,8 @@ from .tools import (
     list_directory_contents, query_fastq_files, query_genome_info,
     update_nextflow_param, batch_update_nextflow_config,
     switch_to_plan_mode, switch_to_execute_mode,
-    execute_nextflow_pipeline, check_execution_status, get_current_nextflow_config
+    execute_nextflow_pipeline, check_execution_status, get_current_nextflow_config,
+    list_directory_tree
 )
 
 # ============================================================================
@@ -19,19 +20,20 @@ ALL_TOOLS = [
     list_directory_contents, query_fastq_files, query_genome_info,
     update_nextflow_param, batch_update_nextflow_config,
     switch_to_plan_mode, switch_to_execute_mode,
-    execute_nextflow_pipeline, check_execution_status, get_current_nextflow_config
+    execute_nextflow_pipeline, check_execution_status, get_current_nextflow_config,
+    list_directory_tree
 ]
 
 # 模式特定工具映射 - 遵循接口隔离原则
 MODE_TOOLS = {
     "normal": [
         list_directory_contents, query_fastq_files, query_genome_info,
-        get_current_nextflow_config, switch_to_plan_mode
+        get_current_nextflow_config, switch_to_plan_mode, list_directory_tree
     ],
     "plan": [
         query_fastq_files, query_genome_info, update_nextflow_param,
         batch_update_nextflow_config, get_current_nextflow_config,
-        switch_to_execute_mode
+        switch_to_execute_mode, list_directory_tree
     ],
     "execute": [
         execute_nextflow_pipeline, check_execution_status,
@@ -100,6 +102,7 @@ NORMAL_MODE_PROMPT = ChatPromptTemplate.from_messages([
 
 **可用工具：**
 - list_directory_contents: 查看目录内容
+- list_directory_tree: 以树形结构或列表格式查看目录内容，支持递归和文件过滤
 - query_fastq_files: 查询FASTQ文件信息
 - query_genome_info: 查询基因组配置信息
 - get_current_nextflow_config: 获取当前配置
@@ -137,6 +140,7 @@ PLAN_MODE_PROMPT = ChatPromptTemplate.from_messages([
 **可用工具：**
 - query_fastq_files: 查询FASTQ文件信息
 - query_genome_info: 查询基因组信息
+- list_directory_tree: 以树形结构或列表格式查看目录内容，支持递归和文件过滤
 - update_nextflow_param: 更新单个nextflow参数
 - batch_update_nextflow_config: 批量更新配置
 - get_current_nextflow_config: 获取当前配置
