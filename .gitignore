@@ -20,5 +20,5 @@ PROGRESS_BAR_USAGE.md
 temp
 #memory-bank
 run_comprehensive_tests.sh
-.nextflow.log*
+*.log*
 *.md

@@ -5,7 +5,7 @@ import subprocess
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 from langchain_core.tools import tool
-from pydantic.v1 import BaseModel, Field
+from pydantic import BaseModel, Field
 
 # ============================================================================
 # 输入模型定义 - 遵循接口隔离原则
@@ -156,11 +156,12 @@ def query_fastq_files(directory_path: str, pattern: str = "*.fastq*") -> str:
 @tool(args_schema=GenomeQueryArgs)
 def query_genome_info(genome_name: Optional[str] = None, config_path: str = "config/genomes.json") -> str:
     """
-    查询基因组配置信息
+    查询基因组配置信息并动态检查文件系统状态，自动同步配置
     
-    遵循单一职责原则：专门处理基因组信息查询
+    遵循单一职责原则：专门处理基因组信息查询和配置同步
     当不提供genome_name时，返回所有基因组的摘要信息
     当提供genome_name时，返回特定基因组的详细信息
+    自动检测文件系统中的新基因组并更新配置
     """
     try:
         if not os.path.exists(config_path):
@@ -169,28 +170,97 @@ def query_genome_info(genome_name: Optional[str] = None, config_path: str = "con
         with open(config_path, 'r', encoding='utf-8') as f:
             genomes_config = json.load(f)
         
+        # 实时更新配置状态：检查文件是否存在并更新配置
+        for name, info in genomes_config.items():
+            # 统一处理fasta和gtf路径（兼容不同命名）
+            fasta_path = info.get('fasta', info.get('fasta_path', ''))
+            gtf_path = info.get('gtf', info.get('gtf_path', ''))
+            
+            # 更新实际存在状态
+            if fasta_path:
+                info['fasta_exists'] = os.path.exists(fasta_path)
+            if gtf_path:
+                info['gtf_exists'] = os.path.exists(gtf_path)
+            
+            # 检查STAR索引
+            if fasta_path and os.path.exists(fasta_path):
+                star_index_dir = os.path.join(os.path.dirname(fasta_path), "star_index")
+                info['star_index_exists'] = (os.path.exists(star_index_dir) and 
+                                            os.path.exists(os.path.join(star_index_dir, "SA")))
+            else:
+                info['star_index_exists'] = False
+        
         # 如果没有提供genome_name，返回所有基因组的摘要信息
         if genome_name is None:
-            result = ["可用基因组摘要信息："]
-            result.append("-" * 60)
+            result = ["可用基因组详细状态信息："]
+            result.append("=" * 80)
             
             for name, info in genomes_config.items():
-                result.append(f"基因组: {name}")
-                result.append(f"  物种: {info.get('species', '未知')}")
-                result.append(f"  版本: {info.get('version', '未知')}")
+                result.append(f"📊 基因组: {name}")
+                result.append(f"   物种: {info.get('species', '未知')}")
+                result.append(f"   版本: {info.get('version', '未知')}")
                 
                 # 检查本地文件是否存在
-                fasta_path = info.get('fasta', '')
-                gtf_path = info.get('gtf', '')
+                fasta_path = info.get('fasta', info.get('fasta_path', ''))
+                gtf_path = info.get('gtf', info.get('gtf_path', ''))
                 
-                fasta_status = "✅ 已存在" if fasta_path and os.path.exists(fasta_path) else "❌ 不存在"
-                gtf_status = "✅ 已存在" if gtf_path and os.path.exists(gtf_path) else "❌ 不存在"
+                # 检查FASTA文件状态
+                if fasta_path and info.get('fasta_exists', False):
+                    file_size = os.path.getsize(fasta_path) / (1024**3)  # GB
+                    fasta_status = f"✅ 已下载 ({file_size:.2f} GB)"
+                elif fasta_path:
+                    fasta_status = "❌ 未下载 (配置已设置)"
+                else:
+                    fasta_status = "⚠️  未配置"
                 
-                result.append(f"  FASTA文件: {fasta_status}")
-                result.append(f"  GTF文件: {gtf_status}")
-                result.append("-" * 60)
+                # 检查GTF文件状态
+                if gtf_path and info.get('gtf_exists', False):
+                    file_size = os.path.getsize(gtf_path) / (1024**2)  # MB
+                    gtf_status = f"✅ 已下载 ({file_size:.2f} MB)"
+                elif gtf_path:
+                    gtf_status = "❌ 未下载 (配置已设置)"
+                else:
+                    gtf_status = "⚠️  未配置"
+                
+                # 检查STAR索引状态
+                if info.get('star_index_exists', False):
+                    index_status = "✅ 已建立索引"
+                elif fasta_path:
+                    index_status = "❌ 未建立索引"
+                else:
+                    index_status = "⚠️  无法检查 (FASTA未配置)"
+                
+                result.append(f"   📁 FASTA文件: {fasta_status}")
+                result.append(f"   📄 GTF文件: {gtf_status}")
+                result.append(f"   🔍 STAR索引: {index_status}")
+                
+                # 显示文件路径
+                if fasta_path:
+                    result.append(f"   📂 FASTA路径: {fasta_path}")
+                if gtf_path:
+                    result.append(f"   📂 GTF路径: {gtf_path}")
+                
+                # 显示下载URL（如果有）
+                if 'fasta_url' in info:
+                    result.append(f"   🔗 FASTA URL: {info['fasta_url']}")
+                if 'gtf_url' in info:
+                    result.append(f"   🔗 GTF URL: {info['gtf_url']}")
+                
+                result.append("-" * 80)
             
-            result.append(f"总计：{len(genomes_config)} 个基因组可用")
+            # 统计信息
+            total_genomes = len(genomes_config)
+            downloaded_genomes = sum(1 for info in genomes_config.values() 
+                                   if info.get('fasta_exists', False) and info.get('gtf_exists', False))
+            indexed_genomes = sum(1 for info in genomes_config.values() 
+                                if info.get('star_index_exists', False))
+            
+            result.append(f"📈 统计摘要：")
+            result.append(f"   总基因组数量: {total_genomes}")
+            result.append(f"   已完全下载: {downloaded_genomes}")
+            result.append(f"   已建立索引: {indexed_genomes}")
+            result.append(f"   准备就绪率: {(indexed_genomes/total_genomes*100):.1f}%" if total_genomes > 0 else "   准备就绪率: 0.0%")
+            
             return "\n".join(result)
         
         # 如果提供了genome_name，返回特定基因组的详细信息
@@ -247,7 +317,8 @@ class AddGenomeArgs(BaseModel):
 @tool(args_schema=AddGenomeArgs)
 def add_new_genome(genome_name: str, species: str, fasta_url: str, gtf_url: str, fasta_path: str, gtf_path: str) -> str:
     """
-    添加一个全新的基因组到配置文件(config/genomes.json)。
+    添加一个全新的基因组到配置文件(config/genomes.json)，并验证文件路径
+    自动检查文件是否存在，提供状态反馈
     """
     try:
         config_path = "config/genomes.json"
@@ -260,13 +331,27 @@ def add_new_genome(genome_name: str, species: str, fasta_url: str, gtf_url: str,
             if genome_name in genomes_config:
                 return f"错误：基因组 '{genome_name}' 已存在于配置中。"
 
+            # 验证文件路径和存在状态
+            fasta_exists = os.path.exists(fasta_path) if fasta_path else False
+            gtf_exists = os.path.exists(gtf_path) if gtf_path else False
+            
+            # 检查STAR索引状态
+            star_index_exists = False
+            if fasta_exists:
+                star_index_dir = os.path.join(os.path.dirname(fasta_path), "star_index")
+                star_index_exists = (os.path.exists(star_index_dir) and 
+                                   os.path.exists(os.path.join(star_index_dir, "SA")))
+
             new_genome_entry = {
                 "species": species,
                 "version": genome_name,
                 "fasta": fasta_path,
                 "gtf": gtf_path,
                 "fasta_url": fasta_url,
-                "gtf_url": gtf_url
+                "gtf_url": gtf_url,
+                "fasta_exists": fasta_exists,
+                "gtf_exists": gtf_exists,
+                "star_index_exists": star_index_exists
             }
 
             genomes_config[genome_name] = new_genome_entry
@@ -275,7 +360,32 @@ def add_new_genome(genome_name: str, species: str, fasta_url: str, gtf_url: str,
             json.dump(genomes_config, f, indent=2)
             f.truncate()
 
-        return f"✅ 成功添加基因组 '{genome_name}' (物种: {species}) 到 '{config_path}'。"
+        # 构建状态报告
+        status_report = [f"✅ 成功添加基因组 '{genome_name}' (物种: {species}) 到 '{config_path}'。"]
+        status_report.append("\n📊 文件状态:")
+        
+        if fasta_exists:
+            file_size = os.path.getsize(fasta_path) / (1024**3)  # GB
+            status_report.append(f"   📁 FASTA文件: ✅ 已存在 ({file_size:.2f} GB)")
+        else:
+            status_report.append(f"   📁 FASTA文件: ❌ 不存在 - 需要从URL下载")
+            
+        if gtf_exists:
+            file_size = os.path.getsize(gtf_path) / (1024**2)  # MB
+            status_report.append(f"   📄 GTF文件: ✅ 已存在 ({file_size:.2f} MB)")
+        else:
+            status_report.append(f"   📄 GTF文件: ❌ 不存在 - 需要从URL下载")
+            
+        if star_index_exists:
+            status_report.append(f"   🔍 STAR索引: ✅ 已建立")
+        else:
+            status_report.append(f"   🔍 STAR索引: ❌ 需要构建")
+
+        status_report.append(f"\n🔗 下载链接:")
+        status_report.append(f"   FASTA: {fasta_url}")
+        status_report.append(f"   GTF: {gtf_url}")
+
+        return "\n".join(status_report)
 
     except json.JSONDecodeError:
         return f"错误：基因组配置文件 '{config_path}' 格式不正确"

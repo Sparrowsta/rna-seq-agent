@@ -37,18 +37,28 @@ class NormalModeHandler:
                 content = _clean_unicode_content(response.content)
                 
                 # 移除代码块标记
-                if content.startswith("```json"):
-                    content = content.replace("```json", "").replace("```", "").strip()
+                if "```json" in content:
+                    # 提取JSON部分
+                    start = content.find("```json") + 7
+                    end = content.find("```", start)
+                    if end != -1:
+                        content = content[start:end].strip()
+                    else:
+                        content = content[start:].strip()
+                elif content.startswith("```") and content.endswith("```"):
+                    content = content[3:-3].strip()
                 
                 # 尝试解析JSON
                 try:
                     json_data = json.loads(content)
+                    logger.info("JSON解析成功")
                     
                     # 提取用户消息
                     user_message = json_data.get("response", content)
                     
                     # 提取工具调用
                     tool_calls = json_data.get("tool_calls", [])
+                    logger.info(f"提取到 {len(tool_calls)} 个工具调用")
                     
                     # 创建AIMessage
                     ai_message = AIMessage(content=user_message)
@@ -65,12 +75,14 @@ class NormalModeHandler:
                                 "type": "tool_call"
                             })
                         ai_message.tool_calls = langchain_tool_calls
+                        logger.info(f"设置tool_calls: {langchain_tool_calls}")
                     
                     return ai_message, tool_calls
                     
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as e:
                     # 如果不是有效JSON，直接返回原内容
-                    logger.warning("LLM输出不是有效JSON，使用原始内容")
+                    logger.warning(f"LLM输出不是有效JSON，使用原始内容。错误: {str(e)}")
+                    logger.warning(f"尝试解析的内容: {repr(content[:200])}...")
                     return AIMessage(content=content), []
             
             return AIMessage(content="响应为空"), []

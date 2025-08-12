@@ -2,7 +2,7 @@ import os
 from typing import Dict, Any, List
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.pydantic_v1 import BaseModel, Field
+from pydantic import BaseModel, Field
 from .tools import (
     list_directory_contents, query_fastq_files, query_genome_info, add_new_genome,
     update_nextflow_param, batch_update_nextflow_config,

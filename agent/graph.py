@@ -56,12 +56,20 @@ def route_from_mode_nodes(state: AgentState) -> str:
         current_mode = state.get("mode", "normal")
         
         # 检查是否需要调用工具
-        if should_call_tools(state):
+        has_tools = should_call_tools(state)
+        print(f"[ROUTER DEBUG] should_call_tools返回: {has_tools}")
+        
+        if has_tools:
+            print(f"[ROUTER] 检测到工具调用，路由到call_tools")
             return "call_tools"
         
         # 检查最后一条消息是否包含模式切换信息
         if state.get("messages"):
             last_message = state["messages"][-1]
+            print(f"[ROUTER DEBUG] 最后一条消息类型: {type(last_message)}")
+            
+            if hasattr(last_message, "tool_calls"):
+                print(f"[ROUTER DEBUG] tool_calls属性存在: {last_message.tool_calls}")
             
             # 检查AI消息内容中的模式切换标识
             if hasattr(last_message, "content") and last_message.content:
