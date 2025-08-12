@@ -279,89 +279,93 @@ SRR ID 列表: ${params.srr_ids ?: "未提供"}
 // Process 定义
 // =====================================================
 
-// 统一的数据输入process - 整合SRR下载和本地FASTQ
-process prepare_input_data {
-    tag "准备输入数据"
-    label 'process_low'
-    
+// 并行下载SRR数据的process
+process DOWNLOAD_SRR {
+    tag "下载SRR: ${srr_id}"
+    label 'process_medium'
+
     publishDir "${params.data}/fastq", mode: 'copy', pattern: "*.fastq.gz"
-    publishDir "${params.data}/logs", mode: 'copy', pattern: "*.prepared"
-    
+    publishDir "${params.data}/logs", mode: 'copy', pattern: "*.srr.prepared"
+
+    input:
+    val srr_id
+
     output:
-    path "*.fastq.gz", emit: fastq_files, optional: true
-    path "*.input.prepared", emit: status_files
-    
+    path "*.fastq.gz", emit: fastq_files
+    path "*.srr.prepared", emit: status_file
+
     script:
-    if (params.run_download_srr && params.srr_ids) {
-        // 下载SRR数据
-        def srr_list = params.srr_ids.split(',').collect { it.trim() }
-        def srr_commands = srr_list.collect { srr_id ->
-            """
-            # 下载和处理 ${srr_id}
-            echo "开始下载SRR数据: ${srr_id}"
-            mkdir -p ./sra_temp_${srr_id} ./fastq_temp_${srr_id}
-            
-            # 使用set +e临时允许命令失败，以便我们可以检查结果
-            set +e
-            conda run -n sra_env prefetch ${srr_id} -O ./sra_temp_${srr_id}
-            prefetch_exit=\$?
-            set -e
-            
-            if [ \$prefetch_exit -ne 0 ]; then
-                echo "错误: SRR数据下载失败: ${srr_id}"
-                echo "请检查SRR ID是否有效，或网络连接是否正常"
-                exit 1
+    """
+    echo "开始下载SRR数据: ${srr_id}"
+    mkdir -p ./sra_temp ./fastq_temp
+    
+    set +e
+    conda run -n sra_env prefetch ${srr_id} -O ./sra_temp
+    prefetch_exit=\$?
+    set -e
+    
+    if [ \$prefetch_exit -ne 0 ]; then
+        echo "错误: SRR数据下载失败: ${srr_id}"
+        echo "请检查SRR ID是否有效，或网络连接是否正常"
+        exit 1
+    fi
+    
+    conda run -n sra_env fasterq-dump ./sra_temp/${srr_id}/${srr_id}.sra -O ./fastq_temp --split-files --threads ${task.cpus}
+    
+    if [ -f "./fastq_temp/${srr_id}_2.fastq" ]; then
+        gzip ./fastq_temp/${srr_id}_1.fastq
+        gzip ./fastq_temp/${srr_id}_2.fastq
+        mv ./fastq_temp/${srr_id}_1.fastq.gz ${srr_id}_1.fastq.gz
+        mv ./fastq_temp/${srr_id}_2.fastq.gz ${srr_id}_2.fastq.gz
+    else
+        gzip ./fastq_temp/${srr_id}.fastq
+        mv ./fastq_temp/${srr_id}.fastq.gz ${srr_id}.single.fastq.gz
+    fi
+    
+    rm -rf ./sra_temp ./fastq_temp
+    echo "SRR数据准备完成: ${srr_id}" > "${srr_id}.srr.prepared"
+    """
+}
+
+// 处理本地FASTQ文件的process
+process LINK_LOCAL_FASTQ {
+    tag "链接本地FASTQ文件"
+    label 'process_low'
+
+    publishDir "${params.data}/fastq", mode: 'copy', pattern: "*.fastq.gz"
+    publishDir "${params.data}/logs", mode: 'copy', pattern: "*.local.prepared"
+
+    output:
+    path "*.fastq.gz", emit: fastq_files
+    path "*.local.prepared", emit: status_file
+
+    script:
+    """
+    # 检查是否找到任何匹配的文件
+    found_files=0
+    
+    # 创建本地文件的软链接并重命名为标准格式
+    for pattern in ${params.local_fastq_files.split(',').join(' ')}; do
+        for file in ${projectDir}/\$pattern; do
+            if [ -f "\$file" ]; then
+                # 获取文件名并创建软链接到当前工作目录
+                filename=\$(basename "\$file")
+                ln -s \$(realpath "\$file") "\$filename"
+                echo "链接文件: \$file -> \$filename"
+                found_files=\$((found_files + 1))
             fi
-            
-            conda run -n sra_env fasterq-dump ./sra_temp_${srr_id}/${srr_id}/${srr_id}.sra -O ./fastq_temp_${srr_id} --split-files --threads ${task.cpus}
-            
-            if [ -f "./fastq_temp_${srr_id}/${srr_id}_2.fastq" ]; then
-                gzip ./fastq_temp_${srr_id}/${srr_id}_1.fastq
-                gzip ./fastq_temp_${srr_id}/${srr_id}_2.fastq
-                mv ./fastq_temp_${srr_id}/${srr_id}_1.fastq.gz ${srr_id}_1.fastq.gz
-                mv ./fastq_temp_${srr_id}/${srr_id}_2.fastq.gz ${srr_id}_2.fastq.gz
-            else
-                gzip ./fastq_temp_${srr_id}/${srr_id}.fastq
-                mv ./fastq_temp_${srr_id}/${srr_id}.fastq.gz ${srr_id}.single.fastq.gz
-            fi
-            
-            rm -rf ./sra_temp_${srr_id} ./fastq_temp_${srr_id}
-            echo "SRR数据准备完成: ${srr_id}" > ${srr_id}.input.prepared
-            """
-        }.join('\n\n')
-        
-        return srr_commands
-    } else if (params.local_fastq_files) {
-        // 使用本地FASTQ文件
-        """
-        # 检查是否找到任何匹配的文件
-        found_files=0
-        
-        # 创建本地文件的软链接并重命名为标准格式
-        for pattern in ${params.local_fastq_files.split(',').join(' ')}; do
-            for file in ${projectDir}/\$pattern; do
-                if [ -f "\$file" ]; then
-                    # 获取文件名并创建软链接到当前工作目录
-                    filename=\$(basename "\$file")
-                    ln -s \$(realpath "\$file") "\$filename"
-                    echo "链接文件: \$file -> \$filename"
-                    found_files=\$((found_files + 1))
-                fi
-            done
         done
-        
-        # 如果没有找到任何文件，报错退出
-        if [ \$found_files -eq 0 ]; then
-            echo "错误: 没有找到匹配的FASTQ文件: ${params.local_fastq_files}"
-            echo "请检查文件路径是否正确"
-            exit 1
-        fi
-        
-        echo "本地FASTQ文件准备完成，共找到 \$found_files 个文件" > local_fastq.input.prepared
-        """
-    } else {
-        error "必须提供SRR ID列表或本地FASTQ文件路径"
-    }
+    done
+    
+    # 如果没有找到任何文件，报错退出
+    if [ \$found_files -eq 0 ]; then
+        echo "错误: 没有找到匹配的FASTQ文件: ${params.local_fastq_files}"
+        echo "请检查文件路径是否正确"
+        exit 1
+    fi
+    
+    echo "本地FASTQ文件准备完成，共找到 \$found_files 个文件" > "local_files.local.prepared"
+    """
 }
 
 // 统一的基因组管理process
@@ -693,34 +697,39 @@ process run_quantification {
 }
 
 // =====================================================
-// 主工作流 - 简化的线性流程
+// 主工作流 - 重构为并行下载模式
 // =====================================================
 
 workflow {
-    // 1. 准备输入数据（SRR下载或本地FASTQ）
-    input_data_ch = prepare_input_data()
-    
-    // 2. 准备基因组数据（下载或本地）
+    // --- 1. 数据输入 ---
+    // 根据参数选择数据来源 (SRR 或 本地文件)
+    // 并将不同的输入源统一到 input_fastq_ch 通道
+    if (params.run_download_srr && params.srr_ids) {
+        srr_ids_ch = Channel.from(params.srr_ids.split(',')).map { it.trim() }
+        input_fastq_ch = DOWNLOAD_SRR(srr_ids_ch).fastq_files
+    } else if (params.local_fastq_files) {
+        input_fastq_ch = LINK_LOCAL_FASTQ().fastq_files
+    } else {
+        exit 1, "错误: 必须提供SRR ID (srr_ids) 或本地FASTQ文件 (local_fastq_files)"
+    }
+
+    // --- 2. 准备基因组数据 ---
     genome_data_ch = prepare_genome_data()
     
-    // 3. 准备STAR索引（构建或本地）
+    // --- 3. 准备STAR索引 ---
     star_index_ch = prepare_star_index(
         genome_data_ch.genome_fasta,
         genome_data_ch.genome_gtf
     )
     
-    // 4. 处理FASTQ文件，组织为样本格式
-    fastq_samples_ch = input_data_ch.fastq_files
-        .view { "Raw FASTQ files from input: $it" }
+    // --- 4. 处理FASTQ文件，组织为样本格式 ---
+    fastq_samples_ch = input_fastq_ch
         .flatten()
-        .view { "Flattened FASTQ file: $it" }
-        .filter { it.name.endsWith('.fastq.gz') }
-        .view { "Filtered FASTQ file: $it" }
+        .view()
         .map { file ->
             def sample_id = extractSampleId(file)
             def cleaned_id = cleanSampleId(sample_id)
             
-            // 判断文件类型并返回样本信息
             if (file.name.contains('_1.') || file.name.contains('_R1')) {
                 return [cleaned_id, 'read1', file]
             } else if (file.name.contains('_2.') || file.name.contains('_R2')) {
@@ -729,35 +738,16 @@ workflow {
                 return [cleaned_id, 'single', file]
             }
         }
-        .view { "Mapped FASTQ sample: $it" }
         .groupTuple()
         .map { sample_id, type_list, file_list ->
-            def r1 = null
-            def r2 = null
-            def single = null
-            
-            // 根据类型分配文件
-            for (int i = 0; i < type_list.size(); i++) {
-                switch(type_list[i]) {
-                    case 'read1':
-                        r1 = file_list[i]
-                        break
-                    case 'read2':
-                        r2 = file_list[i]
-                        break
-                    case 'single':
-                        single = file_list[i]
-                        break
-                }
-            }
-            
-            // 创建占位符文件对象以避免null值
-            def null_file = file('NO_FILE')
-            return [sample_id, r1 ?: null_file, r2 ?: null_file, single ?: null_file]
+            def r1 = file_list.find { type_list[file_list.indexOf(it)] == 'read1' } ?: file('NO_FILE')
+            def r2 = file_list.find { type_list[file_list.indexOf(it)] == 'read2' } ?: file('NO_FILE')
+            def single = file_list.find { type_list[file_list.indexOf(it)] == 'single' } ?: file('NO_FILE')
+            return [sample_id, r1, r2, single]
         }
         .view { "Final FASTQ samples for processing: $it" }
     
-    // 5. 质控处理（如果启用）
+    // --- 5. 质控处理 ---
     if (params.qc_tool != "none") {
         qc_results_ch = run_quality_control(fastq_samples_ch)
         processed_reads_ch = qc_results_ch.qc_reads
@@ -765,7 +755,7 @@ workflow {
         processed_reads_ch = fastq_samples_ch
     }
     
-    // 6. 序列比对（如果启用）
+    // --- 6. 序列比对 ---
     if (params.align_tool != "none") {
         align_results_ch = run_alignment(
             processed_reads_ch,
@@ -776,7 +766,7 @@ workflow {
         bam_files_ch = Channel.empty()
     }
     
-    // 7. 基因定量（如果启用）
+    // --- 7. 基因定量 ---
     if (params.quant_tool != "none" && params.align_tool != "none") {
         quant_results_ch = run_quantification(
             bam_files_ch.map { sample_id, bam -> bam }.collect(),

@@ -5,6 +5,14 @@ FROM docker.m.daocloud.io/ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# 根据用户要求，设置所有Nextflow相关路径的环境变量
+# 设置主目录以解决用户上下文和权限问题
+ENV HOME=/app
+# 设置Nextflow的工作目录
+ENV NXF_WORK=/app/data/work
+# 设置Nextflow的临时目录
+ENV NXF_TEMP=/app/data/tmp
 # 3. 更换apt源为清华源，然后更新包管理器并安装一些基础工具
 RUN sed -i 's/archive.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && \
     sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && \
@@ -38,7 +46,12 @@ RUN ln -s $CONDA_DIR/bin/conda /usr/local/bin/conda && \
     echo "  bioconda: https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud" >> /root/.condarc && \
     echo "  pytorch: https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud" >> /root/.condarc
 
-# 6. 为每个工具或工具组创建独立的Conda环境
+# 6. 接受Anaconda的服务条款 (ToS) 以避免构建错误
+RUN conda config --set anaconda_anon_usage false && \
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+
+# 7. 为每个工具或工具组创建独立的Conda环境
 RUN conda install -y -c conda-forge mamba
 
 
@@ -57,11 +70,8 @@ RUN mamba create -y -n de_env -c conda-forge -c r r-base r-essentials r-argparse
 
 # Set up CRAN and Bioconductor mirrors for faster R package installation
 # This creates a global .Rprofile that R will load on startup.
-RUN echo "options(repos = c(CRAN = 'https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), BioC_mirror = 'https://mirrors.tuna.tsinghua.edu.cn/bioconductor')" > /root/.Rprofile
-
-# Install BiocManager and required Bioconductor packages
-# The mirrors are now automatically picked up from the .Rprofile file.
-RUN conda run --no-capture-output -n de_env R -e "if (!requireNamespace('BiocManager', quietly = TRUE)) install.packages('BiocManager'); BiocManager::install(c('DESeq2', 'EnhancedVolcano', 'pheatmap'), update=FALSE, ask=FALSE)"
+# Install BiocManager and required Bioconductor packages, explicitly setting the CRAN mirror.
+RUN conda run --no-capture-output -n de_env R -e "if (!requireNamespace('BiocManager', quietly = TRUE)) install.packages('BiocManager', repos='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'); BiocManager::install(c('DESeq2', 'EnhancedVolcano', 'pheatmap'), update=FALSE, ask=FALSE)"
 
 
 RUN mamba clean -y -a
