@@ -4,7 +4,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.pydantic_v1 import BaseModel, Field
 from .tools import (
-    list_directory_contents, query_fastq_files, query_genome_info,
+    list_directory_contents, query_fastq_files, query_genome_info, add_new_genome,
     update_nextflow_param, batch_update_nextflow_config,
     switch_to_plan_mode, switch_to_execute_mode,
     execute_nextflow_pipeline, check_execution_status, get_current_nextflow_config,
@@ -17,7 +17,7 @@ from .tools import (
 
 # 所有可用工具
 ALL_TOOLS = [
-    list_directory_contents, query_fastq_files, query_genome_info,
+    list_directory_contents, query_fastq_files, query_genome_info, add_new_genome,
     update_nextflow_param, batch_update_nextflow_config,
     switch_to_plan_mode, switch_to_execute_mode,
     execute_nextflow_pipeline, check_execution_status, get_current_nextflow_config,
@@ -27,11 +27,11 @@ ALL_TOOLS = [
 # 模式特定工具映射 - 遵循接口隔离原则
 MODE_TOOLS = {
     "normal": [
-        list_directory_contents, query_fastq_files, query_genome_info,
+        list_directory_contents, query_fastq_files, query_genome_info, add_new_genome,
         get_current_nextflow_config, switch_to_plan_mode, list_directory_tree
     ],
     "plan": [
-        query_fastq_files, query_genome_info, update_nextflow_param,
+        query_fastq_files, query_genome_info, add_new_genome, update_nextflow_param,
         batch_update_nextflow_config, get_current_nextflow_config,
         switch_to_execute_mode, list_directory_tree
     ],
@@ -45,12 +45,19 @@ MODE_TOOLS = {
 # JSON输出模型定义 - 遵循类型安全原则
 # ============================================================================
 
+class ToolCall(BaseModel):
+    """工具调用模型"""
+    tool_name: str = Field(description="工具名称")
+    parameters: Dict[str, Any] = Field(description="工具参数")
+    reason: str = Field(description="调用原因")
+
 class NormalModeResponse(BaseModel):
     """Normal模式的结构化响应"""
     reasoning: str = Field(description="分析和推理过程")
     response: str = Field(description="给用户的回复")
     suggested_actions: List[str] = Field(description="建议的后续操作", default=[])
     need_more_info: bool = Field(description="是否需要更多信息", default=False)
+    tool_calls: List[ToolCall] = Field(description="需要调用的工具列表", default=[])
 
 class PlanModeResponse(BaseModel):
     """Plan模式的结构化响应"""
@@ -59,6 +66,7 @@ class PlanModeResponse(BaseModel):
     config_changes: Dict[str, Any] = Field(description="需要修改的nextflow配置", default={})
     next_action: str = Field(description="下一步行动")
     ready_to_execute: bool = Field(description="是否准备好执行", default=False)
+    tool_calls: List[ToolCall] = Field(description="需要调用的工具列表", default=[])
 
 class ExecuteModeResponse(BaseModel):
     """Execute模式的结构化响应"""
@@ -67,6 +75,7 @@ class ExecuteModeResponse(BaseModel):
     progress: str = Field(description="执行进度描述")
     results: Dict[str, Any] = Field(description="执行结果", default={})
     next_step: str = Field(description="下一步操作")
+    tool_calls: List[ToolCall] = Field(description="需要调用的工具列表", default=[])
 
 # ============================================================================
 # LLM配置 - 遵循配置分离原则
@@ -100,11 +109,26 @@ NORMAL_MODE_PROMPT = ChatPromptTemplate.from_messages([
 2. 回答关于RNA-seq分析的问题
 3. 当用户表示要开始分析时，**必须**调用switch_to_plan_mode工具
 
+**添加新基因组的智能流程:**
+当用户想要添加新的基因组并提供URL时，你**必须**遵循以下步骤：
+1.  **自行推断**: 分析URL，推断出`genome_name` (例如 'danRer11') 和 `species` (例如 'zebrafish')。
+    - `genome_name` 通常是URL路径中 'goldenPath' 后面的部分。
+    - `species` 可以根据`genome_name`的前缀推断 (例如 'danRer' -> 'zebrafish', 'hg' -> 'human', 'mm' -> 'mouse')。
+2.  **构建本地路径**: 根据推断出的信息，遵循 `data/genomes/{{species}}/{{genome_name}}/{{文件名}}` 的格式，构建出 `fasta_path` 和 `gtf_path`。文件名应从URL中提取并去除`.gz`后缀。
+3.  **调用工具**: 使用你推断和构建出的所有信息，调用 `add_new_genome` 工具。
+    - **必须**提供所有6个参数: `genome_name`, `species`, `fasta_url`, `gtf_url`, `fasta_path`, `gtf_path`。
+
+**示例:**
+- 用户输入: "我想添加基因组 https://hgdownload.soe.ucsc.edu/goldenPath/danRer11/bigZips/danRer11.fa.gz 和 https://hgdownload.soe.ucsc.edu/goldenPath/danRer11/bigZips/genes/danRer11.ncbiRefSeq.gtf.gz"
+- **你的思考过程**: "好的，URL指向danRer11。'danRer'前缀意味着物种是zebrafish。fasta本地路径是 `data/genomes/zebrafish/danRer11/danRer11.fa`，gtf本地路径是 `data/genomes/zebrafish/danRer11/danRer11.ncbiRefSeq.gtf`。我将使用这些信息调用工具。"
+- **你的工具调用**: `add_new_genome(genome_name='danRer11', species='zebrafish', fasta_url='https://hgdownload.soe.ucsc.edu/goldenPath/danRer11/bigZips/danRer11.fa.gz', gtf_url='https://hgdownload.soe.ucsc.edu/goldenPath/danRer11/bigZips/genes/danRer11.ncbiRefSeq.gtf.gz', fasta_path='data/genomes/zebrafish/danRer11/danRer11.fa', gtf_path='data/genomes/zebrafish/danRer11/danRer11.ncbiRefSeq.gtf')`
+
 **可用工具：**
 - list_directory_contents: 查看目录内容
 - list_directory_tree: 以树形结构或列表格式查看目录内容，支持递归和文件过滤
 - query_fastq_files: 查询FASTQ文件信息
 - query_genome_info: 查询基因组配置信息
+- add_new_genome: 添加一个新的基因组到配置中
 - get_current_nextflow_config: 获取当前配置
 - switch_to_plan_mode: 切换到计划模式（**必须在用户要求开始分析时调用**）
 
@@ -118,12 +142,31 @@ NORMAL_MODE_PROMPT = ChatPromptTemplate.from_messages([
 当需要切换模式时，调用：
 switch_to_plan_mode(target_mode="plan", reason="用户请求开始分析")
 
+**输出格式要求：**
+你必须以JSON格式回复，包含以下字段：
+```json
+{{
+  "reasoning": "你的分析和推理过程",
+  "response": "给用户的回复内容", 
+  "suggested_actions": ["建议的后续操作1", "建议的后续操作2"],
+  "need_more_info": false,
+  "tool_calls": [
+    {{
+      "tool_name": "工具名称",
+      "parameters": {{"参数名": "参数值"}},
+      "reason": "调用原因"
+    }}
+  ]
+}}
+```
+
 **重要原则：**
 - 保持友好和专业的语调
 - 主动询问用户的分析需求
 - **检测到分析意图时立即切换模式，不要犹豫**
 - 提供清晰的操作建议
-- 不要使用绝对路径,使用相对路径进行检索      
+- 不要使用绝对路径,使用相对路径进行检索
+- **必须严格按照JSON格式输出，不要添加任何格式标记或说明文字**
      """),
     MessagesPlaceholder(variable_name="messages"),
 ])
@@ -177,10 +220,30 @@ PLAN_MODE_PROMPT = ChatPromptTemplate.from_messages([
 请告诉我您希望如何继续？
 ```
 
+**输出格式要求：**
+你必须以JSON格式回复，包含以下字段：
+```json
+{{
+  "reasoning": "计划制定的推理过程",
+  "plan_steps": ["分析步骤1", "分析步骤2", "分析步骤3"],
+  "config_changes": {{"参数名": "参数值"}},
+  "next_action": "下一步行动说明",
+  "ready_to_execute": false,
+  "tool_calls": [
+    {{
+      "tool_name": "工具名称", 
+      "parameters": {{"参数名": "参数值"}},
+      "reason": "调用原因"
+    }}
+  ]
+}}
+```
+
 **重要原则：**
 - 每次回复后都要等待用户的明确指示
 - 不要自动重复执行相同的操作
-- 主动引导用户做出选择"""),
+- 主动引导用户做出选择
+- **必须严格按照JSON格式输出，不要添加任何格式标记或说明文字**"""),
     MessagesPlaceholder(variable_name="messages"),
 ])
 
@@ -213,10 +276,30 @@ EXECUTE_MODE_PROMPT = ChatPromptTemplate.from_messages([
 - results字段：执行结果和输出
 - next_step字段：下一步操作建议
 
+**输出格式要求：**
+你必须以JSON格式回复，包含以下字段：
+```json
+{{
+  "reasoning": "执行决策的推理过程",
+  "status": "当前执行状态",
+  "progress": "执行进度描述", 
+  "results": {{"结果键": "结果值"}},
+  "next_step": "下一步操作建议",
+  "tool_calls": [
+    {{
+      "tool_name": "工具名称",
+      "parameters": {{"参数名": "参数值"}},
+      "reason": "调用原因"
+    }}
+  ]
+}}
+```
+
 **重要原则：**
 - 确保执行过程的透明性
 - 及时报告进度和问题
-- 提供清晰的结果总结"""),
+- 提供清晰的结果总结
+- **必须严格按照JSON格式输出，不要添加任何格式标记或说明文字**"""),
     MessagesPlaceholder(variable_name="messages"),
 ])
 
@@ -245,23 +328,20 @@ class ModeSpecificLLM:
             tools = MODE_TOOLS.get(mode, [])
             
             if mode == "normal":
-                structured_llm = self.base_llm.with_structured_output(NormalModeResponse)
                 self._llm_instances[mode] = {
-                    "llm": structured_llm,
+                    "llm": self.base_llm,
                     "llm_with_tools": self.base_llm.bind_tools(tools),
                     "prompt": NORMAL_MODE_PROMPT
                 }
             elif mode == "plan":
-                structured_llm = self.base_llm.with_structured_output(PlanModeResponse)
                 self._llm_instances[mode] = {
-                    "llm": structured_llm,
+                    "llm": self.base_llm,
                     "llm_with_tools": self.base_llm.bind_tools(tools),
                     "prompt": PLAN_MODE_PROMPT
                 }
             elif mode == "execute":
-                structured_llm = self.base_llm.with_structured_output(ExecuteModeResponse)
                 self._llm_instances[mode] = {
-                    "llm": structured_llm,
+                    "llm": self.base_llm,
                     "llm_with_tools": self.base_llm.bind_tools(tools),
                     "prompt": EXECUTE_MODE_PROMPT
                 }

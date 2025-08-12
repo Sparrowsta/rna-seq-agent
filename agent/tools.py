@@ -232,9 +232,60 @@ def query_genome_info(genome_name: Optional[str] = None, config_path: str = "con
     except Exception as e:
         return f"查询基因组信息时发生错误：{str(e)}"
 
-# ============================================================================
+# ============================================================================ 
 # 配置管理工具组 - 遵循DRY原则
-# ============================================================================
+# ============================================================================ 
+class AddGenomeArgs(BaseModel):
+    """基因组添加参数模型"""
+    genome_name: str = Field(description="要添加的基因组的唯一名称，例如 'danRer11'")
+    species: str = Field(description="该基因组所属的物种，例如 'zebrafish'")
+    fasta_url: str = Field(description="基因组FASTA文件的URL")
+    gtf_url: str = Field(description="基因组GTF文件的URL")
+    fasta_path: str = Field(description="FASTA文件的本地存储路径")
+    gtf_path: str = Field(description="GTF文件的本地存储路径")
+
+@tool(args_schema=AddGenomeArgs)
+def add_new_genome(genome_name: str, species: str, fasta_url: str, gtf_url: str, fasta_path: str, gtf_path: str) -> str:
+    """
+    添加一个全新的基因组到配置文件(config/genomes.json)。
+    """
+    try:
+        config_path = "config/genomes.json"
+        if not os.path.exists(config_path):
+            return f"错误：基因组配置文件 '{config_path}' 不存在"
+
+        with open(config_path, 'r+', encoding='utf-8') as f:
+            genomes_config = json.load(f)
+
+            if genome_name in genomes_config:
+                return f"错误：基因组 '{genome_name}' 已存在于配置中。"
+
+            new_genome_entry = {
+                "species": species,
+                "version": genome_name,
+                "fasta": fasta_path,
+                "gtf": gtf_path,
+                "fasta_url": fasta_url,
+                "gtf_url": gtf_url
+            }
+
+            genomes_config[genome_name] = new_genome_entry
+            
+            f.seek(0)
+            json.dump(genomes_config, f, indent=2)
+            f.truncate()
+
+        return f"✅ 成功添加基因组 '{genome_name}' (物种: {species}) 到 '{config_path}'。"
+
+    except json.JSONDecodeError:
+        return f"错误：基因组配置文件 '{config_path}' 格式不正确"
+    except Exception as e:
+        return f"添加新基因组时发生错误：{str(e)}"
+
+# ============================================================================ 
+# 配置管理工具组 - 遵循DRY原则
+# ============================================================================ 
+
 
 @tool(args_schema=NextflowConfigArgs)
 def update_nextflow_param(param_name: str, param_value: Any) -> str:

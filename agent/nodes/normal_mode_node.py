@@ -4,7 +4,8 @@ Normal Mode节点 - 信息收集和用户交互
 """
 
 import logging
-from typing import Dict, Any
+import json
+from typing import Dict, Any, List, Tuple
 from langchain_core.messages import HumanMessage, AIMessage
 from ..state import AgentState, update_state_mode
 from ..core import create_chain_for_mode, create_structured_chain_for_mode
@@ -24,6 +25,60 @@ class NormalModeHandler:
         self.chain = create_chain_for_mode("normal")
         self.structured_chain = create_structured_chain_for_mode("normal")
     
+    def _parse_json_response(self, response) -> Tuple[AIMessage, List[Dict[str, Any]]]:
+        """
+        解析LLM的JSON响应
+        
+        返回: (AIMessage, tool_calls列表)
+        """
+        try:
+            if hasattr(response, 'content') and response.content:
+                # 清理响应内容
+                content = _clean_unicode_content(response.content)
+                
+                # 移除代码块标记
+                if content.startswith("```json"):
+                    content = content.replace("```json", "").replace("```", "").strip()
+                
+                # 尝试解析JSON
+                try:
+                    json_data = json.loads(content)
+                    
+                    # 提取用户消息
+                    user_message = json_data.get("response", content)
+                    
+                    # 提取工具调用
+                    tool_calls = json_data.get("tool_calls", [])
+                    
+                    # 创建AIMessage
+                    ai_message = AIMessage(content=user_message)
+                    
+                    # 如果有工具调用，设置为消息的tool_calls属性
+                    if tool_calls:
+                        # 转换为LangChain期望的格式
+                        langchain_tool_calls = []
+                        for i, tool_call in enumerate(tool_calls):
+                            langchain_tool_calls.append({
+                                "name": tool_call.get("tool_name"),
+                                "args": tool_call.get("parameters", {}),
+                                "id": f"call_{i}",
+                                "type": "tool_call"
+                            })
+                        ai_message.tool_calls = langchain_tool_calls
+                    
+                    return ai_message, tool_calls
+                    
+                except json.JSONDecodeError:
+                    # 如果不是有效JSON，直接返回原内容
+                    logger.warning("LLM输出不是有效JSON，使用原始内容")
+                    return AIMessage(content=content), []
+            
+            return AIMessage(content="响应为空"), []
+            
+        except Exception as e:
+            logger.error(f"解析JSON响应时出错: {str(e)}")
+            return AIMessage(content="解析响应时出现错误"), []
+    
     def process_user_input(self, state: AgentState) -> Dict[str, Any]:
         """
         处理用户输入
@@ -39,14 +94,17 @@ class NormalModeHandler:
             # 调用LLM处理用户输入
             response = self.chain.invoke({"messages": state["messages"]})
             
-            # 清理响应内容中的无效字符
-            if hasattr(response, 'content') and response.content:
-                cleaned_content = _clean_unicode_content(response.content)
-                response.content = cleaned_content
+            # 解析JSON响应并处理工具调用
+            parsed_response, tool_calls = self._parse_json_response(response)
+            
+            # 如果有工具调用，添加到响应中
+            if tool_calls:
+                # 这里可以添加工具调用处理逻辑
+                pass
             
             logger.info(f"Normal mode response generated: {type(response)}")
             
-            return {"messages": [response]}
+            return {"messages": [parsed_response]}
         
         except Exception as e:
             logger.error(f"Error in normal mode processing: {str(e)}")
@@ -151,6 +209,10 @@ def get_user_input(state: AgentState) -> Dict[str, Any]:
             return {"messages": [HumanMessage(content="exit")]}
         
         logger.info(f"User input received: {user_input[:50]}...")
+        
+        # 更新状态以包含用户输入
+        new_state = dict(state)
+        new_state["messages"] = state.get("messages", []) + [HumanMessage(content=user_input)]
         
         return {"messages": [HumanMessage(content=user_input)]}
     
