@@ -93,11 +93,19 @@ class ConversationRouter(RouterStrategy):
         
         # 检查是否为用户输入
         if hasattr(last_message, "type") and last_message.type == "human":
-            content = last_message.content.lower()
+            content = last_message.content.lower().strip()
             
             # 检查退出指令
             if content in ["exit", "quit", "bye", "退出"]:
                 return "end"
+            
+            # 关键修复：检查特殊命令（最高优先级）
+            if content in ["/plan", "/开始计划", "/制定计划"]:
+                print(f"[CONVERSATION ROUTER] 检测到计划模式命令: {content}")
+                return "plan_mode_node"
+            elif content in ["/execute", "/开始执行", "/执行"]:
+                print(f"[CONVERSATION ROUTER] 检测到执行模式命令: {content}")
+                return "execute_mode_node"
             
             # 检查是否需要工具调用
             if hasattr(last_message, "tool_calls") and last_message.tool_calls:

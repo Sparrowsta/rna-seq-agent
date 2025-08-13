@@ -575,30 +575,37 @@ def add_new_genome(genome_name: str, species: str, fasta_url: str, gtf_url: str,
 @tool(args_schema=NextflowConfigArgs)
 def update_nextflow_param(param_name: str, param_value: Any) -> str:
     """
-    更新单个nextflow参数
+    更新单个nextflow参数到AgentState
     
-    应用KISS原则：简单的单参数更新
+    返回特殊格式的字符串，供节点解析并更新状态
     """
     try:
         # 验证参数名称
         valid_params = [
             "srr_ids", "local_genome_path", "local_gtf_path", 
             "download_genome_url", "download_gtf_url", "local_fastq_files",
-            "data", "run_download_srr", "run_download_genome", 
+            "genome_version", "data", "run_download_srr", "run_download_genome", 
             "run_build_star_index", "run_fastp", "run_star_align", "run_featurecounts"
         ]
         
         if param_name not in valid_params:
-            return f"错误：无效的参数名 '{param_name}'。有效参数：{', '.join(valid_params)}"
+            return f"❌ 错误：无效的参数名 '{param_name}'\n有效参数：{', '.join(valid_params)}"
         
-        # 类型验证
-        if param_name.startswith("run_") and not isinstance(param_value, bool):
-            return f"错误：参数 '{param_name}' 必须是布尔值"
+        # 类型验证和转换
+        if param_name.startswith("run_"):
+            if isinstance(param_value, str):
+                param_value = param_value.lower() in ['true', '1', 'yes', 'on']
+            elif not isinstance(param_value, bool):
+                return f"❌ 错误：参数 '{param_name}' 必须是布尔值"
         
-        return f"✅ 参数 '{param_name}' 已更新为: {param_value}"
+        # 返回特殊格式，包含配置更新指令
+        import json
+        config_update = {param_name: param_value}
+        
+        return f"✅ 参数 '{param_name}' 已设置为: {param_value}\n[CONFIG_UPDATE] {json.dumps(config_update, ensure_ascii=False)}"
     
     except Exception as e:
-        return f"更新参数时发生错误：{str(e)}"
+        return f"❌ 更新参数时发生错误：{str(e)}"
 
 @tool(args_schema=BatchConfigArgs)
 def batch_update_nextflow_config(config_updates: Dict[str, Any]) -> str:
@@ -608,16 +615,44 @@ def batch_update_nextflow_config(config_updates: Dict[str, Any]) -> str:
     遵循DRY原则：复用单参数更新逻辑
     """
     try:
-        results = []
+        # 验证所有参数
+        valid_params = [
+            "srr_ids", "local_genome_path", "local_gtf_path", 
+            "download_genome_url", "download_gtf_url", "local_fastq_files",
+            "genome_version", "data", "run_download_srr", "run_download_genome", 
+            "run_build_star_index", "run_fastp", "run_star_align", "run_featurecounts"
+        ]
+        
+        validated_updates = {}
+        errors = []
+        
         for param_name, param_value in config_updates.items():
-            result = update_nextflow_param(param_name, param_value)
-            results.append(result)
+            if param_name not in valid_params:
+                errors.append(f"错误：无效的参数名 '{param_name}'")
+                continue
+                
+            # 类型验证和转换
+            if param_name.startswith("run_"):
+                if isinstance(param_value, str):
+                    param_value = param_value.lower() in ['true', '1', 'yes', 'on']
+                elif not isinstance(param_value, bool):
+                    errors.append(f"错误：参数 '{param_name}' 必须是布尔值")
+                    continue
+            
+            validated_updates[param_name] = param_value
         
-        success_count = sum(1 for r in results if r.startswith("✅"))
-        error_count = len(results) - success_count
+        if errors:
+            return "批量更新失败:\n" + "\n".join(errors)
         
-        summary = f"批量更新完成：{success_count} 个成功，{error_count} 个失败"
-        return summary + "\n\n" + "\n".join(results)
+        # 返回特殊格式，包含批量配置更新指令
+        import json
+        config_json = json.dumps(validated_updates, ensure_ascii=False)
+        
+        success_params = list(validated_updates.keys())
+        summary = f"✅ 批量更新完成：{len(success_params)} 个参数已更新\n"
+        summary += f"更新的参数：{', '.join(success_params)}"
+        
+        return f"{summary}\n__CONFIG_UPDATE__:{config_json}"
     
     except Exception as e:
         return f"批量更新配置时发生错误：{str(e)}"

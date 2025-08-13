@@ -52,8 +52,13 @@ def route_from_mode_nodes(state: AgentState) -> str:
     遵循开放封闭原则：易于扩展新的路由逻辑
     """
     try:
-        # 首先检查状态中的模式是否已经改变
+        # 首先检查执行状态 - 如果正在执行，继续在execute模式
+        execution_status = state.get("execution_status", "idle")
         current_mode = state.get("mode", "normal")
+        
+        if execution_status == "running" and current_mode == "execute":
+            print(f"[ROUTER] 检测到执行状态为running，继续在execute模式监控")
+            return "execute_mode_node"
         
         # 检查是否需要调用工具
         has_tools = should_call_tools(state)
@@ -106,8 +111,47 @@ def route_after_tool_calls(state: AgentState) -> str:
     工具调用后的路由
     
     应用责任链模式：按优先级处理不同类型的工具调用结果
+    解析工具返回的配置更新指令并更新AgentState
     """
     try:
+        # 解析工具调用结果中的配置更新指令
+        if state.get("messages"):
+            config_updates = {}
+            
+            # 检查最后几条消息中的工具调用结果
+            for message in state["messages"][-3:]:  # 检查最近3条消息
+                if hasattr(message, "content") and isinstance(message.content, str):
+                    content = message.content
+                    
+                    # 查找配置更新指令
+                    if "[CONFIG_UPDATE]" in content:
+                        try:
+                            # 提取JSON配置
+                            start_marker = "[CONFIG_UPDATE]"
+                            start_pos = content.find(start_marker)
+                            if start_pos != -1:
+                                json_str = content[start_pos + len(start_marker):].strip()
+                                # 提取第一行作为JSON
+                                json_str = json_str.split('\n')[0].strip()
+                                
+                                import json
+                                update_dict = json.loads(json_str)
+                                config_updates.update(update_dict)
+                                
+                                print(f"[ROUTER] 发现配置更新: {update_dict}")
+                        
+                        except (json.JSONDecodeError, IndexError) as e:
+                            print(f"[ROUTER] 配置更新解析失败: {str(e)}")
+            
+            # 如果有配置更新，应用到当前状态
+            if config_updates:
+                print(f"[ROUTER] 应用配置更新到AgentState: {config_updates}")
+                # 直接修改状态中的nextflow_config
+                current_config = state.get("nextflow_config", {})
+                current_config.update(config_updates)
+                # 注意：这里直接修改state，虽然不是最佳实践，但在路由函数中是可行的
+                state["nextflow_config"] = current_config
+        
         # 检查工具调用结果中的模式切换
         if state.get("messages"):
             last_message = state["messages"][-1]
@@ -349,6 +393,7 @@ class AgentGraphBuilder:
     
     def build(self):
         """构建并编译图"""
+        # 注意：recursion_limit应该在执行时通过config传递，不在compile时设置
         return self.workflow.compile()
 
 # ============================================================================
@@ -388,6 +433,7 @@ def run_agent_with_initial_state(initial_input: str = "") -> dict:
     使用初始状态运行agent
     
     应用模板方法模式：标准的执行流程
+    增加递归限制配置以避免工具调用过多
     """
     try:
         # 创建初始状态
@@ -398,8 +444,8 @@ def run_agent_with_initial_state(initial_input: str = "") -> dict:
             from langchain_core.messages import HumanMessage
             initial_state["messages"] = [HumanMessage(content=initial_input)]
         
-        # 执行图
-        result = agent_executor.invoke(initial_state)
+        # 执行图，设置递归限制为100以避免工具调用过多
+        result = agent_executor.invoke(initial_state, {"recursion_limit": 100})
         
         return result
     
@@ -412,12 +458,13 @@ def run_agent_step_by_step(state: AgentState) -> dict:
     逐步执行agent
     
     用于调试和监控执行过程
+    增加递归限制配置以避免工具调用过多
     """
     try:
         print(f"[STEP] 当前状态: mode={state.get('mode', 'unknown')}, messages={len(state.get('messages', []))}")
         
-        # 执行一步
-        result = agent_executor.invoke(state)
+        # 执行一步，设置递归限制
+        result = agent_executor.invoke(state, {"recursion_limit": 100})
         
         print(f"[STEP] 执行结果: mode={result.get('mode', 'unknown')}, messages={len(result.get('messages', []))}")
         

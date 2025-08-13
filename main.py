@@ -297,7 +297,8 @@ class InteractiveInterface:
             self.logger.info("启动交互会话")
             
             try:
-                final_state = agent_executor.invoke(initial_state)
+                # 增加递归限制配置以避免工具调用过多
+                final_state = agent_executor.invoke(initial_state, {"recursion_limit": 100})
                 
                 if self.debug_mode:
                     print(f"\n[DEBUG] 最终状态: {final_state}")
