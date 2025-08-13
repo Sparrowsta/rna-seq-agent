@@ -66,12 +66,12 @@ RUN pip install --no-cache-dir pandas python-dotenv 'langchain>=0.2.0' 'langchai
 
 
 # Create a dedicated environment for differential expression analysis with R
-RUN mamba create -y -n de_env -c conda-forge -c r r-base r-essentials r-argparse
+#RUN mamba create -y -n de_env -c conda-forge -c r r-base r-essentials r-argparse
 
 # Set up CRAN and Bioconductor mirrors for faster R package installation
 # This creates a global .Rprofile that R will load on startup.
 # Install BiocManager and required Bioconductor packages, explicitly setting the CRAN mirror.
-RUN conda run --no-capture-output -n de_env R -e "if (!requireNamespace('BiocManager', quietly = TRUE)) install.packages('BiocManager', repos='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'); BiocManager::install(c('DESeq2', 'EnhancedVolcano', 'pheatmap'), update=FALSE, ask=FALSE)"
+#RUN conda run --no-capture-output -n de_env R -e "if (!requireNamespace('BiocManager', quietly = TRUE)) install.packages('BiocManager', repos='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'); BiocManager::install(c('DESeq2', 'EnhancedVolcano', 'pheatmap'), update=FALSE, ask=FALSE)"
 
 
 RUN mamba clean -y -a

@@ -22,7 +22,8 @@ class NormalModeHandler:
     """
     
     def __init__(self):
-        self.chain = create_chain_for_mode("normal")
+        # 使用不带工具的LLM链用于JSON格式输出
+        self.chain = create_structured_chain_for_mode("normal")  
         self.structured_chain = create_structured_chain_for_mode("normal")
     
     def _parse_json_response(self, response) -> Tuple[AIMessage, List[Dict[str, Any]]]:
@@ -35,6 +36,7 @@ class NormalModeHandler:
             if hasattr(response, 'content') and response.content:
                 # 清理响应内容
                 content = _clean_unicode_content(response.content)
+                logger.info(f"原始LLM响应内容: {repr(content[:300])}...")
                 
                 # 移除代码块标记
                 if "```json" in content:
@@ -48,17 +50,19 @@ class NormalModeHandler:
                 elif content.startswith("```") and content.endswith("```"):
                     content = content[3:-3].strip()
                 
+                logger.info(f"清理后内容: {repr(content[:300])}...")
+                
                 # 尝试解析JSON
                 try:
                     json_data = json.loads(content)
-                    logger.info("JSON解析成功")
+                    logger.info(f"JSON解析成功: {json_data.keys()}")
                     
                     # 提取用户消息
                     user_message = json_data.get("response", content)
                     
                     # 提取工具调用
                     tool_calls = json_data.get("tool_calls", [])
-                    logger.info(f"提取到 {len(tool_calls)} 个工具调用")
+                    logger.info(f"提取到 {len(tool_calls)} 个工具调用: {tool_calls}")
                     
                     # 创建AIMessage
                     ai_message = AIMessage(content=user_message)
@@ -68,14 +72,30 @@ class NormalModeHandler:
                         # 转换为LangChain期望的格式
                         langchain_tool_calls = []
                         for i, tool_call in enumerate(tool_calls):
-                            langchain_tool_calls.append({
+                            tool_call_obj = {
                                 "name": tool_call.get("tool_name"),
                                 "args": tool_call.get("parameters", {}),
                                 "id": f"call_{i}",
                                 "type": "tool_call"
-                            })
+                            }
+                            langchain_tool_calls.append(tool_call_obj)
+                        
+                        # 关键：直接设置tool_calls属性
                         ai_message.tool_calls = langchain_tool_calls
-                        logger.info(f"设置tool_calls: {langchain_tool_calls}")
+                        
+                        # 验证设置是否成功
+                        logger.info(f"成功设置tool_calls属性: {langchain_tool_calls}")
+                        logger.info(f"AI消息tool_calls验证: {hasattr(ai_message, 'tool_calls')} - {ai_message.tool_calls}")
+                        
+                        # 额外验证：重新创建AIMessage并明确设置tool_calls
+                        if not getattr(ai_message, 'tool_calls', None):
+                            logger.warning("tool_calls属性设置失败，尝试重新创建消息")
+                            # 尝试不同的设置方法
+                            ai_message = AIMessage(
+                                content=user_message,
+                                tool_calls=langchain_tool_calls
+                            )
+                            logger.info(f"重新创建后的tool_calls: {ai_message.tool_calls}")
                     
                     return ai_message, tool_calls
                     
@@ -89,6 +109,8 @@ class NormalModeHandler:
             
         except Exception as e:
             logger.error(f"解析JSON响应时出错: {str(e)}")
+            import traceback
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
             return AIMessage(content="解析响应时出现错误"), []
     
     def process_user_input(self, state: AgentState) -> Dict[str, Any]:
@@ -103,18 +125,31 @@ class NormalModeHandler:
                 logger.warning(f"Expected normal mode, but got {state.get('mode')}")
                 state = update_state_mode(state, "normal")
             
-            # 调用LLM处理用户输入
-            response = self.chain.invoke({"messages": state["messages"]})
+            # 获取最后一条用户消息
+            user_input = ""
+            if state.get("messages"):
+                last_message = state["messages"][-1]
+                if hasattr(last_message, "content"):
+                    user_input = last_message.content
+            
+            # 调用LLM处理用户输入，传入input参数
+            response = self.chain.invoke({
+                "messages": state["messages"],
+                "input": user_input
+            })
             
             # 解析JSON响应并处理工具调用
             parsed_response, tool_calls = self._parse_json_response(response)
             
             # 如果有工具调用，添加到响应中
             if tool_calls:
-                # 这里可以添加工具调用处理逻辑
-                pass
+                logger.info(f"检测到工具调用，准备返回带有tool_calls的消息")
+                logger.info(f"parsed_response.tool_calls: {getattr(parsed_response, 'tool_calls', None)}")
+            else:
+                logger.info("没有检测到工具调用")
             
             logger.info(f"Normal mode response generated: {type(response)}")
+            logger.info(f"返回的消息tool_calls属性: {hasattr(parsed_response, 'tool_calls')} - {getattr(parsed_response, 'tool_calls', None)}")
             
             return {"messages": [parsed_response]}
         
@@ -130,6 +165,7 @@ class NormalModeHandler:
         处理模式切换请求
         
         遵循开放封闭原则：易于扩展新的模式切换逻辑
+        只通过工具调用进行模式切换，不再使用关键词检测
         """
         try:
             # 检查最后一条消息是否包含模式切换工具调用
@@ -138,7 +174,7 @@ class NormalModeHandler:
                 
             last_message = state["messages"][-1]
             
-            # 检查工具调用
+            # 只检查工具调用，移除关键词检测
             if hasattr(last_message, "tool_calls") and last_message.tool_calls:
                 for tool_call in last_message.tool_calls:
                     if tool_call.get("name") == "switch_to_plan_mode":
@@ -151,18 +187,8 @@ class NormalModeHandler:
                         ]
                         return result
             
-            # 检查用户消息内容中的模式切换请求
-            if hasattr(last_message, "content"):
-                content = last_message.content.lower().strip()
-                switch_keywords = ["开始分析", "制定计划", "开始", "分析", "start analysis", "begin", "plan"]
-                if any(keyword in content for keyword in switch_keywords):
-                    logger.info("Switching to plan mode requested via message content")
-                    result = dict(state)
-                    result["mode"] = "plan"
-                    result["messages"] = state["messages"] + [
-                        AIMessage(content="🔄 检测到分析请求，正在切换到计划模式...")
-                    ]
-                    return result
+            # 移除基于消息内容的模式切换检测
+            # 所有模式切换都应通过LLM的工具调用来实现
             
             return {}
         
@@ -177,22 +203,22 @@ class NormalModeHandler:
         应用YAGNI原则：只提供当前需要的基础指导
         """
         guidance_message = AIMessage(content="""
-欢迎使用RNA-seq分析助手！我可以帮助您：
+欢迎使用RNA-seq智能助手！我可以帮助您：
 
 🔍 **信息查询**：
 - 查看目录内容和FASTQ文件
 - 查询可用的基因组配置
-- 了解当前的分析配置
+- 了解当前的处理配置
 
-📋 **分析准备**：
-- 回答RNA-seq分析相关问题
-- 帮助您准备分析所需的文件
-- 制定个性化的分析计划
+📋 **处理准备**：
+- 回答RNA-seq相关问题
+- 帮助您准备处理所需的文件
+- 制定个性化的处理计划
 
-🚀 **开始分析**：
-当您准备好开始分析时，只需告诉我"开始分析"或"制定分析计划"
+🚀 **开始处理**：
+当您准备好开始处理时，只需告诉我"开始分析"或"制定计划"
 
-请告诉我您想了解什么，或者您有什么FASTQ文件需要分析？
+请告诉我您想了解什么，或者您有什么FASTQ文件需要处理？
         """)
         
         return {"messages": [guidance_message]}
@@ -323,12 +349,12 @@ def create_welcome_message() -> AIMessage:
     应用工厂模式：统一的消息创建
     """
     return AIMessage(content="""
-🧬 **RNA-seq分析助手** 已启动！
+🧬 **RNA-seq智能助手** 已启动！
 
-我是您的专业RNA-seq分析助手，可以帮助您：
-- 📁 查看和分析FASTQ文件
+我是您的专业RNA-seq智能助手，可以帮助您：
+- 📁 查看和管理FASTQ文件
 - 🧬 配置基因组参考文件  
-- 📋 制定个性化分析计划
+- 📋 制定个性化处理计划
 - 🚀 执行完整的RNA-seq流程
 
 请告诉我您的需求，或输入"帮助"查看详细功能介绍。
@@ -345,18 +371,18 @@ def create_help_message() -> AIMessage:
 
 🔍 **信息查询命令**：
 - "查看目录 [路径]" - 查看指定目录内容
-- "查询FASTQ文件 [路径]" - 分析FASTQ文件信息
+- "查询FASTQ文件 [路径]" - 查看FASTQ文件信息
 - "查询基因组 [名称]" - 查看基因组配置（如hg38、mm39）
 - "当前配置" - 查看当前nextflow配置
 
 💬 **对话交互**：
-- 直接描述您的分析需求
+- 直接描述您的处理需求
 - 询问RNA-seq相关问题
-- 寻求分析建议和指导
+- 寻求处理建议和指导
 
-🚀 **开始分析**：
+🚀 **开始处理**：
 - "开始分析" - 进入计划制定模式
-- "制定计划" - 开始制定分析计划
+- "制定计划" - 开始制定处理计划
 
 ⚙️ **系统命令**：
 - "帮助" - 显示此帮助信息

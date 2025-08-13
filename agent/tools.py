@@ -1,6 +1,7 @@
 import os
 import json
 import glob
+import re
 import subprocess
 from typing import Dict, Any, List, Optional
 from pathlib import Path
@@ -17,7 +18,7 @@ class DirectoryQueryArgs(BaseModel):
 
 class FastqQueryArgs(BaseModel):
     """FASTQ文件查询参数模型"""
-    directory_path: str = Field(description="包含FASTQ文件的目录路径")
+    directory_path: Optional[str] = Field(default=None, description="包含FASTQ文件的目录路径。如果不指定，将自动搜索默认位置：data/fastq和data/results/fastp")
     pattern: str = Field(default="*.fastq*", description="文件匹配模式")
 
 class GenomeQueryArgs(BaseModel):
@@ -90,63 +91,232 @@ def list_directory_contents(directory_path: str) -> str:
         return f"查询目录时发生错误：{str(e)}"
 
 @tool(args_schema=FastqQueryArgs)
-def query_fastq_files(directory_path: str, pattern: str = "*.fastq*") -> str:
+def query_fastq_files(directory_path: Optional[str] = None, pattern: str = "*.fastq*") -> str:
     """
-    查询指定目录下的FASTQ文件信息
+    查询FASTQ文件信息，支持默认路径和用户指定路径
+    
+    如果不指定directory_path，将搜索默认的FASTQ存储位置：
+    - data/fastq (原始FASTQ文件)
+    - data/results/fastp (质控后的FASTQ文件)
     
     遵循DRY原则：统一的FASTQ文件查询逻辑
     """
     try:
-        if not os.path.exists(directory_path):
-            return f"错误：目录 '{directory_path}' 不存在"
+        # 定义默认搜索路径
+        default_paths = ["data/fastq", "data/results/fastp"]
+        search_paths = []
         
-        # 使用glob查找FASTQ文件
-        search_pattern = os.path.join(directory_path, "**", pattern)
-        fastq_files = glob.glob(search_pattern, recursive=True)
+        if directory_path:
+            # 用户指定了路径，只搜索指定路径
+            if not os.path.exists(directory_path):
+                return f"错误：指定的目录 '{directory_path}' 不存在"
+            search_paths = [directory_path]
+        else:
+            # 使用默认路径，只搜索存在的路径
+            search_paths = [path for path in default_paths if os.path.exists(path)]
+            
+            if not search_paths:
+                return f"错误：默认FASTQ目录不存在。请检查以下目录：{', '.join(default_paths)}"
         
-        if not fastq_files:
-            return f"在目录 '{directory_path}' 中未找到匹配 '{pattern}' 的FASTQ文件"
+        all_fastq_files = []
+        searched_paths = []
         
-        # 分析文件信息
+        # 在所有搜索路径中查找FASTQ文件
+        for search_path in search_paths:
+            searched_paths.append(search_path)
+            search_pattern = os.path.join(search_path, "**", pattern)
+            fastq_files = glob.glob(search_pattern, recursive=True)
+            all_fastq_files.extend(fastq_files)
+        
+        if not all_fastq_files:
+            return f"在搜索路径 {', '.join(searched_paths)} 中未找到匹配 '{pattern}' 的FASTQ文件"
+        
+        # 分析文件信息 - 改进的配对逻辑
+        all_files = {}  # 存储所有文件信息
         paired_files = {}
         single_files = []
         
-        for file_path in sorted(fastq_files):
+        # 第一步：收集所有文件并尝试解析配对信息
+        for file_path in sorted(all_fastq_files):
             file_name = os.path.basename(file_path)
             file_size = os.path.getsize(file_path)
             
-            # 判断是否为双端测序文件
-            if "_1.fastq" in file_name or "_R1" in file_name:
-                sample_id = file_name.replace("_1.fastq", "").replace("_R1", "").split(".")[0]
-                if sample_id not in paired_files:
-                    paired_files[sample_id] = {}
-                paired_files[sample_id]["R1"] = {"path": file_path, "size": file_size}
-            elif "_2.fastq" in file_name or "_R2" in file_name:
-                sample_id = file_name.replace("_2.fastq", "").replace("_R2", "").split(".")[0]
-                if sample_id not in paired_files:
-                    paired_files[sample_id] = {}
-                paired_files[sample_id]["R2"] = {"path": file_path, "size": file_size}
+            # 改进的R1/R2检测逻辑
+            # 更全面的R1/R2模式匹配
+            r1_patterns = [
+                r'(.+)_1\.fastq', r'(.+)_R1\.fastq', r'(.+)_r1\.fastq',
+                r'(.+)_1\.fq', r'(.+)_R1\.fq', r'(.+)_r1\.fq',
+                r'(.+)_1\.fastq\.gz', r'(.+)_R1\.fastq\.gz', r'(.+)_r1\.fastq\.gz',
+                r'(.+)_1\.fq\.gz', r'(.+)_R1\.fq\.gz', r'(.+)_r1\.fq\.gz',
+                r'(.+)_1\.trimmed\.fastq', r'(.+)_R1\.trimmed\.fastq',
+                r'(.+)_1\.trimmed\.fq', r'(.+)_R1\.trimmed\.fq',
+                r'(.+)\.1\.fastq', r'(.+)\.R1\.fastq', r'(.+)\.r1\.fastq'
+            ]
+            
+            r2_patterns = [
+                r'(.+)_2\.fastq', r'(.+)_R2\.fastq', r'(.+)_r2\.fastq',
+                r'(.+)_2\.fq', r'(.+)_R2\.fq', r'(.+)_r2\.fq',
+                r'(.+)_2\.fastq\.gz', r'(.+)_R2\.fastq\.gz', r'(.+)_r2\.fastq\.gz',
+                r'(.+)_2\.fq\.gz', r'(.+)_R2\.fq\.gz', r'(.+)_r2\.fq\.gz',
+                r'(.+)_2\.trimmed\.fastq', r'(.+)_R2\.trimmed\.fastq',
+                r'(.+)_2\.trimmed\.fq', r'(.+)_R2\.trimmed\.fq',
+                r'(.+)\.2\.fastq', r'(.+)\.R2\.fastq', r'(.+)\.r2\.fastq'
+            ]
+            
+            sample_id = None
+            read_type = None
+            
+            # 检查是否为R1
+            for pattern in r1_patterns:
+                match = re.match(pattern, file_name, re.IGNORECASE)
+                if match:
+                    sample_id = match.group(1)
+                    read_type = "R1"
+                    break
+            
+            # 如果不是R1，检查是否为R2
+            if not sample_id:
+                for pattern in r2_patterns:
+                    match = re.match(pattern, file_name, re.IGNORECASE)
+                    if match:
+                        sample_id = match.group(1)
+                        read_type = "R2"
+                        break
+            
+            # 存储文件信息
+            file_info = {"path": file_path, "size": file_size, "name": file_name}
+            
+            if sample_id and read_type:
+                # 可能的配对文件
+                if sample_id not in all_files:
+                    all_files[sample_id] = {}
+                all_files[sample_id][read_type] = file_info
             else:
-                single_files.append({"name": file_name, "path": file_path, "size": file_size})
+                # 无法识别配对信息的文件，可能是真正的单端文件
+                single_files.append(file_info)
+        
+        # 第二步：检查配对完整性
+        for sample_id, files in all_files.items():
+            if "R1" in files and "R2" in files:
+                # 完整的双端配对
+                paired_files[sample_id] = files
+            else:
+                # 不完整的配对，归类为单端
+                for read_type, file_info in files.items():
+                    single_files.append(file_info)
+        
+        # 按文件来源分类结果
+        original_paired = {}
+        original_single = []
+        processed_paired = {}
+        processed_single = []
+        
+        def is_processed_file(file_path: str) -> bool:
+            """判断文件是否为处理后的文件"""
+            file_name = os.path.basename(file_path).lower()
+            processed_indicators = [
+                'trimmed', 'fastp', 'cutadapt', 'processed', 'clean', 
+                'filtered', 'qc', 'trim', 'adapter'
+            ]
+            # 检查文件名是否包含处理后的标识
+            for indicator in processed_indicators:
+                if indicator in file_name:
+                    return True
+            
+            # 检查路径是否包含处理后的目录标识
+            path_processed_indicators = [
+                'fastp', 'trimmed', 'processed', 'clean', 'qc', 
+                'cutadapt', 'trim', 'filter', 'results'
+            ]
+            for indicator in path_processed_indicators:
+                if indicator in file_path.lower():
+                    return True
+            
+            return False
+        
+        # 分类配对文件
+        for sample_id, files in paired_files.items():
+            has_original = False
+            for read_type, file_info in files.items():
+                if not is_processed_file(file_info['path']):
+                    has_original = True
+                    break
+            
+            if has_original:
+                original_paired[sample_id] = files
+            else:
+                processed_paired[sample_id] = files
+        
+        # 分类单端文件
+        for file_info in single_files:
+            if not is_processed_file(file_info['path']):
+                original_single.append(file_info)
+            else:
+                processed_single.append(file_info)
         
         # 构建结果
-        result = [f"FASTQ文件查询结果 (目录: {directory_path})：\n"]
+        result = [f"FASTQ文件查询结果："]
+        result.append(f"搜索路径: {', '.join(searched_paths)}\n")
         
-        if paired_files:
-            result.append("双端测序文件：")
-            for sample_id, files in paired_files.items():
-                result.append(f"  样本: {sample_id}")
-                if "R1" in files:
-                    result.append(f"    R1: {files['R1']['path']} ({files['R1']['size']} bytes)")
-                if "R2" in files:
-                    result.append(f"    R2: {files['R2']['path']} ({files['R2']['size']} bytes)")
+        # 显示原始文件（主要用于分析）
+        if original_paired or original_single:
+            result.append("📁 **原始FASTQ文件** (主要：用于分析)：")
+            
+            if original_paired:
+                result.append("  📝 双端测序文件：")
+                for sample_id, files in original_paired.items():
+                    result.append(f"    📦 样本: {sample_id}")
+                    if "R1" in files:
+                        size_mb = files['R1']['size'] / (1024*1024)
+                        result.append(f"      📄 R1: {files['R1']['path']} ({size_mb:.2f} MB)")
+                    if "R2" in files:
+                        size_mb = files['R2']['size'] / (1024*1024)
+                        result.append(f"      📄 R2: {files['R2']['path']} ({size_mb:.2f} MB)")
+            
+            if original_single:
+                result.append("  📝 单端测序文件：")
+                for file_info in original_single:
+                    size_mb = file_info['size'] / (1024*1024)
+                    result.append(f"    📄 {file_info['name']}: {file_info['path']} ({size_mb:.2f} MB)")
         
-        if single_files:
-            result.append("\n单端测序文件：")
-            for file_info in single_files:
-                result.append(f"  {file_info['name']}: {file_info['path']} ({file_info['size']} bytes)")
+        # 显示质控后文件（次要，显示处理状态）
+        if processed_paired or processed_single:
+            result.append("\n🔬 **质控后文件** (次要：显示处理状态)：")
+            
+            if processed_paired:
+                result.append("  📝 双端测序文件：")
+                for sample_id, files in processed_paired.items():
+                    result.append(f"    📦 样本: {sample_id}")
+                    if "R1" in files:
+                        size_mb = files['R1']['size'] / (1024*1024)
+                        result.append(f"      📄 R1: {files['R1']['path']} ({size_mb:.2f} MB)")
+                    if "R2" in files:
+                        size_mb = files['R2']['size'] / (1024*1024)
+                        result.append(f"      📄 R2: {files['R2']['path']} ({size_mb:.2f} MB)")
+            
+            if processed_single:
+                result.append("  📝 单端测序文件：")
+                for file_info in processed_single:
+                    size_mb = file_info['size'] / (1024*1024)
+                    result.append(f"    📄 {file_info['name']}: {file_info['path']} ({size_mb:.2f} MB)")
         
-        result.append(f"\n总计：{len(paired_files)} 个双端样本，{len(single_files)} 个单端文件")
+        # 统计信息
+        total_original = len(original_paired) + len(original_single)
+        total_processed = len(processed_paired) + len(processed_single)
+        result.append(f"\n📊 统计: 原始文件 {total_original} 个，质控文件 {total_processed} 个")
+        
+        # 使用建议
+        if original_paired or original_single:
+            result.append("\n💡 使用建议:")
+            result.append("- ✅ 优先使用原始FASTQ文件进行RNA-seq分析")
+            if processed_paired or processed_single:
+                result.append("- 📋 质控文件可用于验证数据处理状态")
+            result.append("- 🚀 如需开始分析流程，请告诉我您的需求")
+        elif processed_paired or processed_single:
+            result.append("\n💡 使用建议:")
+            result.append("- ⚠️  仅找到质控后文件，建议检查是否有原始FASTQ文件")
+            result.append("- 📋 这些文件可显示数据处理状态")
+            result.append("- 🚀 如需开始分析流程，请告诉我您的需求")
         
         return "\n".join(result)
     
