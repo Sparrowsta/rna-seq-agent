@@ -8,7 +8,7 @@ from .tools import (
     update_nextflow_param, batch_update_nextflow_config,
     switch_to_plan_mode, switch_to_execute_mode,
     execute_nextflow_pipeline, check_execution_status, get_current_nextflow_config,
-    list_directory_tree
+    list_directory_tree, generate_analysis_task_list
 )
 
 # ============================================================================
@@ -21,7 +21,7 @@ ALL_TOOLS = [
     update_nextflow_param, batch_update_nextflow_config,
     switch_to_plan_mode, switch_to_execute_mode,
     execute_nextflow_pipeline, check_execution_status, get_current_nextflow_config,
-    list_directory_tree
+    list_directory_tree, generate_analysis_task_list
 ]
 
 # 模式特定工具映射 - 遵循接口隔离原则
@@ -33,7 +33,7 @@ MODE_TOOLS = {
     "plan": [
         query_fastq_files, query_genome_info, add_new_genome, update_nextflow_param,
         batch_update_nextflow_config, get_current_nextflow_config,
-        switch_to_execute_mode, list_directory_tree
+        switch_to_execute_mode, list_directory_tree, generate_analysis_task_list
     ],
     "execute": [
         execute_nextflow_pipeline, check_execution_status,
@@ -199,10 +199,17 @@ PLAN_MODE_PROMPT = ChatPromptTemplate.from_messages([
 - query_fastq_files: 查询FASTQ文件信息
 - query_genome_info: 查询基因组信息
 - list_directory_tree: 以树形结构或列表格式查看目录内容，支持递归和文件过滤
+- generate_analysis_task_list: **重要** 生成智能任务列表，自动检测本地文件并制定优化配置
 - update_nextflow_param: 更新单个nextflow参数
 - batch_update_nextflow_config: 批量更新配置
 - get_current_nextflow_config: 获取当前配置
 - switch_to_execute_mode: 切换到执行模式（用户确认计划后）
+
+**重要工作流程：**
+1. **首次进入plan模式时，立即调用generate_analysis_task_list工具**
+2. 该工具会自动检测本地FASTQ和基因组文件
+3. 优先使用本地文件，自动生成最优配置
+4. 基于检测结果制定详细的执行计划
 
 **工作流程：**
 1. 如果是首次进入计划模式，制定完整的分析计划

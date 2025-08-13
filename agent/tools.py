@@ -53,6 +53,11 @@ class TreeListArgs(BaseModel):
     show_only_files: bool = Field(default=False, description="是否只显示文件，不显示目录")
     output_format: str = Field(default="tree", description="输出格式，可选'tree'（树形结构）或'list'（简单列表）")
 
+class TaskListArgs(BaseModel):
+    """任务列表生成参数模型"""
+    analysis_type: str = Field(default="standard", description="分析类型：standard（标准）、minimal（最小）、comprehensive（全面）")
+    force_refresh: bool = Field(default=False, description="是否强制重新检测文件和配置")
+
 # ============================================================================
 # 信息查询工具组 - 遵循单一职责原则
 # ============================================================================
@@ -878,3 +883,344 @@ def list_directory_tree(directory_path: str, max_depth: Optional[int] = None,
     
     except Exception as e:
         return f"列出目录树时发生错误：{str(e)}"
+
+@tool(args_schema=TaskListArgs)
+def generate_analysis_task_list(analysis_type: str = "standard", force_refresh: bool = False) -> str:
+    """
+    生成智能RNA-seq分析任务列表，自动检测本地文件并确定最优配置
+    
+    遵循智能配置原则：优先使用本地文件，自动生成nextflow参数
+    """
+    try:
+        result = ["📋 **智能任务列表生成**"]
+        result.append("=" * 50)
+        
+        # 第1步：检测本地FASTQ文件
+        result.append("\n🔍 **步骤1：检测FASTQ文件**")
+        fastq_detection = _detect_local_fastq_files()
+        result.extend(fastq_detection["summary"])
+        
+        # 第2步：检测本地基因组文件  
+        result.append("\n🧬 **步骤2：检测基因组文件**")
+        genome_detection = _detect_local_genome_files()
+        result.extend(genome_detection["summary"])
+        
+        # 第3步：生成推荐配置
+        result.append("\n⚙️ **步骤3：生成推荐配置**")
+        recommended_config = _generate_recommended_config(
+            fastq_detection["data"], 
+            genome_detection["data"], 
+            analysis_type
+        )
+        result.extend(recommended_config["summary"])
+        
+        # 第4步：生成任务列表
+        result.append("\n📝 **步骤4：分析任务列表**")
+        task_list = _generate_task_steps(recommended_config["config"], analysis_type)
+        result.extend(task_list)
+        
+        # 第5步：显示最终配置
+        result.append("\n🎯 **最终推荐配置**")
+        config_summary = _format_config_summary(recommended_config["config"])
+        result.extend(config_summary)
+        
+        # 使用建议
+        result.append("\n💡 **使用建议**")
+        if recommended_config["config"].get("has_local_files"):
+            result.append("✅ 检测到本地文件，配置已优化为使用本地资源")
+        else:
+            result.append("⚠️ 未检测到本地文件，将需要下载数据和基因组")
+        
+        result.append("📋 配置已生成，可直接用于nextflow执行")
+        
+        return "\n".join(result)
+        
+    except Exception as e:
+        return f"生成任务列表时发生错误：{str(e)}"
+
+def _detect_local_fastq_files() -> Dict[str, Any]:
+    """检测本地FASTQ文件"""
+    try:
+        # 搜索默认FASTQ路径
+        search_paths = ["data/fastq", "data/results/fastp", "fastq", "raw_data"]
+        found_files = []
+        
+        for path in search_paths:
+            if os.path.exists(path):
+                for root, dirs, files in os.walk(path):
+                    for file in files:
+                        if file.endswith(('.fastq', '.fq', '.fastq.gz', '.fq.gz')):
+                            found_files.append(os.path.join(root, file))
+        
+        if found_files:
+            # 分析文件类型
+            paired_files = {}
+            single_files = []
+            
+            for file_path in found_files:
+                file_name = os.path.basename(file_path)
+                # 简化的配对检测
+                if '_1.' in file_name or '_R1.' in file_name:
+                    sample_id = file_name.split('_')[0]
+                    if sample_id not in paired_files:
+                        paired_files[sample_id] = {}
+                    paired_files[sample_id]['R1'] = file_path
+                elif '_2.' in file_name or '_R2.' in file_name:
+                    sample_id = file_name.split('_')[0] 
+                    if sample_id not in paired_files:
+                        paired_files[sample_id] = {}
+                    paired_files[sample_id]['R2'] = file_path
+                else:
+                    single_files.append(file_path)
+            
+            summary = [
+                f"✅ 检测到 {len(found_files)} 个FASTQ文件",
+                f"   - 双端文件：{len(paired_files)} 对样本",
+                f"   - 单端文件：{len(single_files)} 个",
+                f"   - 建议配置：使用本地FASTQ文件"
+            ]
+            
+            return {
+                "data": {
+                    "found": True,
+                    "paired_files": paired_files,
+                    "single_files": single_files,
+                    "total_files": len(found_files),
+                    "recommended_path": search_paths[0] if os.path.exists(search_paths[0]) else None
+                },
+                "summary": summary
+            }
+        else:
+            summary = [
+                "❌ 未检测到本地FASTQ文件",
+                "   - 搜索路径：" + ", ".join(search_paths),
+                "   - 建议配置：需要提供SRR ID或上传FASTQ文件"
+            ]
+            
+            return {
+                "data": {"found": False},
+                "summary": summary
+            }
+            
+    except Exception as e:
+        return {
+            "data": {"found": False, "error": str(e)},
+            "summary": [f"❌ FASTQ文件检测失败：{str(e)}"]
+        }
+
+def _detect_local_genome_files() -> Dict[str, Any]:
+    """检测本地基因组文件"""
+    try:
+        # 读取基因组配置
+        config_path = "config/genomes.json"
+        if not os.path.exists(config_path):
+            return {
+                "data": {"found": False},
+                "summary": ["❌ 基因组配置文件不存在"]
+            }
+        
+        with open(config_path, 'r', encoding='utf-8') as f:
+            genomes_config = json.load(f)
+        
+        available_genomes = []
+        ready_genomes = []
+        
+        for name, info in genomes_config.items():
+            fasta_path = info.get('fasta', '')
+            gtf_path = info.get('gtf', '')
+            
+            fasta_exists = os.path.exists(fasta_path) if fasta_path else False
+            gtf_exists = os.path.exists(gtf_path) if gtf_path else False
+            
+            available_genomes.append(name)
+            
+            if fasta_exists and gtf_exists:
+                ready_genomes.append({
+                    "name": name,
+                    "fasta": fasta_path,
+                    "gtf": gtf_path,
+                    "species": info.get('species', 'unknown')
+                })
+        
+        if ready_genomes:
+            summary = [
+                f"✅ 检测到 {len(ready_genomes)} 个可用基因组",
+                f"   - 推荐使用：{ready_genomes[0]['name']} ({ready_genomes[0]['species']})",
+                f"   - 其他可选：{', '.join([g['name'] for g in ready_genomes[1:]])}" if len(ready_genomes) > 1 else ""
+            ]
+            summary = [s for s in summary if s]  # 移除空字符串
+            
+            return {
+                "data": {
+                    "found": True,
+                    "ready_genomes": ready_genomes,
+                    "total_available": len(available_genomes),
+                    "recommended": ready_genomes[0]
+                },
+                "summary": summary
+            }
+        else:
+            summary = [
+                f"⚠️ 配置中有 {len(available_genomes)} 个基因组，但文件未下载",
+                f"   - 可用基因组：{', '.join(available_genomes)}",
+                "   - 建议配置：需要下载基因组文件"
+            ]
+            
+            return {
+                "data": {
+                    "found": False,
+                    "available_genomes": list(genomes_config.keys()),
+                    "total_available": len(available_genomes)
+                },
+                "summary": summary
+            }
+            
+    except Exception as e:
+        return {
+            "data": {"found": False, "error": str(e)},
+            "summary": [f"❌ 基因组文件检测失败：{str(e)}"]
+        }
+
+def _generate_recommended_config(fastq_data: Dict, genome_data: Dict, analysis_type: str) -> Dict[str, Any]:
+    """生成推荐的nextflow配置"""
+    try:
+        config = {
+            "data": "./data",
+            "run_fastp": True,
+            "run_star_align": True,
+            "run_featurecounts": True,
+            "run_build_star_index": True,
+            "has_local_files": False
+        }
+        
+        summary = []
+        
+        # 配置FASTQ文件
+        if fastq_data.get("found"):
+            if fastq_data.get("recommended_path"):
+                config["local_fastq_files"] = fastq_data["recommended_path"] + "/*.fastq*"
+                config["run_download_srr"] = False
+                summary.append("✅ 配置使用本地FASTQ文件")
+                config["has_local_files"] = True
+            else:
+                summary.append("⚠️ 检测到FASTQ文件但路径不明确")
+        else:
+            config["run_download_srr"] = True
+            config["srr_ids"] = ""  # 需要用户提供
+            summary.append("📥 配置为下载SRR数据（需要用户提供SRR ID）")
+        
+        # 配置基因组文件
+        if genome_data.get("found") and genome_data.get("recommended"):
+            recommended = genome_data["recommended"]
+            config["local_genome_path"] = recommended["fasta"]
+            config["local_gtf_path"] = recommended["gtf"]
+            config["run_download_genome"] = False
+            config["genome_version"] = recommended["name"]
+            summary.append(f"✅ 配置使用本地基因组：{recommended['name']}")
+            config["has_local_files"] = True
+        else:
+            config["run_download_genome"] = True
+            config["genome_version"] = "hg38"  # 默认
+            summary.append("📥 配置为下载基因组文件（默认hg38）")
+        
+        # 根据分析类型调整
+        if analysis_type == "minimal":
+            config["run_fastp"] = False
+            summary.append("🔧 最小模式：跳过质量控制")
+        elif analysis_type == "comprehensive":
+            config["run_multiqc"] = True
+            summary.append("🔧 全面模式：启用MultiQC报告")
+        
+        return {
+            "config": config,
+            "summary": summary
+        }
+        
+    except Exception as e:
+        return {
+            "config": {},
+            "summary": [f"❌ 配置生成失败：{str(e)}"]
+        }
+
+def _generate_task_steps(config: Dict, analysis_type: str) -> List[str]:
+    """生成任务步骤列表"""
+    try:
+        steps = []
+        step_num = 1
+        
+        # 数据准备步骤
+        if config.get("run_download_srr"):
+            steps.append(f"{step_num}. 📥 下载SRR数据文件")
+            step_num += 1
+        
+        if config.get("run_download_genome"):
+            steps.append(f"{step_num}. 📥 下载基因组参考文件")
+            step_num += 1
+        
+        # 索引构建
+        if config.get("run_build_star_index"):
+            steps.append(f"{step_num}. 🔨 构建STAR基因组索引")
+            step_num += 1
+        
+        # 数据处理步骤
+        if config.get("run_fastp"):
+            steps.append(f"{step_num}. 🧹 质量控制和数据清理 (FastP)")
+            step_num += 1
+        
+        if config.get("run_star_align"):
+            steps.append(f"{step_num}. 🎯 序列比对到参考基因组 (STAR)")
+            step_num += 1
+        
+        if config.get("run_featurecounts"):
+            steps.append(f"{step_num}. 📊 基因表达定量 (featureCounts)")
+            step_num += 1
+        
+        # 额外步骤
+        if config.get("run_multiqc"):
+            steps.append(f"{step_num}. 📋 生成综合质量报告 (MultiQC)")
+            step_num += 1
+        
+        steps.append(f"{step_num}. 📁 整理输出结果和日志文件")
+        
+        return steps
+        
+    except Exception as e:
+        return [f"❌ 任务步骤生成失败：{str(e)}"]
+
+def _format_config_summary(config: Dict) -> List[str]:
+    """格式化配置摘要"""
+    try:
+        summary = []
+        
+        # 数据源
+        summary.append("**数据源配置：**")
+        if config.get("local_fastq_files"):
+            summary.append(f"  📁 FASTQ文件：{config['local_fastq_files']}")
+        elif config.get("srr_ids"):
+            summary.append(f"  📥 SRR下载：{config['srr_ids']}")
+        else:
+            summary.append("  ⚠️ FASTQ：需要配置")
+        
+        # 基因组
+        if config.get("local_genome_path"):
+            summary.append(f"  🧬 基因组：{config.get('genome_version', 'local')}")
+        else:
+            summary.append(f"  📥 基因组下载：{config.get('genome_version', 'hg38')}")
+        
+        # 分析步骤
+        summary.append("\n**分析流程：**")
+        processes = []
+        if config.get("run_fastp"):
+            processes.append("质量控制")
+        if config.get("run_star_align"):
+            processes.append("序列比对")
+        if config.get("run_featurecounts"):
+            processes.append("表达定量")
+        
+        summary.append(f"  🔬 启用流程：{' → '.join(processes)}")
+        summary.append(f"  📂 输出目录：{config.get('data', './data')}")
+        
+        return summary
+        
+    except Exception as e:
+        return [f"❌ 配置摘要生成失败：{str(e)}"]

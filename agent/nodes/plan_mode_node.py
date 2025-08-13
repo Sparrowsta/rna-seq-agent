@@ -1,10 +1,12 @@
 """
 Plan Mode节点 - 制定分析计划和修改nextflow参数
 遵循单一职责原则：专门处理plan模式下的计划制定和参数配置
+采用JSON-first架构，与normal模式保持一致
 """
 
 import logging
-from typing import Dict, Any, List
+import json
+from typing import Dict, Any, List, Tuple
 from langchain_core.messages import HumanMessage, AIMessage
 from ..state import AgentState, update_state_mode, update_nextflow_config, add_plan_step
 from ..core import create_chain_for_mode, create_structured_chain_for_mode
@@ -19,11 +21,99 @@ class PlanModeHandler:
     Plan模式处理器
     
     遵循单一职责原则：专门处理plan模式的业务逻辑
+    采用JSON-first架构，与normal模式保持一致
     """
     
     def __init__(self):
-        self.chain = create_chain_for_mode("plan")
+        # 使用结构化链用于JSON格式输出
+        self.chain = create_structured_chain_for_mode("plan")  
         self.structured_chain = create_structured_chain_for_mode("plan")
+    
+    def _parse_json_response(self, response) -> Tuple[AIMessage, List[Dict[str, Any]]]:
+        """
+        解析LLM的JSON响应
+        
+        返回: (AIMessage, tool_calls列表)
+        """
+        try:
+            if hasattr(response, 'content') and response.content:
+                # 清理响应内容
+                content = _clean_unicode_content(response.content)
+                logger.info(f"Plan模式LLM响应内容: {repr(content[:300])}...")
+                
+                # 移除代码块标记
+                if "```json" in content:
+                    # 提取JSON部分
+                    start = content.find("```json") + 7
+                    end = content.find("```", start)
+                    if end != -1:
+                        content = content[start:end].strip()
+                    else:
+                        content = content[start:].strip()
+                elif content.startswith("```") and content.endswith("```"):
+                    content = content[3:-3].strip()
+                
+                logger.info(f"Plan模式清理后内容: {repr(content[:300])}...")
+                
+                # 尝试解析JSON
+                try:
+                    json_data = json.loads(content)
+                    logger.info(f"Plan模式JSON解析成功: {json_data.keys()}")
+                    
+                    # 提取用户消息和计划信息
+                    user_message = json_data.get("response", content)
+                    plan_steps = json_data.get("plan_steps", [])
+                    config_changes = json_data.get("config_changes", {})
+                    
+                    # 构建详细响应
+                    detailed_response = user_message
+                    if plan_steps:
+                        detailed_response += "\n\n📋 **分析计划步骤：**\n"
+                        detailed_response += "\n".join([f"  {step}" for step in plan_steps])
+                    
+                    if config_changes:
+                        detailed_response += "\n\n⚙️ **配置更新：**\n"
+                        for key, value in config_changes.items():
+                            detailed_response += f"  - {key}: {value}\n"
+                    
+                    # 提取工具调用
+                    tool_calls = json_data.get("tool_calls", [])
+                    logger.info(f"Plan模式提取到 {len(tool_calls)} 个工具调用: {tool_calls}")
+                    
+                    # 创建AIMessage
+                    ai_message = AIMessage(content=detailed_response)
+                    
+                    # 如果有工具调用，设置为消息的tool_calls属性
+                    if tool_calls:
+                        # 转换为LangChain期望的格式
+                        langchain_tool_calls = []
+                        for i, tool_call in enumerate(tool_calls):
+                            tool_call_obj = {
+                                "name": tool_call.get("tool_name"),
+                                "args": tool_call.get("parameters", {}),
+                                "id": f"call_plan_{i}",
+                                "type": "tool_call"
+                            }
+                            langchain_tool_calls.append(tool_call_obj)
+                        
+                        # 设置tool_calls属性
+                        ai_message.tool_calls = langchain_tool_calls
+                        logger.info(f"Plan模式成功设置tool_calls属性: {langchain_tool_calls}")
+                    
+                    return ai_message, tool_calls
+                    
+                except json.JSONDecodeError as e:
+                    # 如果不是有效JSON，直接返回原内容
+                    logger.warning(f"Plan模式LLM输出不是有效JSON，使用原始内容。错误: {str(e)}")
+                    return AIMessage(content=content), []
+            
+            return AIMessage(content="响应为空"), []
+            
+        except Exception as e:
+            logger.error(f"Plan模式解析JSON响应时出错: {str(e)}")
+            import traceback
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
+            return AIMessage(content="解析响应时出现错误"), []
     
     def analyze_requirements(self, state: AgentState) -> Dict[str, Any]:
         """
