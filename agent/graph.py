@@ -329,7 +329,8 @@ class AgentGraphBuilder:
                 "call_tools": "call_tools",
                 "user_input": "user_input",
                 "normal_mode_node": "normal_mode_node",
-                "plan_mode_node": "plan_mode_node"
+                "plan_mode_node": "plan_mode_node",
+                "execute_mode_node": "execute_mode_node"
             }
         )
         

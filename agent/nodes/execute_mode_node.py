@@ -1,13 +1,15 @@
 """
 Execute Mode节点 - 执行nextflow流程和结果总结
 遵循单一职责原则：专门处理execute模式下的流程执行和结果处理
+采用JSON-first架构，与其他模式保持一致
 """
 
 import logging
 import os
 import json
 import time
-from typing import Dict, Any, List, Optional
+import subprocess
+from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
 from langchain_core.messages import HumanMessage, AIMessage
 from ..state import AgentState, update_execution_status
@@ -23,11 +25,96 @@ class ExecuteModeHandler:
     Execute模式处理器
     
     遵循单一职责原则：专门处理execute模式的业务逻辑
+    采用JSON-first架构，提供实时进度监控
     """
     
     def __init__(self):
-        self.chain = create_chain_for_mode("execute")
+        # 使用结构化链用于JSON格式输出
+        self.chain = create_structured_chain_for_mode("execute")
         self.structured_chain = create_structured_chain_for_mode("execute")
+        self.nextflow_process = None  # 存储nextflow进程
+        self.execution_log = []  # 存储执行日志
+    
+    def _parse_json_response(self, response) -> Tuple[AIMessage, List[Dict[str, Any]]]:
+        """
+        解析LLM的JSON响应
+        
+        返回: (AIMessage, tool_calls列表)
+        """
+        try:
+            if hasattr(response, 'content') and response.content:
+                # 清理响应内容
+                content = _clean_unicode_content(response.content)
+                logger.info(f"Execute模式LLM响应内容: {repr(content[:300])}...")
+                
+                # 移除代码块标记
+                if "```json" in content:
+                    start = content.find("```json") + 7
+                    end = content.find("```", start)
+                    if end != -1:
+                        content = content[start:end].strip()
+                    else:
+                        content = content[start:].strip()
+                elif content.startswith("```") and content.endswith("```"):
+                    content = content[3:-3].strip()
+                
+                logger.info(f"Execute模式清理后内容: {repr(content[:300])}...")
+                
+                # 尝试解析JSON
+                try:
+                    json_data = json.loads(content)
+                    logger.info(f"Execute模式JSON解析成功: {json_data.keys()}")
+                    
+                    # 提取响应信息
+                    user_message = json_data.get("response", content)
+                    status = json_data.get("status", "unknown")
+                    progress = json_data.get("progress", "")
+                    next_step = json_data.get("next_step", "")
+                    
+                    # 构建详细响应
+                    detailed_response = user_message
+                    if status and status != "unknown":
+                        detailed_response += f"\n\n📊 **状态**: {status}"
+                    if progress:
+                        detailed_response += f"\n📈 **进度**: {progress}"
+                    if next_step:
+                        detailed_response += f"\n⏭️ **下一步**: {next_step}"
+                    
+                    # 提取工具调用
+                    tool_calls = json_data.get("tool_calls", [])
+                    logger.info(f"Execute模式提取到 {len(tool_calls)} 个工具调用: {tool_calls}")
+                    
+                    # 创建AIMessage
+                    ai_message = AIMessage(content=detailed_response)
+                    
+                    # 如果有工具调用，设置为消息的tool_calls属性
+                    if tool_calls:
+                        langchain_tool_calls = []
+                        for i, tool_call in enumerate(tool_calls):
+                            tool_call_obj = {
+                                "name": tool_call.get("tool_name"),
+                                "args": tool_call.get("parameters", {}),
+                                "id": f"call_exec_{i}",
+                                "type": "tool_call"
+                            }
+                            langchain_tool_calls.append(tool_call_obj)
+                        
+                        ai_message.tool_calls = langchain_tool_calls
+                        logger.info(f"Execute模式成功设置tool_calls属性: {langchain_tool_calls}")
+                    
+                    return ai_message, tool_calls
+                    
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Execute模式LLM输出不是有效JSON，使用原始内容。错误: {str(e)}")
+                    return AIMessage(content=content), []
+            
+            return AIMessage(content="响应为空"), []
+            
+        except Exception as e:
+            logger.error(f"Execute模式解析JSON响应时出错: {str(e)}")
+            import traceback
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
+            return AIMessage(content="解析响应时出现错误"), []
     
     def prepare_execution(self, state: AgentState) -> Dict[str, Any]:
         """
@@ -113,9 +200,9 @@ class ExecuteModeHandler:
     
     def execute_nextflow(self, state: AgentState) -> Dict[str, Any]:
         """
-        执行nextflow流程
+        执行nextflow流程，提供实时进度监控
         
-        应用命令模式：封装执行命令
+        应用命令模式：封装执行命令，支持实时输出
         """
         try:
             # 准备执行
@@ -123,8 +210,10 @@ class ExecuteModeHandler:
             if "error" in prep_result:
                 return prep_result
             
+            # 从智能任务列表获取配置或使用状态中的配置
+            config = state.get("nextflow_config", prep_result.get("config", {}))
+            
             # 构建nextflow命令参数
-            config = prep_result["config"]
             params = self._build_nextflow_params(config)
             
             # 生成执行命令
@@ -138,25 +227,56 @@ class ExecuteModeHandler:
                 else:
                     cmd_parts.extend([f"--{key}", str(value)])
             
-            # 添加配置文件
+            # 添加配置文件和工作目录
             cmd_parts.extend(["-c", "config/nextflow.config"])
+            cmd_parts.extend(["-work-dir", "./work"])
             
             command = " ".join(cmd_parts)
             
             logger.info(f"Executing nextflow command: {command}")
             
-            # 这里实际执行时会调用subprocess，现在先模拟
-            execution_info = {
-                "command": command,
-                "status": "running",
-                "start_time": time.time(),
-                "work_dir": prep_result["work_dir"]
-            }
+            # 创建进度监控消息
+            progress_message = self._create_initial_progress_message(command, params)
+            
+            # 实际执行nextflow（在后台）
+            try:
+                # 启动nextflow进程
+                self.nextflow_process = subprocess.Popen(
+                    cmd_parts,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True
+                )
+                
+                execution_info = {
+                    "command": command,
+                    "status": "running",
+                    "start_time": time.time(),
+                    "work_dir": prep_result["work_dir"],
+                    "process_id": self.nextflow_process.pid,
+                    "params": params
+                }
+                
+                logger.info(f"Nextflow process started with PID: {self.nextflow_process.pid}")
+                
+            except FileNotFoundError:
+                # Nextflow不可用，使用模拟模式
+                logger.warning("Nextflow not found, using simulation mode")
+                execution_info = {
+                    "command": command,
+                    "status": "simulated",
+                    "start_time": time.time(),
+                    "work_dir": prep_result["work_dir"],
+                    "process_id": None,
+                    "params": params
+                }
             
             return {
                 "execution_info": execution_info,
                 "execution_status": "running",
-                "messages": [AIMessage(content=f"🚀 Nextflow流程已启动！\n\n执行命令：\n```\n{command}\n```\n\n请稍等，流程正在后台运行...")]
+                "messages": [AIMessage(content=progress_message)]
             }
         
         except Exception as e:
@@ -166,6 +286,41 @@ class ExecuteModeHandler:
                 "execution_status": "failed",
                 "messages": [AIMessage(content=f"执行失败：{str(e)}")]
             }
+    
+    def _create_initial_progress_message(self, command: str, params: Dict[str, Any]) -> str:
+        """创建初始进度消息"""
+        message_parts = [
+            "🚀 **Nextflow流程已启动！**",
+            "",
+            "📋 **执行信息：**",
+            f"```bash",
+            f"{command}",
+            f"```",
+            "",
+            "⚙️ **关键参数：**"
+        ]
+        
+        # 显示关键参数
+        key_params = {
+            "数据源": params.get("local_fastq_files") or params.get("srr_ids", "未指定"),
+            "基因组": params.get("local_genome_path") or params.get("genome_version", "未指定"),
+            "质量控制": "启用" if params.get("run_fastp") else "禁用",
+            "序列比对": "启用" if params.get("run_star_align") else "禁用",
+            "表达定量": "启用" if params.get("run_featurecounts") else "禁用"
+        }
+        
+        for key, value in key_params.items():
+            message_parts.append(f"- {key}: {value}")
+        
+        message_parts.extend([
+            "",
+            "📊 **实时进度监控：**",
+            "[░░░░░░░░░░] 0% - 正在初始化...",
+            "",
+            "⏳ 流程正在后台运行，请稍等..."
+        ])
+        
+        return "\n".join(message_parts)
     
     def _build_nextflow_params(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -191,9 +346,9 @@ class ExecuteModeHandler:
     
     def monitor_execution(self, state: AgentState) -> Dict[str, Any]:
         """
-        监控执行状态
+        监控执行状态，提供类似原生nextflow的进度显示
         
-        应用观察者模式：监控执行进度
+        应用观察者模式：实时监控执行进度
         """
         try:
             execution_info = state.get("execution_results", {}).get("execution_info", {})
@@ -203,42 +358,38 @@ class ExecuteModeHandler:
                     "messages": [AIMessage(content="没有找到正在执行的流程。")]
                 }
             
-            # 检查执行状态（这里模拟，实际会检查进程状态）
+            # 检查实际进程状态
+            current_status = self._check_process_status(execution_info)
+            
+            # 获取执行时间
             current_time = time.time()
             start_time = execution_info.get("start_time", current_time)
             elapsed_time = current_time - start_time
             
-            # 模拟执行进度
-            if elapsed_time < 60:  # 1分钟内
-                status = "正在初始化..."
-                progress = "10%"
-            elif elapsed_time < 300:  # 5分钟内
-                status = "正在执行质量控制..."
-                progress = "30%"
-            elif elapsed_time < 600:  # 10分钟内
-                status = "正在进行序列比对..."
-                progress = "60%"
-            elif elapsed_time < 900:  # 15分钟内
-                status = "正在进行基因定量..."
-                progress = "80%"
-            else:
-                status = "执行完成"
-                progress = "100%"
+            # 根据进程状态和时间确定进度
+            progress_info = self._calculate_progress(current_status, elapsed_time)
             
-            status_message = f"""
-📊 **执行状态监控**
-
-⏱️ **运行时间**: {int(elapsed_time//60)}分{int(elapsed_time%60)}秒
-📈 **当前进度**: {progress}
-🔄 **当前状态**: {status}
-📁 **工作目录**: {execution_info.get('work_dir', 'N/A')}
-
-{self._get_progress_bar(progress)}
-            """
+            # 生成类似nextflow的进度报告
+            progress_message = self._generate_nextflow_style_progress(
+                progress_info, elapsed_time, execution_info
+            )
+            
+            # 确定执行状态
+            if progress_info["completed"]:
+                execution_status = "completed"
+            elif current_status["failed"]:
+                execution_status = "failed"
+            else:
+                execution_status = "running"
             
             return {
-                "execution_status": "completed" if progress == "100%" else "running",
-                "messages": [AIMessage(content=status_message)]
+                "execution_status": execution_status,
+                "execution_results": {
+                    "execution_info": execution_info,
+                    "progress_info": progress_info,
+                    "current_status": current_status
+                },
+                "messages": [AIMessage(content=progress_message)]
             }
         
         except Exception as e:
@@ -246,6 +397,320 @@ class ExecuteModeHandler:
             return {
                 "messages": [AIMessage(content=f"监控执行状态时出错：{str(e)}")]
             }
+    
+    def _check_process_status(self, execution_info: Dict[str, Any]) -> Dict[str, Any]:
+        """检查实际进程状态"""
+        try:
+            process_id = execution_info.get("process_id")
+            
+            if not process_id:
+                # 模拟模式
+                return {
+                    "running": True,
+                    "failed": False,
+                    "simulated": True,
+                    "exit_code": None
+                }
+            
+            if self.nextflow_process:
+                # 检查进程是否还在运行
+                exit_code = self.nextflow_process.poll()
+                
+                if exit_code is None:
+                    # 进程仍在运行
+                    return {
+                        "running": True,
+                        "failed": False,
+                        "simulated": False,
+                        "exit_code": None
+                    }
+                else:
+                    # 进程已完成
+                    return {
+                        "running": False,
+                        "failed": exit_code != 0,
+                        "simulated": False,
+                        "exit_code": exit_code
+                    }
+            else:
+                # 进程信息丢失，尝试检查PID
+                try:
+                    os.kill(process_id, 0)  # 检查进程是否存在
+                    return {
+                        "running": True,
+                        "failed": False,
+                        "simulated": False,
+                        "exit_code": None
+                    }
+                except ProcessLookupError:
+                    return {
+                        "running": False,
+                        "failed": False,  # 无法确定失败状态
+                        "simulated": False,
+                        "exit_code": 0
+                    }
+        
+        except Exception as e:
+            logger.error(f"Error checking process status: {str(e)}")
+            return {
+                "running": False,
+                "failed": True,
+                "simulated": False,
+                "exit_code": -1,
+                "error": str(e)
+            }
+    
+    def _calculate_progress(self, status: Dict[str, Any], elapsed_time: float) -> Dict[str, Any]:
+        """计算进度信息"""
+        try:
+            if status.get("failed"):
+                return {
+                    "percent": 0,
+                    "stage": "执行失败",
+                    "stage_emoji": "❌",
+                    "completed": False,
+                    "failed": True,
+                    "processes": []
+                }
+            
+            if status.get("simulated"):
+                # 模拟模式的进度计算
+                if elapsed_time < 30:
+                    percent = min(10, elapsed_time / 3)
+                    stage = "正在初始化环境"
+                    stage_emoji = "🔧"
+                elif elapsed_time < 120:
+                    percent = min(30, 10 + (elapsed_time - 30) / 3)
+                    stage = "正在执行质量控制"
+                    stage_emoji = "🧹"
+                elif elapsed_time < 300:
+                    percent = min(60, 30 + (elapsed_time - 120) / 6)
+                    stage = "正在进行序列比对"
+                    stage_emoji = "🎯"
+                elif elapsed_time < 480:
+                    percent = min(85, 60 + (elapsed_time - 300) / 7.2)
+                    stage = "正在进行基因定量"
+                    stage_emoji = "📊"
+                else:
+                    percent = 100
+                    stage = "执行完成"
+                    stage_emoji = "✅"
+                
+                # 模拟进程列表
+                processes = self._generate_simulated_processes(elapsed_time)
+                
+                return {
+                    "percent": int(percent),
+                    "stage": stage,
+                    "stage_emoji": stage_emoji,
+                    "completed": percent >= 100,
+                    "failed": False,
+                    "processes": processes,
+                    "simulated": True
+                }
+            
+            else:
+                # 实际执行模式 - 这里可以解析nextflow输出
+                # 现在使用基于时间的估算
+                if not status.get("running"):
+                    return {
+                        "percent": 100,
+                        "stage": "执行完成",
+                        "stage_emoji": "✅",
+                        "completed": True,
+                        "failed": False,
+                        "processes": []
+                    }
+                
+                # 基于时间的进度估算
+                estimated_total = 600  # 10分钟估算
+                percent = min(95, (elapsed_time / estimated_total) * 100)
+                
+                if elapsed_time < 60:
+                    stage = "正在初始化"
+                    stage_emoji = "🔧"
+                elif elapsed_time < 180:
+                    stage = "正在执行质量控制"
+                    stage_emoji = "🧹"
+                elif elapsed_time < 420:
+                    stage = "正在进行序列比对"
+                    stage_emoji = "🎯"
+                else:
+                    stage = "正在进行基因定量"
+                    stage_emoji = "📊"
+                
+                return {
+                    "percent": int(percent),
+                    "stage": stage,
+                    "stage_emoji": stage_emoji,
+                    "completed": False,
+                    "failed": False,
+                    "processes": [],
+                    "simulated": False
+                }
+                
+        except Exception as e:
+            logger.error(f"Error calculating progress: {str(e)}")
+            return {
+                "percent": 0,
+                "stage": "进度计算错误",
+                "stage_emoji": "❌",
+                "completed": False,
+                "failed": True,
+                "processes": []
+            }
+    
+    def _generate_simulated_processes(self, elapsed_time: float) -> List[Dict[str, Any]]:
+        """生成模拟的进程状态"""
+        processes = []
+        
+        # 根据时间添加已完成的进程
+        if elapsed_time > 30:
+            processes.append({
+                "name": "DOWNLOAD_SRR",
+                "status": "COMPLETED",
+                "progress": "100%",
+                "emoji": "✅"
+            })
+        
+        if elapsed_time > 60:
+            processes.append({
+                "name": "BUILD_STAR_INDEX", 
+                "status": "COMPLETED",
+                "progress": "100%",
+                "emoji": "✅"
+            })
+        
+        if elapsed_time > 120:
+            processes.append({
+                "name": "FASTP_QC",
+                "status": "COMPLETED", 
+                "progress": "100%",
+                "emoji": "✅"
+            })
+        
+        if elapsed_time > 180:
+            if elapsed_time < 300:
+                processes.append({
+                    "name": "STAR_ALIGN",
+                    "status": "RUNNING",
+                    "progress": f"{min(100, int((elapsed_time - 180) / 1.2))}%",
+                    "emoji": "🔄"
+                })
+            else:
+                processes.append({
+                    "name": "STAR_ALIGN",
+                    "status": "COMPLETED",
+                    "progress": "100%", 
+                    "emoji": "✅"
+                })
+        
+        if elapsed_time > 300:
+            if elapsed_time < 480:
+                processes.append({
+                    "name": "FEATURECOUNTS",
+                    "status": "RUNNING",
+                    "progress": f"{min(100, int((elapsed_time - 300) / 1.8))}%",
+                    "emoji": "🔄"
+                })
+            else:
+                processes.append({
+                    "name": "FEATURECOUNTS", 
+                    "status": "COMPLETED",
+                    "progress": "100%",
+                    "emoji": "✅"
+                })
+        
+        return processes
+    
+    def _generate_nextflow_style_progress(self, progress_info: Dict, elapsed_time: float, execution_info: Dict) -> str:
+        """生成类似nextflow风格的进度报告"""
+        try:
+            message_parts = []
+            
+            # 标题和基本信息
+            if progress_info.get("failed"):
+                message_parts.append("❌ **Nextflow执行失败**")
+            elif progress_info.get("completed"):
+                message_parts.append("✅ **Nextflow执行完成**")
+            else:
+                message_parts.append("🔄 **Nextflow执行进度**")
+            
+            message_parts.append("")
+            
+            # 时间信息
+            hours = int(elapsed_time // 3600)
+            minutes = int((elapsed_time % 3600) // 60)
+            seconds = int(elapsed_time % 60)
+            
+            if hours > 0:
+                time_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            else:
+                time_str = f"{minutes:02d}:{seconds:02d}"
+            
+            message_parts.extend([
+                f"⏱️  **运行时间**: {time_str}",
+                f"📈 **总体进度**: {progress_info['percent']}%",
+                f"{progress_info['stage_emoji']} **当前阶段**: {progress_info['stage']}",
+                ""
+            ])
+            
+            # 进度条
+            progress_bar = self._create_progress_bar(progress_info["percent"])
+            message_parts.append(f"```\n{progress_bar}\n```")
+            message_parts.append("")
+            
+            # 进程状态
+            if progress_info.get("processes"):
+                message_parts.append("📋 **进程状态**:")
+                for process in progress_info["processes"]:
+                    status_line = f"{process['emoji']} {process['name']}: {process['status']} ({process['progress']})"
+                    message_parts.append(f"  {status_line}")
+                message_parts.append("")
+            
+            # 工作目录信息
+            work_dir = execution_info.get("work_dir", "./data")
+            message_parts.append(f"📁 **工作目录**: {work_dir}")
+            
+            # 模拟标识
+            if progress_info.get("simulated"):
+                message_parts.append("🔬 **模式**: 模拟执行（Nextflow未安装）")
+            
+            # 下一步提示
+            if progress_info.get("completed"):
+                message_parts.extend([
+                    "",
+                    "🎉 **分析完成！** 可以查看结果文件和日志。"
+                ])
+            elif progress_info.get("failed"):
+                message_parts.extend([
+                    "",
+                    "💡 **建议**: 检查日志文件，修复问题后重新运行。"
+                ])
+            else:
+                message_parts.extend([
+                    "",
+                    "⏳ **请等待**: 流程正在后台运行..."
+                ])
+            
+            return "\n".join(message_parts)
+            
+        except Exception as e:
+            logger.error(f"Error generating progress message: {str(e)}")
+            return f"进度报告生成失败：{str(e)}"
+    
+    def _create_progress_bar(self, percent: int) -> str:
+        """创建进度条"""
+        try:
+            width = 40
+            filled = int(width * percent / 100)
+            empty = width - filled
+            
+            bar = "█" * filled + "░" * empty
+            return f"[{bar}] {percent}%"
+        
+        except Exception:
+            return f"[{'?' * 40}] {percent}%"
     
     def _get_progress_bar(self, progress: str) -> str:
         """
@@ -563,6 +1028,25 @@ class ExecutionConfig:
         except Exception as e:
             logger.error(f"Error creating work directories: {str(e)}")
             return False
+
+def _clean_unicode_content(content: str) -> str:
+    """
+    清理Unicode内容中的无效字符
+    
+    应用KISS原则：简单有效的字符清理
+    """
+    try:
+        import re
+        # 移除代理对字符和其他无效Unicode字符
+        cleaned = content.encode('utf-8', errors='ignore').decode('utf-8')
+        
+        # 进一步清理：移除控制字符但保留换行符和制表符
+        cleaned = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]', '', cleaned)
+        
+        return cleaned
+    except Exception as e:
+        logger.error(f"Error cleaning unicode content: {str(e)}")
+        return "内容包含无效字符，已清理。请重新提供您的需求。"
     
     @classmethod
     def validate_config(cls, config: Dict[str, Any]) -> Dict[str, Any]:

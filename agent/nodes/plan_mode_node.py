@@ -213,9 +213,9 @@ class PlanModeHandler:
     
     def process_plan_request(self, state: AgentState) -> Dict[str, Any]:
         """
-        处理计划制定请求
+        处理计划制定请求，使用智能任务列表生成
         
-        应用组合模式：组合多个处理步骤
+        应用JSON-first架构：结构化的计划制定流程
         """
         try:
             # 确保当前处于plan模式
@@ -223,56 +223,43 @@ class PlanModeHandler:
                 logger.warning(f"Expected plan mode, but got {state.get('mode')}")
                 state = update_state_mode(state, "plan")
             
-            # 分析需求
-            requirements = self.analyze_requirements(state)
-            if "error" in requirements:
-                return {"messages": [AIMessage(content=f"分析需求时出错：{requirements['error']}")]}
+            # 获取最后一条用户消息
+            user_input = ""
+            if state.get("messages"):
+                last_message = state["messages"][-1]
+                if hasattr(last_message, "content"):
+                    user_input = last_message.content
             
-            # 创建分析计划
-            plan_steps = self.create_analysis_plan(state, requirements)
-            
-            # 配置nextflow参数
-            config_updates = self.configure_nextflow_params(state, plan_steps)
-            
-            # 调用LLM生成详细的计划说明
-            plan_context = {
-                "requirements": requirements,
-                "plan_steps": plan_steps,
-                "config_updates": config_updates
-            }
-            
-            # 创建包含计划信息的消息
-            plan_message = HumanMessage(content=f"""
-请基于以下信息制定详细的RNA-seq分析计划：
+            # 构建计划请求消息
+            plan_request = f"""
+用户请求制定RNA-seq分析计划。用户输入：{user_input}
 
-需求分析：{requirements}
-计划步骤：{plan_steps}
-配置更新：{config_updates}
+请按照以下步骤制定分析计划：
+1. 首先调用 generate_analysis_task_list 工具自动检测本地文件并生成推荐配置
+2. 基于检测结果制定详细的分析计划
+3. 向用户展示完整的执行流程
+4. 询问用户是否确认或需要修改
 
-请提供详细的计划说明和下一步建议。
-            """)
+重要：必须先调用 generate_analysis_task_list 工具获取智能配置建议。
+            """
             
-            # 临时添加计划消息到状态中
-            temp_state = state.copy()
-            temp_state["messages"] = state["messages"] + [plan_message]
+            # 调用LLM处理计划请求
+            response = self.chain.invoke({
+                "messages": state["messages"] + [HumanMessage(content=plan_request)]
+            })
             
-            response = self.chain.invoke({"messages": temp_state["messages"]})
+            # 解析JSON响应并处理工具调用
+            parsed_response, tool_calls = self._parse_json_response(response)
             
-            # 清理响应内容中的无效字符
-            if hasattr(response, 'content') and response.content:
-                cleaned_content = self._clean_unicode_content(response.content)
-                response.content = cleaned_content
+            logger.info("Plan request processed successfully with JSON response")
+            logger.info(f"Plan模式返回的消息tool_calls属性: {hasattr(parsed_response, 'tool_calls')} - {getattr(parsed_response, 'tool_calls', None)}")
             
-            # 更新状态
-            result = {
-                "messages": [response],
-                "plan": plan_steps,
-                "plan_status": "draft",
-                "nextflow_config": {**state.get("nextflow_config", {}), **config_updates}
+            # 返回结果，包含解析后的响应
+            return {
+                "messages": [parsed_response],
+                "mode": "plan",
+                "plan_status": "draft"
             }
-            
-            logger.info("Plan request processed successfully")
-            return result
         
         except Exception as e:
             logger.error(f"Error processing plan request: {str(e)}")
@@ -283,21 +270,29 @@ class PlanModeHandler:
     
     def handle_plan_modification(self, state: AgentState) -> Dict[str, Any]:
         """
-        处理计划修改请求
+        处理计划修改请求，使用JSON-first架构
         
         遵循开放封闭原则：易于扩展新的修改类型
         """
         try:
+            # 获取用户输入
+            user_input = ""
+            if state.get("messages"):
+                last_message = state["messages"][-1]
+                if hasattr(last_message, "content"):
+                    user_input = last_message.content
+            
             # 调用LLM处理修改请求
-            response = self.chain.invoke({"messages": state["messages"]})
+            response = self.chain.invoke({
+                "messages": state["messages"],
+                "input": user_input
+            })
             
-            # 清理响应内容中的无效字符
-            if hasattr(response, 'content') and response.content:
-                cleaned_content = self._clean_unicode_content(response.content)
-                response.content = cleaned_content
+            # 解析JSON响应
+            parsed_response, tool_calls = self._parse_json_response(response)
             
-            logger.info("Plan modification handled")
-            return {"messages": [response]}
+            logger.info("Plan modification handled with JSON response")
+            return {"messages": [parsed_response]}
         
         except Exception as e:
             logger.error(f"Error handling plan modification: {str(e)}")
@@ -306,45 +301,48 @@ class PlanModeHandler:
             )
             return {"messages": [error_message]}
     
-    def _clean_unicode_content(self, content: str) -> str:
-        """
-        清理Unicode内容中的无效字符
-        
-        应用KISS原则：简单有效的字符清理
-        """
-        try:
-            # 移除代理对字符和其他无效Unicode字符
-            cleaned = content.encode('utf-8', errors='ignore').decode('utf-8')
-            
-            # 进一步清理：移除控制字符但保留换行符和制表符
-            import re
-            cleaned = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]', '', cleaned)
-            
-            return cleaned
-        except Exception as e:
-            logger.warning(f"Error cleaning unicode content: {str(e)}")
-            return "内容包含无效字符，已清理。请重新提供您的需求。"
-    
     def handle_mode_switch_request(self, state: AgentState) -> Dict[str, Any]:
         """
-        处理模式切换请求
+        处理模式切换请求，支持特殊命令检测
         
         遵循单一职责原则：专门处理模式切换
         """
         try:
             # 检查最后一条消息是否包含模式切换工具调用
+            if not state.get("messages"):
+                return {}
+                
             last_message = state["messages"][-1]
             
+            # 检查工具调用（LLM调用的工具）
             if hasattr(last_message, "tool_calls") and last_message.tool_calls:
                 for tool_call in last_message.tool_calls:
                     if tool_call.get("name") == "switch_to_execute_mode":
-                        logger.info("Switching to execute mode requested")
-                        # 更新状态模式和计划状态
-                        return {
-                            "mode": "execute",
-                            "plan_status": "confirmed",
-                            "messages": [AIMessage(content="计划已确认，切换到执行模式...")]
-                        }
+                        logger.info("Switching to execute mode requested via tool call")
+                        # 保持完整状态，只更新模式
+                        result = dict(state)  # 复制现有状态
+                        result["mode"] = "execute"
+                        result["execution_status"] = "idle"  # 准备执行
+                        result["messages"] = state["messages"] + [
+                            AIMessage(content="🔄 计划已确认！正在切换到执行模式...")
+                        ]
+                        return result
+            
+            # 检查用户消息内容中的特殊命令
+            if hasattr(last_message, "content"):
+                content = last_message.content.strip()
+                execute_commands = ["/execute", "/开始执行", "/执行"]
+                
+                if any(cmd in content for cmd in execute_commands):
+                    logger.info(f"Execute command detected in user message: {content}")
+                    # 直接切换到执行模式
+                    result = dict(state)
+                    result["mode"] = "execute"
+                    result["execution_status"] = "idle"
+                    result["messages"] = state["messages"] + [
+                        AIMessage(content="🔄 检测到执行命令！正在切换到执行模式...")
+                    ]
+                    return result
             
             return {}
         
@@ -354,11 +352,11 @@ class PlanModeHandler:
 
 def plan_mode_node(state: AgentState) -> Dict[str, Any]:
     """
-    Plan模式主节点函数
+    Plan模式主节点函数，采用JSON-first架构
     
     应用策略模式：根据不同情况采用不同处理策略
     """
-    logger.info("Entering plan mode node")
+    logger.info("Entering plan mode node with JSON-first architecture")
     
     try:
         # 获取UI管理器
@@ -385,7 +383,7 @@ def plan_mode_node(state: AgentState) -> Dict[str, Any]:
         
         # 只有在没有计划或明确要求重新制定时才创建新计划
         if not current_plan and plan_status != "created":
-            logger.info("Creating new analysis plan")
+            logger.info("Creating new analysis plan using intelligent task list")
             ui_manager.show_info("正在制定RNA-seq分析计划...")
             result = handler.process_plan_request(state)
             # 标记计划已创建，避免重复制定
@@ -393,14 +391,11 @@ def plan_mode_node(state: AgentState) -> Dict[str, Any]:
             result["mode"] = "plan"  # 确保模式正确
             return result
         else:
-            logger.info("Plan already exists, providing plan summary and waiting for user input")
-            # 不再调用LLM，直接提供计划总结
-            summary = create_plan_summary(state)
-            return {
-                "messages": [summary],
-                "mode": "plan",
-                "plan_status": "ready"  # 标记为准备状态，等待用户确认或修改
-            }
+            logger.info("Plan already exists, handling user input with JSON architecture")
+            # 处理用户输入（修改计划或确认执行）
+            result = handler.handle_plan_modification(state)
+            result["mode"] = "plan"
+            return result
     
     except Exception as e:
         logger.error(f"Error in plan mode node: {str(e)}")
@@ -545,17 +540,21 @@ class PlanTemplate:
             "9. 生成综合分析报告"
         ]
 
-def get_plan_template(complexity: str = "standard") -> List[str]:
+def _clean_unicode_content(content: str) -> str:
     """
-    获取计划模板
+    清理Unicode内容中的无效字符
     
-    应用工厂模式：根据复杂度返回相应模板
+    应用KISS原则：简单有效的字符清理
     """
-    templates = {
-        "minimal": PlanTemplate.get_minimal_rnaseq_plan,
-        "standard": PlanTemplate.get_standard_rnaseq_plan,
-        "comprehensive": PlanTemplate.get_comprehensive_rnaseq_plan
-    }
-    
-    template_func = templates.get(complexity, PlanTemplate.get_standard_rnaseq_plan)
-    return template_func()
+    try:
+        import re
+        # 移除代理对字符和其他无效Unicode字符
+        cleaned = content.encode('utf-8', errors='ignore').decode('utf-8')
+        
+        # 进一步清理：移除控制字符但保留换行符和制表符
+        cleaned = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]', '', cleaned)
+        
+        return cleaned
+    except Exception as e:
+        logger.error(f"Error cleaning unicode content: {str(e)}")
+        return "内容包含无效字符，已清理。请重新提供您的需求。"
