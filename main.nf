@@ -54,11 +54,11 @@ def getGenomePaths(genome_version) {
     def genome_config = loadGenomeConfig(genome_version)
     
     return [
-        fasta: file(genome_config.fasta),
-        gtf: file(genome_config.gtf),
+        fasta: file(genome_config.fasta_path),
+        gtf: file(genome_config.gtf_path),
         fasta_url: genome_config.fasta_url,
         gtf_url: genome_config.gtf_url,
-        star_index: file(genome_config.fasta).getParent().resolve("star_index"),
+        star_index: file(genome_config.fasta_path).getParent().resolve("star_index"),
         species: genome_config.species,
         version: genome_config.version
     ]
@@ -158,7 +158,7 @@ def fastpScript(sample_id, read1, read2, read_single) {
     if (read_single && read_single.name != "NO_FILE") {
         // 单端测序
         return """
-        conda run -n qc_env fastp \\
+        micromamba run -n qc_env fastp \\
             -i ${read_single} \\
             -o ${sample_id}.single.trimmed.fastq.gz \\
             --html ${sample_id}.fastp.html \\
@@ -170,7 +170,7 @@ def fastpScript(sample_id, read1, read2, read_single) {
     } else if (read1 && read1.name != "NO_FILE" && read2 && read2.name != "NO_FILE") {
         // 双端测序
         return """
-        conda run -n qc_env fastp \\
+        micromamba run -n qc_env fastp \\
             -i ${read1} \\
             -I ${read2} \\
             -o ${sample_id}_1.trimmed.fastq.gz \\
@@ -191,7 +191,7 @@ def starAlignScript(sample_id, read1, read2, read_single, index_dir) {
     if (read_single && read_single.name != "NO_FILE") {
         // 单端测序
         return """
-        conda run -n align_env STAR \\
+        micromamba run -n align_env STAR \\
             --runThreadN ${task.cpus} \\
             --genomeDir ${index_dir} \\
             --readFilesIn ${read_single} \\
@@ -202,14 +202,14 @@ def starAlignScript(sample_id, read1, read2, read_single, index_dir) {
             --outSAMattributes Standard
         
         mv ${sample_id}.Aligned.sortedByCoord.out.bam ${sample_id}.bam
-        conda run -n align_env samtools index ${sample_id}.bam
+        micromamba run -n align_env samtools index ${sample_id}.bam
         
         touch ${sample_id}.star.done
         """
     } else if (read1 && read1.name != "NO_FILE" && read2 && read2.name != "NO_FILE") {
         // 双端测序
         return """
-        conda run -n align_env STAR \\
+        micromamba run -n align_env STAR \\
             --runThreadN ${task.cpus} \\
             --genomeDir ${index_dir} \\
             --readFilesIn ${read1} ${read2} \\
@@ -220,7 +220,7 @@ def starAlignScript(sample_id, read1, read2, read_single, index_dir) {
             --outSAMattributes Standard
         
         mv ${sample_id}.Aligned.sortedByCoord.out.bam ${sample_id}.bam
-        conda run -n align_env samtools index ${sample_id}.bam
+        micromamba run -n align_env samtools index ${sample_id}.bam
         
         touch ${sample_id}.star.done
         """
@@ -233,7 +233,7 @@ def starAlignScript(sample_id, read1, read2, read_single, index_dir) {
 def featureCountsScript(bam_files, gtf_file) {
     def bam_files_str = bam_files.join(' ')
     return """
-    conda run -n quant_env featureCounts \\
+    micromamba run -n quant_env featureCounts \\
         -T ${task.cpus} \\
         -a ${gtf_file} \\
         -o all_samples.counts.txt \\
@@ -300,7 +300,7 @@ process DOWNLOAD_SRR {
     mkdir -p ./sra_temp ./fastq_temp
     
     set +e
-    conda run -n sra_env prefetch ${srr_id} -O ./sra_temp
+    micromamba run -n sra_env prefetch ${srr_id} -O ./sra_temp
     prefetch_exit=\$?
     set -e
     
@@ -310,7 +310,7 @@ process DOWNLOAD_SRR {
         exit 1
     fi
     
-    conda run -n sra_env fasterq-dump ./sra_temp/${srr_id}/${srr_id}.sra -O ./fastq_temp --split-files --threads ${task.cpus}
+    micromamba run -n sra_env fasterq-dump ./sra_temp/${srr_id}/${srr_id}.sra -O ./fastq_temp --split-files --threads ${task.cpus}
     
     if [ -f "./fastq_temp/${srr_id}_2.fastq" ]; then
         gzip ./fastq_temp/${srr_id}_1.fastq
@@ -447,7 +447,7 @@ process prepare_star_index {
         """
         mkdir -p star_index
         
-        conda run -n align_env STAR \\
+        micromamba run -n align_env STAR \\
             --runMode genomeGenerate \\
             --genomeDir star_index \\
             --genomeFastaFiles ${genome_fasta} \\
@@ -510,7 +510,7 @@ process run_quality_control {
             if (read_single && read_single.name != "NO_FILE") {
                 // 单端测序
                 """
-                conda run -n qc_env fastp \\
+                micromamba run -n qc_env fastp \\
                     -i ${read_single} \\
                     -o ${sample_id}.single.trimmed.fastq.gz \\
                     --html ${sample_id}.fastp.html \\
@@ -522,7 +522,7 @@ process run_quality_control {
             } else if (read1 && read1.name != "NO_FILE" && read2 && read2.name != "NO_FILE") {
                 // 双端测序
                 """
-                conda run -n qc_env fastp \\
+                micromamba run -n qc_env fastp \\
                     -i ${read1} \\
                     -I ${read2} \\
                     -o ${sample_id}_1.trimmed.fastq.gz \\
@@ -585,7 +585,7 @@ process run_alignment {
             if (read_single && read_single.name != "NO_FILE") {
                 // 单端测序
                 """
-                conda run -n align_env STAR \\
+                micromamba run -n align_env STAR \\
                     --runThreadN ${task.cpus} \\
                     --genomeDir ${index_dir} \\
                     --readFilesIn ${read_single} \\
@@ -596,14 +596,14 @@ process run_alignment {
                     --outSAMattributes Standard
                 
                 mv ${sample_id}.Aligned.sortedByCoord.out.bam ${sample_id}.bam
-                conda run -n align_env samtools index ${sample_id}.bam
+                micromamba run -n align_env samtools index ${sample_id}.bam
                 
                 touch ${sample_id}.star.done
                 """
             } else if (read1 && read1.name != "NO_FILE" && read2 && read2.name != "NO_FILE") {
                 // 双端测序
                 """
-                conda run -n align_env STAR \\
+                micromamba run -n align_env STAR \\
                     --runThreadN ${task.cpus} \\
                     --genomeDir ${index_dir} \\
                     --readFilesIn ${read1} ${read2} \\
@@ -616,7 +616,7 @@ process run_alignment {
                     --outFilterIntronMotifs RemoveNoncanonical
                 
                 mv ${sample_id}.Aligned.sortedByCoord.out.bam ${sample_id}.bam
-                conda run -n align_env samtools index ${sample_id}.bam
+                micromamba run -n align_env samtools index ${sample_id}.bam
                 
                 touch ${sample_id}.star.done
                 """
@@ -667,11 +667,11 @@ process run_quantification {
             """
             # 检测BAM文件是否为双端测序
             first_bam=\$(echo ${bam_files_str} | cut -d' ' -f1)
-            is_paired=\$(conda run -n align_env samtools view -c -f 1 "\$first_bam")
+            is_paired=\$(micromamba run -n align_env samtools view -c -f 1 "\$first_bam")
             
             if [ "\$is_paired" -gt 0 ]; then
                 echo "检测到双端测序数据，使用双端模式"
-                conda run -n quant_env featureCounts \\
+                micromamba run -n quant_env featureCounts \\
                     -T ${task.cpus} \\
                     -p \\
                     -B \\
@@ -681,7 +681,7 @@ process run_quantification {
                     ${bam_files_str}
             else
                 echo "检测到单端测序数据，使用单端模式"
-                conda run -n quant_env featureCounts \\
+                micromamba run -n quant_env featureCounts \\
                     -T ${task.cpus} \\
                     -a ${gtf_file} \\
                     -o all_samples.counts.txt \\

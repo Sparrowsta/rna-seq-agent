@@ -1,32 +1,87 @@
-# Python virtual environment
-.venv/
-venv/
+# Git
+.git
+.gitignore
 
-# Git directory
-.git/
-
-# Python cache files
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# IDE and editor configuration
-.idea/
+# IDEs
 .vscode/
+.idea/
+*.swp
+*.swo
+*~
 
-# Local data and environment files (should not be in the image)
-data/
+# Environment
 .env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
 *.env
 
-# Documentation and temporary files
-README.md
-temp/
-*.tmp
+# Jupyter
+.ipynb_checkpoints
 
-# Memory Bank - not needed for production deployment
+# Logs
+*.log
+logs/
+
+# Large data directories (exclude from build context but keep structure)
+data/results/
+data/work/
+work/
+.nextflow/
+.nextflow.log*
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+docs/
+documentation/
+
+# Tests
+tests/
+test/
+datatest/
+
+# Memory Bank
 memory-bank/
 
-# Test data
-datatest/
+# Coverage
+.coverage
+htmlcov/
+.pytest_cache/

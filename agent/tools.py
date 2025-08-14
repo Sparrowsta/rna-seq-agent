@@ -136,10 +136,32 @@ def query_fastq_files(directory_path: Optional[str] = None, pattern: str = "*.fa
         if not all_fastq_files:
             return f"在搜索路径 {', '.join(searched_paths)} 中未找到匹配 '{pattern}' 的FASTQ文件"
         
-        # 分析文件信息 - 改进的配对逻辑
-        all_files = {}  # 存储所有文件信息
-        paired_files = {}
+        # 分析文件信息 - 修复配对逻辑（避免文件覆盖）
+        all_files_list = []  # 存储所有文件信息的列表
         single_files = []
+        
+        def is_processed_file(file_path: str) -> bool:
+            """判断文件是否为处理后的文件"""
+            file_name = os.path.basename(file_path).lower()
+            processed_indicators = [
+                'trimmed', 'fastp', 'cutadapt', 'processed', 'clean', 
+                'filtered', 'qc', 'trim', 'adapter'
+            ]
+            # 检查文件名是否包含处理后的标识
+            for indicator in processed_indicators:
+                if indicator in file_name:
+                    return True
+            
+            # 检查路径是否包含处理后的目录标识
+            path_processed_indicators = [
+                'fastp', 'trimmed', 'processed', 'clean', 'qc', 
+                'cutadapt', 'trim', 'filter', 'results'
+            ]
+            for indicator in path_processed_indicators:
+                if indicator in file_path.lower():
+                    return True
+            
+            return False
         
         # 第一步：收集所有文件并尝试解析配对信息
         for file_path in sorted(all_fastq_files):
@@ -189,72 +211,72 @@ def query_fastq_files(directory_path: Optional[str] = None, pattern: str = "*.fa
                         break
             
             # 存储文件信息
-            file_info = {"path": file_path, "size": file_size, "name": file_name}
+            file_info = {
+                "path": file_path, 
+                "size": file_size, 
+                "name": file_name,
+                "sample_id": sample_id,
+                "read_type": read_type,
+                "is_processed": is_processed_file(file_path)
+            }
             
             if sample_id and read_type:
-                # 可能的配对文件
-                if sample_id not in all_files:
-                    all_files[sample_id] = {}
-                all_files[sample_id][read_type] = file_info
+                # 可能的配对文件，加入列表而不是覆盖
+                all_files_list.append(file_info)
             else:
                 # 无法识别配对信息的文件，可能是真正的单端文件
                 single_files.append(file_info)
         
-        # 第二步：检查配对完整性
-        for sample_id, files in all_files.items():
-            if "R1" in files and "R2" in files:
-                # 完整的双端配对
-                paired_files[sample_id] = files
-            else:
-                # 不完整的配对，归类为单端
-                for read_type, file_info in files.items():
-                    single_files.append(file_info)
+        # 第二步：优先选择原始文件进行配对，如果没有原始文件再使用处理后文件
+        paired_files = {}
+        remaining_files = all_files_list.copy()
         
-        # 按文件来源分类结果
+        # 获取所有样本ID
+        sample_ids = list(set(f["sample_id"] for f in all_files_list))
+        
+        for sample_id in sample_ids:
+            # 找到此样本的所有文件
+            sample_files = [f for f in all_files_list if f["sample_id"] == sample_id]
+            
+            # 分别收集原始和处理后的R1/R2文件
+            original_r1 = [f for f in sample_files if f["read_type"] == "R1" and not f["is_processed"]]
+            original_r2 = [f for f in sample_files if f["read_type"] == "R2" and not f["is_processed"]]
+            processed_r1 = [f for f in sample_files if f["read_type"] == "R1" and f["is_processed"]]
+            processed_r2 = [f for f in sample_files if f["read_type"] == "R2" and f["is_processed"]]
+            
+            # 优先使用原始文件配对
+            r1_file = original_r1[0] if original_r1 else (processed_r1[0] if processed_r1 else None)
+            r2_file = original_r2[0] if original_r2 else (processed_r2[0] if processed_r2 else None)
+            
+            if r1_file and r2_file:
+                # 完整的双端配对
+                paired_files[sample_id] = {"R1": r1_file, "R2": r2_file}
+                # 从remaining_files中移除已配对的文件
+                remaining_files = [f for f in remaining_files if f != r1_file and f != r2_file]
+            
+        # 剩余未配对的文件归类为单端
+        single_files.extend(remaining_files)
+        
+        # 按文件来源分类结果（基于新的数据结构）
         original_paired = {}
         original_single = []
         processed_paired = {}
         processed_single = []
         
-        def is_processed_file(file_path: str) -> bool:
-            """判断文件是否为处理后的文件"""
-            file_name = os.path.basename(file_path).lower()
-            processed_indicators = [
-                'trimmed', 'fastp', 'cutadapt', 'processed', 'clean', 
-                'filtered', 'qc', 'trim', 'adapter'
-            ]
-            # 检查文件名是否包含处理后的标识
-            for indicator in processed_indicators:
-                if indicator in file_name:
-                    return True
-            
-            # 检查路径是否包含处理后的目录标识
-            path_processed_indicators = [
-                'fastp', 'trimmed', 'processed', 'clean', 'qc', 
-                'cutadapt', 'trim', 'filter', 'results'
-            ]
-            for indicator in path_processed_indicators:
-                if indicator in file_path.lower():
-                    return True
-            
-            return False
-        
         # 分类配对文件
         for sample_id, files in paired_files.items():
-            has_original = False
-            for read_type, file_info in files.items():
-                if not is_processed_file(file_info['path']):
-                    has_original = True
-                    break
+            # 检查R1和R2文件是否都不是处理后的文件
+            r1_is_original = not files['R1']['is_processed']
+            r2_is_original = not files['R2']['is_processed']
             
-            if has_original:
+            if r1_is_original and r2_is_original:
                 original_paired[sample_id] = files
             else:
                 processed_paired[sample_id] = files
         
         # 分类单端文件
         for file_info in single_files:
-            if not is_processed_file(file_info['path']):
+            if not file_info['is_processed']:
                 original_single.append(file_info)
             else:
                 processed_single.append(file_info)

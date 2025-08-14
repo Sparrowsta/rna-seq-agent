@@ -1,0 +1,13 @@
+pandas
+python-dotenv
+langchain>=0.2.0
+langchain-openai>=0.1.0
+fastapi>=0.110.0
+pydantic>=2.0.0
+sse-starlette
+tabulate
+requests
+mcp
+langgraph
+langchain-google-genai
+rich
