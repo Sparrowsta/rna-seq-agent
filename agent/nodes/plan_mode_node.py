@@ -5,7 +5,6 @@ Plan Mode节点 - 制定分析计划和修改nextflow参数
 """
 
 import logging
-import json
 from typing import Dict, Any, List, Tuple
 from langchain_core.messages import HumanMessage, AIMessage
 from ..state import AgentState, update_state_mode
@@ -28,173 +27,73 @@ class PlanModeHandler:
         # 使用结构化链用于JSON格式输出
         self.chain = create_structured_chain_for_mode("plan")
     
-    def _clean_special_tokens(self, content: str) -> str:
+    def _process_llm_response(self, response) -> Tuple[AIMessage, List[Dict[str, Any]]]:
         """
-        清理LLM输出中的特殊分隔符和无关内容
-        """
-        import re
-        
-        # 移除工具调用相关的特殊分隔符
-        patterns = [
-            r'<｜[^｜]*｜>',  # 移除 <｜tool▁calls▁begin｜> 等分隔符
-            r'function<｜[^｜]*｜>[^<]*',  # 移除 function<｜tool▁sep｜>update_nextflow_param 等
-            r'```json\n.*?\n```<｜[^｜]*｜>',  # 移除嵌套的json块和分隔符
-        ]
-        
-        for pattern in patterns:
-            content = re.sub(pattern, '', content, flags=re.DOTALL)
-        
-        # 如果内容看起来只是工具参数，尝试提取第一个有效的JSON
-        if content.strip().startswith('{"param_name"'):
-            # 尝试查找完整的JSON结构开头
-            json_start = content.find('{"reasoning"')
-            if json_start == -1:
-                json_start = content.find('{\n  "reasoning"')
-            if json_start != -1:
-                content = content[json_start:]
-            else:
-                # 如果没有找到完整JSON，包装这个参数到默认结构中
-                content = self._wrap_incomplete_response(content)
-        
-        return content.strip()
-    
-    def _wrap_incomplete_response(self, content: str) -> str:
-        """
-        将不完整的响应包装成完整的JSON结构
-        """
-        try:
-            # 尝试解析为工具参数
-            import json
-            param_data = json.loads(content.strip())
-            
-            if "param_name" in param_data and "param_value" in param_data:
-                # 构建完整的JSON响应，但不再添加工具调用以避免循环
-                wrapped_response = {
-                    "reasoning": f"配置参数 {param_data['param_name']} 设置完成",
-                    "response": f"✅ 已配置 {param_data['param_name']} = {param_data['param_value']}\n\n继续配置其他必要参数，或输入新的需求...",
-                    "plan_steps": [],
-                    "config_changes": {param_data['param_name']: param_data['param_value']},
-                    "next_action": "等待用户输入或继续配置",
-                    "ready_to_execute": False,
-                    "tool_calls": []
-                }
-                return json.dumps(wrapped_response, ensure_ascii=False, indent=2)
-        except:
-            pass
-        
-        # 如果无法解析，返回默认错误响应
-        import json
-        return json.dumps({
-            "reasoning": "LLM响应格式异常",
-            "response": "响应解析出现问题，请重新尝试",
-            "plan_steps": [],
-            "config_changes": {},
-            "next_action": "等待用户输入",
-            "ready_to_execute": False,
-            "tool_calls": []
-        }, ensure_ascii=False, indent=2)
-
-    def _parse_json_response(self, response) -> Tuple[AIMessage, List[Dict[str, Any]]]:
-        """
-        解析LLM的JSON响应
+        处理LLM的结构化响应（JsonOutputParser已处理JSON格式）
         
         返回: (AIMessage, tool_calls列表)
         """
         try:
-            if hasattr(response, 'content') and response.content:
-                # 清理响应内容
-                content = _clean_unicode_content(response.content)
-                logger.info(f"Plan模式LLM响应内容: {repr(content[:300])}...")
+            # JsonOutputParser已经返回dict格式，直接使用
+            if isinstance(response, dict):
+                logger.info(f"Plan模式收到结构化响应: {list(response.keys())}")
                 
-                # 移除特殊工具调用分隔符和其他无关内容
-                content = self._clean_special_tokens(content)
+                # 提取响应信息
+                user_message = response.get("response", "计划制定完成")
+                plan_steps = response.get("plan_steps", [])
+                config_changes = response.get("config_changes", {})
+                ready_to_execute = response.get("ready_to_execute", False)
+                tool_calls = response.get("tool_calls", [])
                 
-                # 移除代码块标记
-                if "```json" in content:
-                    # 提取JSON部分
-                    start = content.find("```json") + 7
-                    end = content.find("```", start)
-                    if end != -1:
-                        content = content[start:end].strip()
-                    else:
-                        content = content[start:].strip()
-                elif content.startswith("```") and content.endswith("```"):
-                    content = content[3:-3].strip()
+                # 构建详细响应
+                detailed_response = user_message
+                if plan_steps:
+                    detailed_response += "\n\n📋 **分析计划步骤：**\n"
+                    detailed_response += "\n".join([f"  {step}" for step in plan_steps])
                 
-                logger.info(f"Plan模式清理后内容: {repr(content[:300])}...")
+                if config_changes:
+                    detailed_response += "\n\n⚙️ **配置更新：**\n"
+                    for key, value in config_changes.items():
+                        detailed_response += f"  - {key}: {value}\n"
                 
-                # 尝试解析JSON
-                try:
-                    json_data = json.loads(content)
-                    logger.info(f"Plan模式JSON解析成功: {json_data.keys()}")
+                # 如果已准备好执行，添加执行提示
+                if ready_to_execute:
+                    detailed_response += "\n\n🚀 **配置完成！**\n"
+                    detailed_response += "所有参数已配置完成，可以开始执行RNA-seq分析。\n"
+                    detailed_response += "请输入 `/execute` 或 `/开始执行` 开始分析流程。"
+                
+                logger.info(f"Plan模式提取到 {len(tool_calls)} 个工具调用")
+                
+                # 创建AIMessage
+                ai_message = AIMessage(content=detailed_response)
+                
+                # 如果有工具调用，设置为消息的tool_calls属性
+                if tool_calls:
+                    langchain_tool_calls = []
+                    for i, tool_call in enumerate(tool_calls):
+                        tool_call_obj = {
+                            "name": tool_call.get("tool_name"),
+                            "args": tool_call.get("parameters", {}),
+                            "id": f"call_plan_{i}",
+                            "type": "tool_call"
+                        }
+                        langchain_tool_calls.append(tool_call_obj)
                     
-                    # 提取用户消息和计划信息
-                    user_message = json_data.get("response", content)
-                    plan_steps = json_data.get("plan_steps", [])
-                    config_changes = json_data.get("config_changes", {})
-                    
-                    # 检查是否已准备好执行
-                    ready_to_execute = json_data.get("ready_to_execute", False)
-                    
-                    # 构建详细响应
-                    detailed_response = user_message
-                    if plan_steps:
-                        detailed_response += "\n\n📋 **分析计划步骤：**\n"
-                        detailed_response += "\n".join([f"  {step}" for step in plan_steps])
-                    
-                    if config_changes:
-                        detailed_response += "\n\n⚙️ **配置更新：**\n"
-                        for key, value in config_changes.items():
-                            detailed_response += f"  - {key}: {value}\n"
-                    
-                    # 如果已准备好执行，添加执行提示
-                    if ready_to_execute:
-                        detailed_response += "\n\n🚀 **配置完成！**\n"
-                        detailed_response += "所有参数已配置完成，可以开始执行RNA-seq分析。\n"
-                        detailed_response += "请输入 `/execute` 或 `/开始执行` 开始分析流程。"
-                    
-                    # 提取工具调用
-                    tool_calls = json_data.get("tool_calls", [])
-                    logger.info(f"Plan模式提取到 {len(tool_calls)} 个工具调用: {tool_calls}")
-                    
-                    # 如果ready_to_execute为true且没有工具调用，这是正常的完成状态
-                    if ready_to_execute and not tool_calls:
-                        logger.info("Plan模式配置已完成，无需进一步工具调用")
-                    
-                    # 创建AIMessage
-                    ai_message = AIMessage(content=detailed_response)
-                    
-                    # 如果有工具调用，设置为消息的tool_calls属性
-                    if tool_calls:
-                        # 转换为LangChain期望的格式
-                        langchain_tool_calls = []
-                        for i, tool_call in enumerate(tool_calls):
-                            tool_call_obj = {
-                                "name": tool_call.get("tool_name"),
-                                "args": tool_call.get("parameters", {}),
-                                "id": f"call_plan_{i}",
-                                "type": "tool_call"
-                            }
-                            langchain_tool_calls.append(tool_call_obj)
-                        
-                        # 设置tool_calls属性
-                        ai_message.tool_calls = langchain_tool_calls
-                        logger.info(f"Plan模式成功设置tool_calls属性: {langchain_tool_calls}")
-                    
-                    return ai_message, tool_calls
-                    
-                except json.JSONDecodeError as e:
-                    # 如果不是有效JSON，直接返回原内容
-                    logger.warning(f"Plan模式LLM输出不是有效JSON，使用原始内容。错误: {str(e)}")
-                    return AIMessage(content=content), []
-            
-            return AIMessage(content="响应为空"), []
+                    ai_message.tool_calls = langchain_tool_calls
+                    logger.info(f"Plan模式成功设置tool_calls属性")
+                
+                return ai_message, tool_calls
+            else:
+                # 降级处理：如果不是dict，可能是旧格式
+                logger.warning(f"Plan模式收到非结构化响应: {type(response)}")
+                content = str(response) if response else "响应为空"
+                return AIMessage(content=content), []
             
         except Exception as e:
-            logger.error(f"Plan模式解析JSON响应时出错: {str(e)}")
+            logger.error(f"Plan模式处理响应时出错: {str(e)}")
             import traceback
             logger.error(f"错误堆栈: {traceback.format_exc()}")
-            return AIMessage(content="解析响应时出现错误"), []
+            return AIMessage(content="处理响应时出现错误"), []
     
     def analyze_requirements(self, state: AgentState) -> Dict[str, Any]:
         """
@@ -335,8 +234,8 @@ class PlanModeHandler:
                 "messages": state["messages"] + [HumanMessage(content=plan_request)]
             })
             
-            # 解析JSON响应并处理工具调用
-            parsed_response, tool_calls = self._parse_json_response(response)
+            # 处理LLM的结构化响应
+            parsed_response, _ = self._process_llm_response(response)
             
             logger.info("Plan request processed successfully with JSON response")
             logger.info(f"Plan模式返回的消息tool_calls属性: {hasattr(parsed_response, 'tool_calls')} - {getattr(parsed_response, 'tool_calls', None)}")
@@ -375,8 +274,8 @@ class PlanModeHandler:
                 "input": user_input
             })
             
-            # 解析JSON响应
-            parsed_response, tool_calls = self._parse_json_response(response)
+            # 处理LLM的结构化响应
+            parsed_response, _ = self._process_llm_response(response)
             
             logger.info("Plan modification handled with JSON response")
             return {"messages": [parsed_response]}

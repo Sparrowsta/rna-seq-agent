@@ -1,7 +1,8 @@
 import os
 from typing import Dict, Any, List
 from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
 from pydantic import BaseModel, Field
 from .tools import (
     query_fastq_files, query_genome_info, add_new_genome,
@@ -411,12 +412,107 @@ def create_chain_for_mode(mode: str):
 
 def create_structured_chain_for_mode(mode: str):
     """
-    为指定模式创建结构化输出链
+    为指定模式创建结构化输出链，使用JsonOutputParser强制JSON格式
     
-    用于需要JSON格式输出的场景
+    用于需要JSON格式输出的场景，解决LLM输出格式不一致的问题
     """
     llm_config = get_llm_for_mode(mode)
-    return llm_config["prompt"] | llm_config["llm"]
+    
+    # 根据模式选择对应的Pydantic模型和JsonOutputParser
+    if mode == "normal":
+        parser = JsonOutputParser(pydantic_object=NormalModeResponse)
+    elif mode == "plan":
+        parser = JsonOutputParser(pydantic_object=PlanModeResponse)
+    elif mode == "execute":
+        parser = JsonOutputParser(pydantic_object=ExecuteModeResponse)
+    else:
+        # 默认使用Normal模式
+        parser = JsonOutputParser(pydantic_object=NormalModeResponse)
+    
+    # 为prompt添加格式说明
+    original_prompt = llm_config["prompt"]
+    
+    # 如果是Plan模式，需要特殊处理prompt来包含格式说明
+    if mode == "plan":
+        # 创建带JsonOutputParser格式说明的Plan模式prompt
+        plan_prompt_template = """你是RNA-seq分析配置专家，当前处于**计划制定模式**。
+
+**核心原则：**
+1. **透明化配置状态** - 每次都先展示当前配置完整状态
+2. **逐步智能配置** - 每次只处理一个配置项目，逐步完成
+3. **最小化用户干预** - 只在真正需要用户选择时才询问
+4. **智能文件检测** - 主动检测并利用可用的本地文件
+
+**工作流程：**
+1. 首先使用get_current_nextflow_config展示当前配置状态
+2. 分析哪些配置项还需要完善
+3. 按优先级逐个处理：数据源 → 基因组 → 分析流程
+4. 每次只修改一个配置项，然后重新评估
+5. 当配置完整时，询问是否开始执行
+
+**可用工具：**
+- get_current_nextflow_config: 获取当前完整配置状态
+- query_fastq_files: 检测FASTQ文件
+- query_genome_info: 检测基因组文件  
+- update_nextflow_param: 更新单个配置参数
+- switch_to_execute_mode: 切换到执行模式
+
+**执行命令处理规则：**
+当用户输入包含执行命令（如"/execute", "/开始执行", "/执行"）时，**必须**智能处理：
+1. **智能解析命令参数** - 分析命令中的额外信息（如基因组版本、特殊配置等）
+2. **配置完整性检查** - 基于对话历史检查当前配置状态
+3. **智能配置补全** - 自动调用工具更新/补全缺失或新指定的参数
+4. **执行模式切换** - 确保配置完整后，调用switch_to_execute_mode工具
+
+示例处理：
+- "/execute" → 检查现有配置完整性，补全缺失配置，然后切换
+- "/execute hg19" → 更新基因组为hg19，检查其他配置，然后切换  
+- "/execute 使用本地文件" → 更新为本地文件模式，检查配置，然后切换
+
+**重要：必须通过调用switch_to_execute_mode工具来切换模式，不能通过简单的字符串匹配**
+
+**配置项优先级：**
+1. **数据源配置** (最高优先级):
+   - local_fastq_files 或 srr_ids
+   - 优先使用本地FASTQ文件
+2. **基因组配置**:
+   - local_genome_path + local_gtf_path 或 genome_version
+   - 优先使用本地基因组文件
+3. **分析流程配置**:
+   - run_* 参数根据数据源智能设置
+
+**重要行为准则：**
+- 每次回复都必须包含**完整的配置状态展示**
+- 发现本地文件时优先使用，**必须调用update_nextflow_param工具实际保存配置**
+- 只在文件选择有歧义时才询问用户
+- **关键**：不能只在回复中显示配置，必须使用工具调用实际更新系统状态
+- **重要**：必须设置local_fastq_files参数指向检测到的FASTQ文件
+- **强制要求**：每次检测到配置项后，必须立即调用相应的update工具保存到AgentState
+- **工具调用顺序**：generate_analysis_task_list → update_nextflow_param(为每个配置项) → get_current_nextflow_config(验证)
+- 配置完成时主动建议执行
+- 使用友好和专业的语调
+
+{format_instructions}
+
+**重要：请严格按照上述JSON格式输出，字段必须完整，不要省略任何字段**"""
+
+        formatted_prompt = PromptTemplate(
+            template=plan_prompt_template,
+            input_variables=[],  # 没有输入变量，使用MessagesPlaceholder
+            partial_variables={"format_instructions": parser.get_format_instructions()}
+        )
+        
+        # 创建包含MessagesPlaceholder的最终prompt
+        final_prompt = ChatPromptTemplate.from_messages([
+            ("system", formatted_prompt.format()),
+            MessagesPlaceholder(variable_name="messages"),
+        ])
+        
+        return final_prompt | llm_config["llm"] | parser
+    
+    else:
+        # 对于其他模式，使用原有的prompt结构
+        return original_prompt | llm_config["llm"] | parser
 
 # ============================================================================
 # 向后兼容 - 保持现有接口

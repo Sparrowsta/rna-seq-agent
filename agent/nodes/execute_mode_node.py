@@ -6,7 +6,6 @@ Execute Mode节点 - 执行nextflow流程和结果总结
 
 import logging
 import os
-import json
 import time
 import subprocess
 import threading
@@ -399,86 +398,70 @@ class ExecuteModeHandler:
         self.progress_monitor = None  # 进度监控器
         self.execution_log = []  # 存储执行日志
     
-    def _parse_json_response(self, response) -> Tuple[AIMessage, List[Dict[str, Any]]]:
+    def _process_llm_response(self, response) -> Tuple[AIMessage, List[Dict[str, Any]]]:
         """
-        解析LLM的JSON响应
+        处理LLM的结构化响应（JsonOutputParser已处理JSON格式）
         
         返回: (AIMessage, tool_calls列表)
         """
         try:
-            if hasattr(response, 'content') and response.content:
-                # 清理响应内容
-                content = _clean_unicode_content(response.content)
-                logger.info(f"Execute模式LLM响应内容: {repr(content[:300])}...")
+            # JsonOutputParser已经返回dict格式，直接使用
+            if isinstance(response, dict):
+                logger.info(f"Execute模式收到结构化响应: {list(response.keys())}")
                 
-                # 移除代码块标记
-                if "```json" in content:
-                    start = content.find("```json") + 7
-                    end = content.find("```", start)
-                    if end != -1:
-                        content = content[start:end].strip()
-                    else:
-                        content = content[start:].strip()
-                elif content.startswith("```") and content.endswith("```"):
-                    content = content[3:-3].strip()
+                # 提取响应信息
+                user_message = response.get("response", "执行完成")
+                status = response.get("status", "unknown")
+                progress = response.get("progress", "")
+                next_step = response.get("next_step", "")
+                results = response.get("results", {})
+                tool_calls = response.get("tool_calls", [])
                 
-                logger.info(f"Execute模式清理后内容: {repr(content[:300])}...")
+                # 构建详细响应
+                detailed_response = user_message
+                if status and status != "unknown":
+                    detailed_response += f"\n\n📊 **状态**: {status}"
+                if progress:
+                    detailed_response += f"\n🔄 **进度**: {progress}"
+                if next_step:
+                    detailed_response += f"\n➡️ **下一步**: {next_step}"
+                if results:
+                    detailed_response += "\n\n📋 **结果**:\n"
+                    for key, value in results.items():
+                        detailed_response += f"  - {key}: {value}\n"
                 
-                # 尝试解析JSON
-                try:
-                    json_data = json.loads(content)
-                    logger.info(f"Execute模式JSON解析成功: {json_data.keys()}")
+                logger.info(f"Execute模式提取到 {len(tool_calls)} 个工具调用")
+                
+                # 创建AIMessage
+                ai_message = AIMessage(content=detailed_response)
+                
+                # 如果有工具调用，设置为消息的tool_calls属性
+                if tool_calls:
+                    langchain_tool_calls = []
+                    for i, tool_call in enumerate(tool_calls):
+                        tool_call_obj = {
+                            "name": tool_call.get("tool_name"),
+                            "args": tool_call.get("parameters", {}),
+                            "id": f"call_exec_{i}",
+                            "type": "tool_call"
+                        }
+                        langchain_tool_calls.append(tool_call_obj)
                     
-                    # 提取响应信息
-                    user_message = json_data.get("response", content)
-                    status = json_data.get("status", "unknown")
-                    progress = json_data.get("progress", "")
-                    next_step = json_data.get("next_step", "")
-                    
-                    # 构建详细响应
-                    detailed_response = user_message
-                    if status and status != "unknown":
-                        detailed_response += f"\n\n📊 **状态**: {status}"
-                    if progress:
-                        detailed_response += f"\n📈 **进度**: {progress}"
-                    if next_step:
-                        detailed_response += f"\n⏭️ **下一步**: {next_step}"
-                    
-                    # 提取工具调用
-                    tool_calls = json_data.get("tool_calls", [])
-                    logger.info(f"Execute模式提取到 {len(tool_calls)} 个工具调用: {tool_calls}")
-                    
-                    # 创建AIMessage
-                    ai_message = AIMessage(content=detailed_response)
-                    
-                    # 如果有工具调用，设置为消息的tool_calls属性
-                    if tool_calls:
-                        langchain_tool_calls = []
-                        for i, tool_call in enumerate(tool_calls):
-                            tool_call_obj = {
-                                "name": tool_call.get("tool_name"),
-                                "args": tool_call.get("parameters", {}),
-                                "id": f"call_exec_{i}",
-                                "type": "tool_call"
-                            }
-                            langchain_tool_calls.append(tool_call_obj)
-                        
-                        ai_message.tool_calls = langchain_tool_calls
-                        logger.info(f"Execute模式成功设置tool_calls属性: {langchain_tool_calls}")
-                    
-                    return ai_message, tool_calls
-                    
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Execute模式LLM输出不是有效JSON，使用原始内容。错误: {str(e)}")
-                    return AIMessage(content=content), []
-            
-            return AIMessage(content="响应为空"), []
+                    ai_message.tool_calls = langchain_tool_calls
+                    logger.info(f"Execute模式成功设置tool_calls属性")
+                
+                return ai_message, tool_calls
+            else:
+                # 降级处理：如果不是dict，可能是旧格式
+                logger.warning(f"Execute模式收到非结构化响应: {type(response)}")
+                content = str(response) if response else "响应为空"
+                return AIMessage(content=content), []
             
         except Exception as e:
-            logger.error(f"Execute模式解析JSON响应时出错: {str(e)}")
+            logger.error(f"Execute模式处理响应时出错: {str(e)}")
             import traceback
             logger.error(f"错误堆栈: {traceback.format_exc()}")
-            return AIMessage(content="解析响应时出现错误"), []
+            return AIMessage(content="处理响应时出现错误"), []
     
     def prepare_execution(self, state: AgentState) -> Dict[str, Any]:
         """
@@ -659,31 +642,87 @@ class ExecuteModeHandler:
             
             ui_manager.show_info(initial_msg)
             
-            # 定义进度更新回调函数
-            last_update_time = [0]  # 使用列表来避免闭包问题
+            # 创建持续更新的进度显示
+            progress_bar = None
             
             def update_progress_display(progress_info):
+                nonlocal progress_bar
                 try:
-                    current_time = time.time()
-                    # 限制更新频率，避免刷屏
-                    if current_time - last_update_time[0] < 3:  # 3秒更新一次
-                        return
+                    import sys
                     
-                    last_update_time[0] = current_time
+                    # 获取进度信息
+                    progress = progress_info.get('progress', 0)
+                    current_step = progress_info.get('current_step', '初始化...')
+                    # status = progress_info.get('status', 'running')  # 暂时不使用
                     
-                    # 格式化并显示进度
-                    display_text = self.progress_monitor.format_progress_display(progress_info)
-                    ui_manager.show_info(display_text)
+                    # 创建进度条（只在第一次）
+                    if progress_bar is None:
+                        try:
+                            from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, TimeElapsedColumn
+                            
+                            progress_bar = Progress(
+                                TextColumn("[bold blue]🚀 Nextflow执行"),
+                                BarColumn(bar_width=40),
+                                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                                TimeElapsedColumn(),
+                                TimeRemainingColumn(),
+                                TextColumn("{task.description}"),
+                                console=ui_manager.console if ui_manager.use_rich else None,
+                                refresh_per_second=4  # 4次/秒的刷新率，更流畅
+                            )
+                            progress_bar.start()
+                            
+                            # 添加主任务
+                            task_id = progress_bar.add_task(
+                                description=current_step,
+                                total=100
+                            )
+                            progress_bar.task_id = task_id
+                            
+                        except ImportError:
+                            # Rich不可用时的简单进度条
+                            progress_bar = "simple"
+                    
+                    # 更新进度
+                    if hasattr(progress_bar, 'update') and hasattr(progress_bar, 'task_id'):
+                        # Rich进度条
+                        progress_bar.update(
+                            progress_bar.task_id,
+                            completed=progress,
+                            description=current_step
+                        )
+                    else:
+                        # 简单进度条
+                        bar_length = 40
+                        filled_length = int(bar_length * progress / 100)
+                        bar = '█' * filled_length + '░' * (bar_length - filled_length)
+                        
+                        # 清除当前行并显示新进度
+                        sys.stdout.write(f'\r🚀 进度: [{bar}] {progress}% - {current_step}')
+                        sys.stdout.flush()
                     
                 except Exception as e:
                     logger.error(f"更新进度显示时出错: {str(e)}")
             
-            # 开始监控（这会阻塞直到完成）
-            logger.info("开始监控Nextflow执行...")
-            final_result = self.progress_monitor.monitor_progress(update_progress_display)
+            def cleanup_progress_bar():
+                nonlocal progress_bar
+                if progress_bar and hasattr(progress_bar, 'stop'):
+                    progress_bar.stop()
+                elif progress_bar == "simple":
+                    # 简单进度条完成后换行
+                    print()  # 换行
             
-            # 处理最终结果
-            return self._process_execution_results(final_result, command, work_dir)
+            try:
+                # 开始监控（这会阻塞直到完成）
+                logger.info("开始监控Nextflow执行...")
+                final_result = self.progress_monitor.monitor_progress(update_progress_display)
+                
+                # 处理最终结果
+                return self._process_execution_results(final_result, command, work_dir)
+            
+            finally:
+                # 清理进度条
+                cleanup_progress_bar()
                 
         except Exception as e:
             logger.error(f"Error executing nextflow: {str(e)}")

@@ -4,7 +4,6 @@ Normal Mode节点 - 信息收集和用户交互
 """
 
 import logging
-import json
 from typing import Dict, Any, List, Tuple
 from langchain_core.messages import HumanMessage, AIMessage
 from ..state import AgentState, update_state_mode
@@ -26,76 +25,64 @@ class NormalModeHandler:
         self.chain = create_structured_chain_for_mode("normal")  
         self.structured_chain = create_structured_chain_for_mode("normal")
     
-    def _parse_json_response(self, response) -> Tuple[AIMessage, List[Dict[str, Any]]]:
+    def _process_llm_response(self, response) -> Tuple[AIMessage, List[Dict[str, Any]]]:
         """
-        解析LLM的JSON响应
+        处理LLM的结构化响应（JsonOutputParser已处理JSON格式）
         
         返回: (AIMessage, tool_calls列表)
         """
         try:
-            if hasattr(response, 'content') and response.content:
-                # 清理响应内容
-                content = _clean_unicode_content(response.content)
-                logger.info(f"原始LLM响应内容: {repr(content[:300])}...")
+            # JsonOutputParser已经返回dict格式，直接使用
+            if isinstance(response, dict):
+                logger.info(f"Normal模式收到结构化响应: {list(response.keys())}")
                 
-                # 移除代码块标记
-                if "```json" in content:
-                    # 提取JSON部分
-                    start = content.find("```json") + 7
-                    end = content.find("```", start)
-                    if end != -1:
-                        content = content[start:end].strip()
-                    else:
-                        content = content[start:].strip()
-                elif content.startswith("```") and content.endswith("```"):
-                    content = content[3:-3].strip()
+                # 提取响应信息
+                user_message = response.get("response", "响应完成")
+                suggested_actions = response.get("suggested_actions", [])
+                need_more_info = response.get("need_more_info", False)
+                tool_calls = response.get("tool_calls", [])
                 
-                logger.info(f"清理后内容: {repr(content[:300])}...")
+                # 构建详细响应
+                detailed_response = user_message
+                if suggested_actions:
+                    detailed_response += "\n\n💡 **建议操作：**\n"
+                    detailed_response += "\n".join([f"  - {action}" for action in suggested_actions])
                 
-                # 尝试解析JSON
-                try:
-                    json_data = json.loads(content)
-                    logger.info(f"JSON解析成功: {json_data.keys()}")
+                if need_more_info:
+                    detailed_response += "\n\n❓ 需要更多信息才能继续。"
+                
+                logger.info(f"Normal模式提取到 {len(tool_calls)} 个工具调用")
+                
+                # 创建AIMessage
+                ai_message = AIMessage(content=detailed_response)
+                
+                # 如果有工具调用，设置为消息的tool_calls属性
+                if tool_calls:
+                    langchain_tool_calls = []
+                    for i, tool_call in enumerate(tool_calls):
+                        tool_call_obj = {
+                            "name": tool_call.get("tool_name"),
+                            "args": tool_call.get("parameters", {}),
+                            "id": f"call_{i}",
+                            "type": "tool_call"
+                        }
+                        langchain_tool_calls.append(tool_call_obj)
                     
-                    # 提取用户消息
-                    user_message = json_data.get("response", content)
-                    
-                    # 提取工具调用
-                    tool_calls = json_data.get("tool_calls", [])
-                    logger.info(f"提取到 {len(tool_calls)} 个工具调用: {tool_calls}")
-                    
-                    # 创建AIMessage
-                    ai_message = AIMessage(content=user_message)
-                    
-                    # 如果有工具调用，设置为消息的tool_calls属性
-                    if tool_calls:
-                        # 转换为LangChain期望的格式
-                        langchain_tool_calls = []
-                        for i, tool_call in enumerate(tool_calls):
-                            tool_call_obj = {
-                                "name": tool_call.get("tool_name"),
-                                "args": tool_call.get("parameters", {}),
-                                "id": f"call_{i}",
-                                "type": "tool_call"
-                            }
-                            langchain_tool_calls.append(tool_call_obj)
-                        
-                        # 关键：直接设置tool_calls属性
-                        ai_message.tool_calls = langchain_tool_calls
-                        
-                        # 验证设置是否成功
-                        logger.info(f"成功设置tool_calls属性: {langchain_tool_calls}")
-                        logger.info(f"AI消息tool_calls验证: {hasattr(ai_message, 'tool_calls')} - {ai_message.tool_calls}")
-                        
-                        # 额外验证：重新创建AIMessage并明确设置tool_calls
-                        if not getattr(ai_message, 'tool_calls', None):
-                            logger.warning("tool_calls属性设置失败，尝试重新创建消息")
-                            # 尝试不同的设置方法
-                            ai_message = AIMessage(
-                                content=user_message,
-                                tool_calls=langchain_tool_calls
-                            )
-                            logger.info(f"重新创建后的tool_calls: {ai_message.tool_calls}")
+                    ai_message.tool_calls = langchain_tool_calls
+                    logger.info(f"Normal模式成功设置tool_calls属性")
+                
+                return ai_message, tool_calls
+            else:
+                # 降级处理：如果不是dict，可能是旧格式
+                logger.warning(f"Normal模式收到非结构化响应: {type(response)}")
+                content = str(response) if response else "响应为空"
+                return AIMessage(content=content), []
+            
+        except Exception as e:
+            logger.error(f"Normal模式处理响应时出错: {str(e)}")
+            import traceback
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
+            return AIMessage(content="处理响应时出现错误"), []
                     
                     return ai_message, tool_calls
                     
@@ -138,8 +125,8 @@ class NormalModeHandler:
                 "input": user_input
             })
             
-            # 解析JSON响应并处理工具调用
-            parsed_response, tool_calls = self._parse_json_response(response)
+            # 处理LLM的结构化响应
+            parsed_response, _ = self._process_llm_response(response)
             
             # 如果有工具调用，添加到响应中
             if tool_calls:

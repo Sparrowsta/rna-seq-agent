@@ -315,6 +315,7 @@ process DOWNLOAD_SRR {
     if [ -f "./fastq_temp/${srr_id}_2.fastq" ]; then
         gzip ./fastq_temp/${srr_id}_1.fastq
         gzip ./fastq_temp/${srr_id}_2.fastq
+        wait  # 等待两个压缩任务完成
         mv ./fastq_temp/${srr_id}_1.fastq.gz ${srr_id}_1.fastq.gz
         mv ./fastq_temp/${srr_id}_2.fastq.gz ${srr_id}_2.fastq.gz
     else
@@ -748,7 +749,7 @@ workflow {
         .view { "Final FASTQ samples for processing: $it" }
     
     // --- 5. 质控处理 ---
-    if (params.qc_tool != "none") {
+    if (params.qc_tool != "h") {
         qc_results_ch = run_quality_control(fastq_samples_ch)
         processed_reads_ch = qc_results_ch.qc_reads
     } else {
