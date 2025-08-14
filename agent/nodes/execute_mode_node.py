@@ -176,15 +176,13 @@ class ExecuteModeHandler:
             if not (has_fastq or has_srr):
                 missing_fields.append("FASTQ文件或SRR ID")
             
-            # 检查基因组配置 - 更宽松的验证
-            has_local_genome = bool(config.get("local_genome_path"))
-            has_download_genome = bool(config.get("download_genome_url"))
+            # 检查基因组配置 - 只检查genome_version
             has_genome_version = bool(config.get("genome_version"))
             
-            logger.info(f"Genome sources - Local: {has_local_genome}, Download: {has_download_genome}, Version: {has_genome_version}")
+            logger.info(f"基因组版本配置: {has_genome_version}")
             
-            if not (has_local_genome or has_download_genome or has_genome_version):
-                missing_fields.append("基因组文件配置")
+            if not has_genome_version:
+                logger.warning("未指定基因组版本，将使用默认hg38")
             
             # 检查启用的流程 - 更宽松的验证，如果没有明确的run_*参数，就假设需要运行基础流程
             enabled_processes = [key for key, value in config.items() 
@@ -226,12 +224,8 @@ class ExecuteModeHandler:
             # 确保有完整的默认配置
             default_config = {
                 "srr_ids": "",
-                "local_genome_path": "",
-                "local_gtf_path": "",
-                "download_genome_url": "",
-                "download_gtf_url": "",
                 "local_fastq_files": "",
-                "genome_version": "hg38",
+                "genome_version": "",
                 "data": "./data",
                 "run_download_srr": False,
                 "run_download_genome": False,
@@ -243,6 +237,16 @@ class ExecuteModeHandler:
             
             # 合并配置
             merged_config = {**default_config, **nextflow_config}
+            logger.info(f"Merged config genome_version: '{merged_config.get('genome_version')}'")
+            logger.info(f"Original nextflow_config genome_version: '{nextflow_config.get('genome_version')}'")
+            logger.info(f"Default config genome_version: '{default_config.get('genome_version')}'")
+            
+            # 只有当genome_version为空时才使用默认值hg38
+            if not merged_config.get("genome_version"):
+                merged_config["genome_version"] = "hg38"
+                logger.info("使用默认基因组版本: hg38")
+            else:
+                logger.info(f"使用配置的基因组版本: {merged_config['genome_version']}")
             logger.info(f"Final merged config keys: {list(merged_config.keys())}")
             
             # 构建nextflow参数
@@ -303,10 +307,21 @@ class ExecuteModeHandler:
                     error_message += f"• 命令: `{command}`\n\n"
                     
                     if result.stderr:
-                        error_message += "**错误信息**:\n"
-                        error_message += f"```\n{result.stderr[-1000:]}\n```\n\n"
+                        error_message += "**错误信息 (stderr)**:\n"
+                        error_message += f"```\n{result.stderr[-1500:]}\n```\n\n"
                     
-                    error_message += "**建议**: 检查配置参数和输入文件。"
+                    if result.stdout:
+                        error_message += "**输出信息 (stdout)**:\n"
+                        error_message += f"```\n{result.stdout[-1500:]}\n```\n\n"
+                    
+                    if not result.stderr and not result.stdout:
+                        error_message += "**注意**: 没有捕获到错误信息或输出信息\n\n"
+                    
+                    error_message += "**建议**: 检查配置参数和输入文件。可能的原因：\n"
+                    error_message += "- 文件权限问题\n"
+                    error_message += "- Docker环境中的路径问题\n" 
+                    error_message += "- 缺少依赖工具\n"
+                    error_message += "- 配置文件问题"
                     
                     return {
                         "execution_status": "failed",
@@ -362,29 +377,15 @@ class ExecuteModeHandler:
                 params[param] = config[param]
                 logger.info(f"Added param: {param} = {config[param]}")
         
-        # 基因组参数 - 使用优先级逻辑
-        has_local_genome = bool(config.get("local_genome_path")) and bool(config.get("local_gtf_path"))
-        has_genome_version = bool(config.get("genome_version"))
-        has_download_urls = bool(config.get("download_genome_url")) and bool(config.get("download_gtf_url"))
-        
-        if has_local_genome:
-            # 优先使用本地文件
-            params["local_genome_path"] = config["local_genome_path"]
-            params["local_gtf_path"] = config["local_gtf_path"]
-            logger.info("Using local genome files")
-        elif has_genome_version:
-            # 使用genome_version（从genomes.json读取）
+        # 基因组参数 - 只使用genome_version参数
+        # main.nf已重构为统一使用genome_version从genomes.json获取路径
+        if config.get("genome_version"):
             params["genome_version"] = config["genome_version"]
-            logger.info(f"Using genome version: {config['genome_version']}")
-        elif has_download_urls:
-            # 使用下载URL
-            params["download_genome_url"] = config["download_genome_url"]
-            params["download_gtf_url"] = config["download_gtf_url"]
-            logger.info("Using download URLs")
+            logger.info(f"使用基因组版本: {config['genome_version']}")
         else:
             # 默认使用hg38
             params["genome_version"] = "hg38"
-            logger.info("No genome config found, using default hg38")
+            logger.info("未指定基因组版本，使用默认hg38")
         
         # 流程控制参数
         run_params = [
@@ -396,20 +397,6 @@ class ExecuteModeHandler:
             if param in config and config[param] is not None:
                 params[param] = bool(config[param])
                 logger.info(f"Added param: {param} = {config[param]}")
-        
-        # 如果没有明确的流程配置，启用默认流程
-        run_param_values = [params.get(p, False) for p in run_params]
-        if not any(run_param_values):
-            logger.info("No explicit run parameters, enabling default pipeline")
-            # 根据数据源启用合适的默认流程
-            if params.get("srr_ids"):
-                params["run_download_srr"] = True
-            if params.get("local_fastq_files"):
-                params["run_fastp"] = True
-                params["run_star_align"] = True
-                params["run_featurecounts"] = True
-            if params.get("genome_version") or params.get("download_genome_url"):
-                params["run_build_star_index"] = True
         
         # 确保有数据目录
         if "data" not in params:
@@ -441,6 +428,16 @@ def execute_mode_node(state: AgentState) -> Dict[str, Any]:
         # 获取当前执行状态
         execution_status = state.get("execution_status", "idle")
         logger.info(f"Current execution status: {execution_status}")
+        
+        # 检查是否为用户重新发起的执行命令
+        # 如果最后一条消息是人类输入的execute命令，则重置状态
+        if state.get("messages"):
+            last_message = state["messages"][-1]
+            if (hasattr(last_message, "type") and last_message.type == "human" and
+                hasattr(last_message, "content") and 
+                last_message.content.lower().strip() in ["/execute", "/开始执行", "/执行"]):
+                logger.info("Detected user execute command, resetting execution status to idle")
+                execution_status = "idle"
         
         if execution_status == "idle":
             # 开始执行 - 简化版：直接执行并等待完成

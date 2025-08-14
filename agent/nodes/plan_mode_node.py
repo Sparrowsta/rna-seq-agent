@@ -8,8 +8,8 @@ import logging
 import json
 from typing import Dict, Any, List, Tuple
 from langchain_core.messages import HumanMessage, AIMessage
-from ..state import AgentState, update_state_mode, update_nextflow_config, add_plan_step
-from ..core import create_chain_for_mode, create_structured_chain_for_mode
+from ..state import AgentState, update_state_mode
+from ..core import create_structured_chain_for_mode
 from ..ui_manager import get_ui_manager
 
 # 配置日志
@@ -26,9 +26,74 @@ class PlanModeHandler:
     
     def __init__(self):
         # 使用结构化链用于JSON格式输出
-        self.chain = create_structured_chain_for_mode("plan")  
-        self.structured_chain = create_structured_chain_for_mode("plan")
+        self.chain = create_structured_chain_for_mode("plan")
     
+    def _clean_special_tokens(self, content: str) -> str:
+        """
+        清理LLM输出中的特殊分隔符和无关内容
+        """
+        import re
+        
+        # 移除工具调用相关的特殊分隔符
+        patterns = [
+            r'<｜[^｜]*｜>',  # 移除 <｜tool▁calls▁begin｜> 等分隔符
+            r'function<｜[^｜]*｜>[^<]*',  # 移除 function<｜tool▁sep｜>update_nextflow_param 等
+            r'```json\n.*?\n```<｜[^｜]*｜>',  # 移除嵌套的json块和分隔符
+        ]
+        
+        for pattern in patterns:
+            content = re.sub(pattern, '', content, flags=re.DOTALL)
+        
+        # 如果内容看起来只是工具参数，尝试提取第一个有效的JSON
+        if content.strip().startswith('{"param_name"'):
+            # 尝试查找完整的JSON结构开头
+            json_start = content.find('{"reasoning"')
+            if json_start == -1:
+                json_start = content.find('{\n  "reasoning"')
+            if json_start != -1:
+                content = content[json_start:]
+            else:
+                # 如果没有找到完整JSON，包装这个参数到默认结构中
+                content = self._wrap_incomplete_response(content)
+        
+        return content.strip()
+    
+    def _wrap_incomplete_response(self, content: str) -> str:
+        """
+        将不完整的响应包装成完整的JSON结构
+        """
+        try:
+            # 尝试解析为工具参数
+            import json
+            param_data = json.loads(content.strip())
+            
+            if "param_name" in param_data and "param_value" in param_data:
+                # 构建完整的JSON响应，但不再添加工具调用以避免循环
+                wrapped_response = {
+                    "reasoning": f"配置参数 {param_data['param_name']} 设置完成",
+                    "response": f"✅ 已配置 {param_data['param_name']} = {param_data['param_value']}\n\n继续配置其他必要参数，或输入新的需求...",
+                    "plan_steps": [],
+                    "config_changes": {param_data['param_name']: param_data['param_value']},
+                    "next_action": "等待用户输入或继续配置",
+                    "ready_to_execute": False,
+                    "tool_calls": []
+                }
+                return json.dumps(wrapped_response, ensure_ascii=False, indent=2)
+        except:
+            pass
+        
+        # 如果无法解析，返回默认错误响应
+        import json
+        return json.dumps({
+            "reasoning": "LLM响应格式异常",
+            "response": "响应解析出现问题，请重新尝试",
+            "plan_steps": [],
+            "config_changes": {},
+            "next_action": "等待用户输入",
+            "ready_to_execute": False,
+            "tool_calls": []
+        }, ensure_ascii=False, indent=2)
+
     def _parse_json_response(self, response) -> Tuple[AIMessage, List[Dict[str, Any]]]:
         """
         解析LLM的JSON响应
@@ -40,6 +105,9 @@ class PlanModeHandler:
                 # 清理响应内容
                 content = _clean_unicode_content(response.content)
                 logger.info(f"Plan模式LLM响应内容: {repr(content[:300])}...")
+                
+                # 移除特殊工具调用分隔符和其他无关内容
+                content = self._clean_special_tokens(content)
                 
                 # 移除代码块标记
                 if "```json" in content:
@@ -65,6 +133,9 @@ class PlanModeHandler:
                     plan_steps = json_data.get("plan_steps", [])
                     config_changes = json_data.get("config_changes", {})
                     
+                    # 检查是否已准备好执行
+                    ready_to_execute = json_data.get("ready_to_execute", False)
+                    
                     # 构建详细响应
                     detailed_response = user_message
                     if plan_steps:
@@ -76,9 +147,19 @@ class PlanModeHandler:
                         for key, value in config_changes.items():
                             detailed_response += f"  - {key}: {value}\n"
                     
+                    # 如果已准备好执行，添加执行提示
+                    if ready_to_execute:
+                        detailed_response += "\n\n🚀 **配置完成！**\n"
+                        detailed_response += "所有参数已配置完成，可以开始执行RNA-seq分析。\n"
+                        detailed_response += "请输入 `/execute` 或 `/开始执行` 开始分析流程。"
+                    
                     # 提取工具调用
                     tool_calls = json_data.get("tool_calls", [])
                     logger.info(f"Plan模式提取到 {len(tool_calls)} 个工具调用: {tool_calls}")
+                    
+                    # 如果ready_to_execute为true且没有工具调用，这是正常的完成状态
+                    if ready_to_execute and not tool_calls:
+                        logger.info("Plan模式配置已完成，无需进一步工具调用")
                     
                     # 创建AIMessage
                     ai_message = AIMessage(content=detailed_response)
@@ -234,13 +315,19 @@ class PlanModeHandler:
             plan_request = f"""
 用户请求制定RNA-seq分析计划。用户输入：{user_input}
 
-请按照以下步骤制定分析计划：
+请严格按照以下步骤制定分析计划：
 1. 首先调用 generate_analysis_task_list 工具自动检测本地文件并生成推荐配置
-2. 基于检测结果制定详细的分析计划
-3. 向用户展示完整的执行流程
-4. 询问用户是否确认或需要修改
+2. **关键步骤**：根据generate_analysis_task_list的结果，必须调用update_nextflow_param或batch_update_nextflow_config工具实际保存配置到系统状态
+3. 调用get_current_nextflow_config验证配置已正确保存
+4. 基于最终配置制定详细的分析计划
+5. 向用户展示完整的执行流程和当前配置状态
+6. 询问用户是否确认或需要修改
 
-重要：必须先调用 generate_analysis_task_list 工具获取智能配置建议。
+⚠️ **重要要求**：
+- 必须先调用 generate_analysis_task_list 工具获取智能配置建议
+- **必须**调用 update_nextflow_param 或 batch_update_nextflow_config 实际保存配置
+- 不能只在回复中显示配置，必须实际更新系统状态
+- 每个检测到的配置项都要调用工具保存
             """
             
             # 调用LLM处理计划请求
@@ -303,9 +390,9 @@ class PlanModeHandler:
     
     def handle_mode_switch_request(self, state: AgentState) -> Dict[str, Any]:
         """
-        处理模式切换请求，支持特殊命令检测
+        处理模式切换请求，统一使用工具调用检测
         
-        遵循单一职责原则：专门处理模式切换
+        遵循单一职责原则：专门处理模式切换，与normal模式保持一致
         """
         try:
             # 检查最后一条消息是否包含模式切换工具调用
@@ -314,7 +401,7 @@ class PlanModeHandler:
                 
             last_message = state["messages"][-1]
             
-            # 检查工具调用（LLM调用的工具）
+            # 只检查工具调用（LLM调用的工具），与normal模式保持一致
             if hasattr(last_message, "tool_calls") and last_message.tool_calls:
                 for tool_call in last_message.tool_calls:
                     if tool_call.get("name") == "switch_to_execute_mode":
@@ -327,22 +414,6 @@ class PlanModeHandler:
                             AIMessage(content="🔄 计划已确认！正在切换到执行模式...")
                         ]
                         return result
-            
-            # 检查用户消息内容中的特殊命令
-            if hasattr(last_message, "content"):
-                content = last_message.content.strip()
-                execute_commands = ["/execute", "/开始执行", "/执行"]
-                
-                if any(cmd in content for cmd in execute_commands):
-                    logger.info(f"Execute command detected in user message: {content}")
-                    # 直接切换到执行模式
-                    result = dict(state)
-                    result["mode"] = "execute"
-                    result["execution_status"] = "idle"
-                    result["messages"] = state["messages"] + [
-                        AIMessage(content="🔄 检测到执行命令！正在切换到执行模式...")
-                    ]
-                    return result
             
             return {}
         

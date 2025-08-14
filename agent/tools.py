@@ -990,33 +990,53 @@ def generate_analysis_task_list(analysis_type: str = "standard", force_refresh: 
         
         result.append("📋 配置已生成，可直接用于nextflow执行")
         
-        return "\n".join(result)
+        # 第6步：自动保存配置到AgentState
+        result.append("\n💾 **自动保存配置**")
+        try:
+            # 提取nextflow配置
+            nextflow_config = recommended_config["config"].copy()
+            # 移除不是nextflow参数的内部字段
+            nextflow_config.pop("has_local_files", None)
+            
+            import json
+            config_json = json.dumps(nextflow_config, ensure_ascii=False)
+            result.append("✅ 配置已自动保存到系统状态")
+            
+            # 添加配置更新指令供路由器解析
+            return "\n".join(result) + f"\n[CONFIG_UPDATE] {config_json}"
+            
+        except Exception as e:
+            result.append(f"⚠️ 自动保存配置失败：{str(e)}")
+            return "\n".join(result)
         
     except Exception as e:
         return f"生成任务列表时发生错误：{str(e)}"
 
 def _detect_local_fastq_files() -> Dict[str, Any]:
-    """检测本地FASTQ文件"""
+    """检测本地FASTQ文件 - 简化版，只处理原始文件"""
     try:
-        # 搜索默认FASTQ路径
-        search_paths = ["data/fastq", "data/results/fastp", "fastq", "raw_data"]
+        # 简化搜索路径：只查找原始FASTQ文件，不包括处理后的文件
+        search_paths = ["data/fastq", "fastq", "raw_data"]
         found_files = []
         
         for path in search_paths:
             if os.path.exists(path):
                 for root, dirs, files in os.walk(path):
                     for file in files:
-                        if file.endswith(('.fastq', '.fq', '.fastq.gz', '.fq.gz')):
+                        # 只查找原始FASTQ文件，排除已处理的文件
+                        if (file.endswith(('.fastq', '.fq', '.fastq.gz', '.fq.gz')) and 
+                            not any(indicator in file.lower() for indicator in 
+                                   ['trimmed', 'fastp', 'cutadapt', 'processed', 'clean', 'filtered'])):
                             found_files.append(os.path.join(root, file))
         
         if found_files:
-            # 分析文件类型
+            # 简化配对逻辑：直接基于文件名配对
             paired_files = {}
             single_files = []
             
             for file_path in found_files:
                 file_name = os.path.basename(file_path)
-                # 简化的配对检测
+                # 简化的R1/R2检测
                 if '_1.' in file_name or '_R1.' in file_name:
                     sample_id = file_name.split('_')[0]
                     if sample_id not in paired_files:
@@ -1031,10 +1051,10 @@ def _detect_local_fastq_files() -> Dict[str, Any]:
                     single_files.append(file_path)
             
             summary = [
-                f"✅ 检测到 {len(found_files)} 个FASTQ文件",
+                f"✅ 检测到 {len(found_files)} 个原始FASTQ文件",
                 f"   - 双端文件：{len(paired_files)} 对样本",
                 f"   - 单端文件：{len(single_files)} 个",
-                f"   - 建议配置：使用本地FASTQ文件"
+                f"   - 建议配置：使用原始FASTQ文件进行分析"
             ]
             
             return {
@@ -1049,9 +1069,9 @@ def _detect_local_fastq_files() -> Dict[str, Any]:
             }
         else:
             summary = [
-                "❌ 未检测到本地FASTQ文件",
+                "❌ 未检测到原始FASTQ文件",
                 "   - 搜索路径：" + ", ".join(search_paths),
-                "   - 建议配置：需要提供SRR ID或上传FASTQ文件"
+                "   - 建议配置：需要提供SRR ID或上传原始FASTQ文件"
             ]
             
             return {
@@ -1083,8 +1103,9 @@ def _detect_local_genome_files() -> Dict[str, Any]:
         ready_genomes = []
         
         for name, info in genomes_config.items():
-            fasta_path = info.get('fasta', '')
-            gtf_path = info.get('gtf', '')
+            # 统一处理fasta和gtf路径（兼容不同命名）
+            fasta_path = info.get('fasta', info.get('fasta_path', ''))
+            gtf_path = info.get('gtf', info.get('gtf_path', ''))
             
             fasta_exists = os.path.exists(fasta_path) if fasta_path else False
             gtf_exists = os.path.exists(gtf_path) if gtf_path else False
@@ -1154,13 +1175,29 @@ def _generate_recommended_config(fastq_data: Dict, genome_data: Dict, analysis_t
         
         # 配置FASTQ文件
         if fastq_data.get("found"):
-            if fastq_data.get("recommended_path"):
-                config["local_fastq_files"] = fastq_data["recommended_path"] + "/*.fastq*"
+            # 生成具体的文件路径列表，而不是通配符
+            fastq_files = []
+            
+            # 收集双端配对文件
+            if fastq_data.get("paired_files"):
+                for sample_id, pair in fastq_data["paired_files"].items():
+                    if "R1" in pair:
+                        fastq_files.append(pair["R1"])
+                    if "R2" in pair:
+                        fastq_files.append(pair["R2"])
+            
+            # 收集单端文件
+            if fastq_data.get("single_files"):
+                fastq_files.extend(fastq_data["single_files"])
+            
+            if fastq_files:
+                # 使用逗号分隔的具体文件路径列表
+                config["local_fastq_files"] = ",".join(fastq_files)
                 config["run_download_srr"] = False
-                summary.append("✅ 配置使用本地FASTQ文件")
+                summary.append(f"✅ 配置使用本地FASTQ文件 ({len(fastq_files)}个文件)")
                 config["has_local_files"] = True
             else:
-                summary.append("⚠️ 检测到FASTQ文件但路径不明确")
+                summary.append("⚠️ 检测到FASTQ文件但无法生成具体路径列表")
         else:
             config["run_download_srr"] = True
             config["srr_ids"] = ""  # 需要用户提供
@@ -1175,6 +1212,22 @@ def _generate_recommended_config(fastq_data: Dict, genome_data: Dict, analysis_t
             config["genome_version"] = recommended["name"]
             summary.append(f"✅ 配置使用本地基因组：{recommended['name']}")
             config["has_local_files"] = True
+            
+            # 检查STAR索引是否存在
+            fasta_dir = os.path.dirname(recommended["fasta"])
+            star_index_dir = os.path.join(fasta_dir, "star_index")
+            if os.path.exists(star_index_dir) and os.path.isdir(star_index_dir):
+                # 检查star_index目录是否有内容
+                star_files = os.listdir(star_index_dir)
+                if star_files:
+                    config["run_build_star_index"] = False
+                    summary.append("✅ 检测到现有STAR索引，跳过索引构建")
+                else:
+                    config["run_build_star_index"] = True
+                    summary.append("⚠️ STAR索引目录为空，需要重新构建")
+            else:
+                config["run_build_star_index"] = True
+                summary.append("⚠️ 未检测到STAR索引，需要构建")
         else:
             config["run_download_genome"] = True
             config["genome_version"] = "hg38"  # 默认

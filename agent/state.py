@@ -48,6 +48,7 @@ def create_initial_state() -> AgentState:
             "download_genome_url": "",
             "download_gtf_url": "",
             "local_fastq_files": "",
+            "genome_version": "",  # 添加genome_version字段，初始为空
             "data": "./data",
             # 流程控制参数
             "run_download_srr": False,

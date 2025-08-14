@@ -4,7 +4,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from pydantic import BaseModel, Field
 from .tools import (
-    list_directory_contents, query_fastq_files, query_genome_info, add_new_genome,
+    query_fastq_files, query_genome_info, add_new_genome,
     update_nextflow_param, batch_update_nextflow_config,
     switch_to_plan_mode, switch_to_execute_mode,
     execute_nextflow_pipeline, check_execution_status, get_current_nextflow_config,
@@ -17,7 +17,7 @@ from .tools import (
 
 # 所有可用工具
 ALL_TOOLS = [
-    list_directory_contents, query_fastq_files, query_genome_info, add_new_genome,
+    query_fastq_files, query_genome_info, add_new_genome,
     update_nextflow_param, batch_update_nextflow_config,
     switch_to_plan_mode, switch_to_execute_mode,
     execute_nextflow_pipeline, check_execution_status, get_current_nextflow_config,
@@ -27,13 +27,13 @@ ALL_TOOLS = [
 # 模式特定工具映射 - 遵循接口隔离原则
 MODE_TOOLS = {
     "normal": [
-        list_directory_contents, query_fastq_files, query_genome_info, add_new_genome,
+        query_fastq_files, query_genome_info, add_new_genome,
         get_current_nextflow_config, switch_to_plan_mode, list_directory_tree
     ],
     "plan": [
-        query_fastq_files, query_genome_info, add_new_genome, update_nextflow_param,
+        query_fastq_files, query_genome_info, update_nextflow_param,
         batch_update_nextflow_config, get_current_nextflow_config,
-        switch_to_execute_mode, list_directory_tree, generate_analysis_task_list
+        switch_to_execute_mode, generate_analysis_task_list
     ],
     "execute": [
         execute_nextflow_pipeline, check_execution_status,
@@ -209,8 +209,19 @@ PLAN_MODE_PROMPT = ChatPromptTemplate.from_messages([
 - update_nextflow_param: 更新单个配置参数
 - switch_to_execute_mode: 切换到执行模式
 
-**特殊命令检测：**
-- "/execute", "/开始执行", "/执行" - 切换到执行模式
+**执行命令处理规则：**
+当用户输入包含执行命令（如"/execute", "/开始执行", "/执行"）时，**必须**智能处理：
+1. **智能解析命令参数** - 分析命令中的额外信息（如基因组版本、特殊配置等）
+2. **配置完整性检查** - 基于对话历史检查当前配置状态
+3. **智能配置补全** - 自动调用工具更新/补全缺失或新指定的参数
+4. **执行模式切换** - 确保配置完整后，调用switch_to_execute_mode工具
+
+示例处理：
+- "/execute" → 检查现有配置完整性，补全缺失配置，然后切换
+- "/execute hg19" → 更新基因组为hg19，检查其他配置，然后切换  
+- "/execute 使用本地文件" → 更新为本地文件模式，检查配置，然后切换
+
+**重要：必须通过调用switch_to_execute_mode工具来切换模式，不能通过简单的字符串匹配**
 
 **配置项优先级：**
 1. **数据源配置** (最高优先级):
@@ -228,6 +239,8 @@ PLAN_MODE_PROMPT = ChatPromptTemplate.from_messages([
 - 只在文件选择有歧义时才询问用户
 - **关键**：不能只在回复中显示配置，必须使用工具调用实际更新系统状态
 - **重要**：必须设置local_fastq_files参数指向检测到的FASTQ文件
+- **强制要求**：每次检测到配置项后，必须立即调用相应的update工具保存到AgentState
+- **工具调用顺序**：generate_analysis_task_list → update_nextflow_param(为每个配置项) → get_current_nextflow_config(验证)
 - 配置完成时主动建议执行
 - 使用友好和专业的语调
 
@@ -250,6 +263,19 @@ PLAN_MODE_PROMPT = ChatPromptTemplate.from_messages([
   ]
 }}
 ```
+
+**工具调用要求（Plan模式）：**
+- **配置完整时可以不调用工具**：当所有必要参数已配置完成且验证无误时，tool_calls可以为空数组[]
+- 检测到配置需要更新时，必须调用update_nextflow_param或batch_update_nextflow_config
+- 配置完成后，设置ready_to_execute为true，并在response中明确提示用户可以开始执行
+- **避免重复验证**：不要反复调用get_current_nextflow_config验证同一配置
+
+**完成条件：**
+当满足以下条件时，应停止工具调用并设置ready_to_execute为true：
+1. FASTQ文件路径已配置（local_fastq_files或srr_ids）
+2. 基因组文件已配置（local_genome_path + local_gtf_path 或 genome_version）
+3. 必要的run_*参数已启用（run_fastp, run_star_align, run_featurecounts等）
+4. 所有配置已验证无误
 
 **重要：必须严格按照JSON格式输出，不要添加任何格式标记或说明文字**"""),
     MessagesPlaceholder(variable_name="messages"),
