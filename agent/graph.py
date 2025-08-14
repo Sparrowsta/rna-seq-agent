@@ -282,7 +282,6 @@ def wrapped_user_input_node(state: AgentState) -> dict:
     应用装饰器模式：添加错误处理和日志
     """
     try:
-        print("[NODE] 获取用户输入")
         result = get_user_input(state)
         return result
     
@@ -414,7 +413,6 @@ def create_agent_graph():
                 .add_conditional_edges()
                 .build())
         
-        print("[GRAPH] Agent图创建成功")
         return graph
     
     except Exception as e:
@@ -492,7 +490,6 @@ def validate_graph_structure():
         ]
         
         # 这里可以添加更详细的验证逻辑
-        print("[VALIDATION] 图结构验证通过")
         return True
     
     except Exception as e:

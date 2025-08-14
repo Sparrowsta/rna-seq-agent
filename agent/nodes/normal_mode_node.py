@@ -342,14 +342,13 @@ def handle_normal_mode_tools(state: AgentState) -> Dict[str, Any]:
 # 便捷函数和工具 - 遵循DRY原则
 # ============================================================================
 
-def create_welcome_message() -> AIMessage:
+def create_welcome_message(validation_results=None) -> AIMessage:
     """
     创建欢迎消息
     
     应用工厂模式：统一的消息创建
     """
-    return AIMessage(content="""
-🧬 **RNA-seq智能助手** 已启动！
+    welcome_content = """🧬 **RNA-seq智能助手** 已启动！
 
 我是您的专业RNA-seq智能助手，可以帮助您：
 - 📁 查看和管理FASTQ文件
@@ -357,8 +356,25 @@ def create_welcome_message() -> AIMessage:
 - 📋 制定个性化处理计划
 - 🚀 执行完整的RNA-seq流程
 
-请告诉我您的需求，或输入"帮助"查看详细功能介绍。
-    """)
+请告诉我您的需求，或输入"帮助"查看详细功能介绍。"""
+
+    # 如果有验证结果，添加系统状态信息
+    if validation_results:
+        status_content = "\n\n📋 **系统验证状态**:\n"
+        for status, message in validation_results:
+            status_content += f"  {status} {message}\n"
+        
+        # 统计结果
+        success_count = sum(1 for status, _ in validation_results if status == "✅")
+        total_count = len(validation_results)
+        status_content += f"\n📊 总结: {success_count}/{total_count} 项验证通过"
+        
+        if success_count == total_count:
+            status_content += " 🎉"
+        
+        welcome_content += status_content
+    
+    return AIMessage(content=welcome_content)
 
 def create_help_message() -> AIMessage:
     """

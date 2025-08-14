@@ -124,13 +124,14 @@ def create_argument_parser():
 # 系统验证 - 遵循验证模式
 # ============================================================================
 
-def validate_system_requirements():
+def validate_system_requirements(silent=False):
     """
     验证系统要求
     
     应用KISS原则：简单的系统验证
     """
-    print("🔍 验证系统要求...")
+    if not silent:
+        print("🔍 验证系统要求...")
     
     validation_results = []
     
@@ -171,23 +172,27 @@ def validate_system_requirements():
     except Exception as e:
         validation_results.append(("❌", f"Agent图结构: 验证出错 - {str(e)}"))
     
-    # 显示验证结果
-    print("\n📋 验证结果:")
-    for status, message in validation_results:
-        print(f"  {status} {message}")
-    
-    # 统计结果
-    success_count = sum(1 for status, _ in validation_results if status == "✅")
-    total_count = len(validation_results)
-    
-    print(f"\n📊 总结: {success_count}/{total_count} 项验证通过")
-    
-    if success_count == total_count:
-        print("🎉 系统验证完全通过！")
-        return True
+    if not silent:
+        # 显示验证结果
+        print("\n📋 验证结果:")
+        for status, message in validation_results:
+            print(f"  {status} {message}")
+        
+        # 统计结果
+        success_count = sum(1 for status, _ in validation_results if status == "✅")
+        total_count = len(validation_results)
+        
+        print(f"\n📊 总结: {success_count}/{total_count} 项验证通过")
+        
+        if success_count == total_count:
+            print("🎉 系统验证完全通过！")
+            return True
+        else:
+            print("⚠️  系统验证存在问题，请检查上述失败项。")
+            return False
     else:
-        print("⚠️  系统验证存在问题，请检查上述失败项。")
-        return False
+        # 静默模式，只返回验证结果
+        return validation_results
 
 def show_system_info():
     """
@@ -266,12 +271,19 @@ class InteractiveInterface:
     
     def show_goodbye(self):
         """显示告别信息"""
-        print("\n" + "=" * 60)
-        print("👋 感谢使用 RNA-seq分析Agent!")
-        print("=" * 60)
-        print("如果您有任何问题或建议，请联系技术支持。")
-        print("祝您的研究工作顺利！🧬✨")
-        print("=" * 60)
+        from agent.ui_manager import get_ui_manager
+        
+        ui_manager = get_ui_manager()
+        
+        goodbye_content = """👋 **感谢使用 RNA-seq分析Agent！**
+
+如果您有任何问题或建议，请联系技术支持。
+祝您的研究工作顺利！🧬✨
+
+期待下次为您服务！"""
+        
+        # 使用与welcome消息相同的风格显示告别信息
+        ui_manager.show_ai_response(goodbye_content, "normal")
     
     def run_interactive_session(self):
         """
@@ -280,22 +292,20 @@ class InteractiveInterface:
         应用状态机模式：管理会话状态
         """
         try:
-            # 显示欢迎信息
-            self.show_welcome()
+            # 获取系统验证结果（静默模式）
+            validation_results = validate_system_requirements(silent=True)
             
             # 创建初始状态
             initial_state = create_initial_state()
             
-            # 添加欢迎消息
-            welcome_msg = create_welcome_message()
+            # 添加包含验证信息的欢迎消息
+            welcome_msg = create_welcome_message(validation_results)
             initial_state["messages"] = [welcome_msg]
             
             if self.debug_mode:
                 print_graph_info()
             
             # 运行agent
-            self.logger.info("启动交互会话")
-            
             try:
                 # 增加递归限制配置以避免工具调用过多
                 final_state = agent_executor.invoke(initial_state, {"recursion_limit": 100})
@@ -339,11 +349,13 @@ def main():
         args = parser.parse_args()
         
         # 设置日志
-        log_level = "DEBUG" if args.debug else args.log_level
+        if args.debug:
+            log_level = "DEBUG"
+        else:
+            log_level = "WARNING"  # 默认只显示WARNING及以上级别的日志
         setup_logging(log_level, args.log_file)
         
         logger = logging.getLogger(__name__)
-        logger.info("RNA-seq Agent 启动")
         
         # 处理特殊命令
         if args.info:
@@ -354,12 +366,7 @@ def main():
             success = validate_system_requirements()
             sys.exit(0 if success else 1)
         
-        # 验证系统要求（简化版）
-        if not validate_system_requirements():
-            print("\n⚠️  系统验证失败，但程序将继续运行。")
-            print("某些功能可能无法正常工作。")
-        
-        # 启动交互界面
+        # 启动交互界面（验证信息将在AI助手banner中显示）
         interface = InteractiveInterface(debug_mode=args.debug)
         interface.run_interactive_session()
     

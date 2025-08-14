@@ -9,6 +9,8 @@ import os
 import json
 import time
 import subprocess
+import threading
+import re
 from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
 from langchain_core.messages import HumanMessage, AIMessage
@@ -19,6 +21,368 @@ from ..ui_manager import get_ui_manager
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+class NextflowProgressMonitor:
+    """
+    Nextflow实时进度监控器
+    
+    混合监控方案：
+    1. 实时解析stdout/stderr流
+    2. 监控工作目录结构变化
+    3. 计算整体进度和时间估算
+    4. 提供用户友好的进度显示
+    """
+    
+    def __init__(self):
+        self.process = None
+        self.start_time = None
+        self.current_progress = 0
+        self.total_steps = 0
+        self.current_step = ""
+        self.completed_processes = []
+        self.running_processes = []
+        self.failed_processes = []
+        self.log_lines = []
+        self.stop_monitoring = False
+        
+        # Nextflow进程识别模式
+        self.process_patterns = {
+            'fastp': r'process > FASTP',
+            'star_align': r'process > STAR_ALIGN', 
+            'featurecounts': r'process > FEATURECOUNTS',
+            'download_srr': r'process > DOWNLOAD_SRR',
+            'download_genome': r'process > DOWNLOAD_GENOME',
+            'build_star_index': r'process > BUILD_STAR_INDEX'
+        }
+        
+        # 步骤描述映射
+        self.step_descriptions = {
+            'fastp': '质量控制 (FastP)',
+            'star_align': '序列比对 (STAR)',
+            'featurecounts': '基因定量 (featureCounts)', 
+            'download_srr': 'SRR数据下载',
+            'download_genome': '基因组下载',
+            'build_star_index': 'STAR索引构建'
+        }
+    
+    def start_monitoring(self, command: str, work_dir: str = "./work"):
+        """启动监控"""
+        self.start_time = time.time()
+        self.work_dir = work_dir
+        self.stop_monitoring = False
+        
+        logger.info(f"启动Nextflow进度监控: {command}")
+        
+        try:
+            # 启动Nextflow进程
+            self.process = subprocess.Popen(
+                command,
+                shell=True,
+                cwd=".",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # 合并stderr到stdout
+                text=True,
+                bufsize=1,  # 行缓冲
+                universal_newlines=True
+            )
+            
+            logger.info(f"Nextflow进程已启动，PID: {self.process.pid}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"启动Nextflow进程失败: {str(e)}")
+            return False
+    
+    def monitor_progress(self, callback_func=None):
+        """
+        监控执行进度
+        
+        Args:
+            callback_func: 回调函数，用于更新UI显示
+        """
+        if not self.process:
+            return
+            
+        try:
+            # 启动输出读取线程
+            output_thread = threading.Thread(
+                target=self._read_output_stream,
+                args=(callback_func,),
+                daemon=True
+            )
+            output_thread.start()
+            
+            # 主监控循环
+            while self.process.poll() is None and not self.stop_monitoring:
+                # 计算当前进度
+                progress_info = self._calculate_progress()
+                
+                if callback_func:
+                    callback_func(progress_info)
+                
+                time.sleep(2)  # 每2秒更新一次
+            
+            # 等待输出线程结束
+            output_thread.join(timeout=5)
+            
+            # 获取最终结果
+            return_code = self.process.returncode
+            final_info = self._get_final_results(return_code)
+            
+            if callback_func:
+                callback_func(final_info)
+                
+            return final_info
+            
+        except Exception as e:
+            logger.error(f"监控进程中出现错误: {str(e)}")
+            error_info = {
+                'status': 'error',
+                'message': f'监控出现错误: {str(e)}',
+                'progress': 0,
+                'elapsed_time': time.time() - self.start_time if self.start_time else 0
+            }
+            if callback_func:
+                callback_func(error_info)
+            return error_info
+    
+    def _read_output_stream(self, callback_func=None):
+        """读取并解析输出流"""
+        try:
+            for line in iter(self.process.stdout.readline, ''):
+                if self.stop_monitoring:
+                    break
+                    
+                line = line.strip()
+                if line:
+                    self.log_lines.append(line)
+                    self._parse_output_line(line)
+                    
+                    # 如果是重要信息，立即回调
+                    if any(pattern in line for pattern in ['process >', 'ERROR', 'WARN', 'executor >']):
+                        if callback_func:
+                            progress_info = self._calculate_progress()
+                            progress_info['latest_log'] = line
+                            callback_func(progress_info)
+                            
+        except Exception as e:
+            logger.error(f"读取输出流时出错: {str(e)}")
+    
+    def _parse_output_line(self, line: str):
+        """解析单行输出"""
+        try:
+            # 检测进程启动/完成
+            if 'process >' in line:
+                self._update_process_status(line)
+            
+            # 检测错误
+            elif 'ERROR' in line:
+                logger.warning(f"Nextflow错误: {line}")
+                self.failed_processes.append(line)
+            
+            # 检测执行器信息
+            elif 'executor >' in line:
+                match = re.search(r'executor >\s+(\w+)\s+\((\d+)\)', line)
+                if match:
+                    executor = match.group(1)
+                    task_count = int(match.group(2))
+                    logger.info(f"执行器 {executor} 处理 {task_count} 个任务")
+                    
+        except Exception as e:
+            logger.error(f"解析输出行时出错: {str(e)}")
+    
+    def _update_process_status(self, line: str):
+        """更新进程状态"""
+        try:
+            # 解析进程信息：[hash] process > PROCESS_NAME (sample) [progress] status
+            process_match = re.search(r'process > (\w+)(?:\s+\(([^)]+)\))?\s+\[([^\]]*)\](?:\s+(.+))?', line)
+            
+            if process_match:
+                process_name = process_match.group(1).lower()
+                sample_name = process_match.group(2) or ""
+                progress_info = process_match.group(3) or ""
+                status_info = process_match.group(4) or ""
+                
+                logger.info(f"进程更新: {process_name}, 样本: {sample_name}, 进度: {progress_info}, 状态: {status_info}")
+                
+                # 更新当前步骤
+                if process_name in self.step_descriptions:
+                    self.current_step = self.step_descriptions[process_name]
+                    if sample_name:
+                        self.current_step += f" ({sample_name})"
+                
+                # 判断进程状态
+                if '100%' in progress_info and ('✓' in status_info or 'COMPLETED' in status_info.upper()):
+                    if process_name not in self.completed_processes:
+                        self.completed_processes.append(process_name)
+                        logger.info(f"进程完成: {process_name}")
+                elif process_name not in self.running_processes:
+                    self.running_processes.append(process_name)
+                    
+        except Exception as e:
+            logger.error(f"更新进程状态时出错: {str(e)}")
+    
+    def _calculate_progress(self) -> Dict[str, Any]:
+        """计算当前进度"""
+        try:
+            elapsed_time = time.time() - self.start_time if self.start_time else 0
+            
+            # 估算总步骤数（基于检测到的进程）
+            all_processes = set(self.completed_processes + self.running_processes)
+            total_processes = max(len(all_processes), 1)
+            completed_count = len(self.completed_processes)
+            
+            # 计算进度百分比
+            if total_processes > 0:
+                progress_percent = min(int((completed_count / total_processes) * 100), 100)
+            else:
+                progress_percent = 0
+            
+            # 估算剩余时间
+            if completed_count > 0 and progress_percent < 100:
+                avg_time_per_step = elapsed_time / completed_count
+                remaining_steps = total_processes - completed_count
+                estimated_remaining = avg_time_per_step * remaining_steps
+            else:
+                estimated_remaining = 0
+            
+            return {
+                'status': 'running',
+                'progress': progress_percent,
+                'current_step': self.current_step,
+                'completed_processes': self.completed_processes.copy(),
+                'running_processes': self.running_processes.copy(),
+                'failed_processes': self.failed_processes.copy(),
+                'elapsed_time': elapsed_time,
+                'estimated_remaining': estimated_remaining,
+                'total_processes': total_processes,
+                'completed_count': completed_count,
+                'latest_logs': self.log_lines[-10:] if self.log_lines else []
+            }
+            
+        except Exception as e:
+            logger.error(f"计算进度时出错: {str(e)}")
+            return {
+                'status': 'error',
+                'progress': 0,
+                'message': f'进度计算错误: {str(e)}',
+                'elapsed_time': time.time() - self.start_time if self.start_time else 0
+            }
+    
+    def _get_final_results(self, return_code: int) -> Dict[str, Any]:
+        """获取最终执行结果"""
+        try:
+            elapsed_time = time.time() - self.start_time if self.start_time else 0
+            
+            if return_code == 0:
+                status = 'completed'
+                message = '🎉 Nextflow执行成功完成！'
+                progress = 100
+            else:
+                status = 'failed'
+                message = f'❌ Nextflow执行失败 (退出代码: {return_code})'
+                progress = max(self._calculate_progress().get('progress', 0), 0)
+            
+            return {
+                'status': status,
+                'message': message,
+                'progress': progress,
+                'return_code': return_code,
+                'elapsed_time': elapsed_time,
+                'completed_processes': self.completed_processes.copy(),
+                'failed_processes': self.failed_processes.copy(),
+                'total_log_lines': len(self.log_lines),
+                'final_logs': self.log_lines[-20:] if self.log_lines else []
+            }
+            
+        except Exception as e:
+            logger.error(f"获取最终结果时出错: {str(e)}")
+            return {
+                'status': 'error',
+                'message': f'获取结果时出错: {str(e)}',
+                'progress': 0,
+                'elapsed_time': time.time() - self.start_time if self.start_time else 0
+            }
+    
+    def stop(self):
+        """停止监控"""
+        self.stop_monitoring = True
+        if self.process and self.process.poll() is None:
+            logger.info("正在终止Nextflow进程...")
+            self.process.terminate()
+            time.sleep(3)
+            if self.process.poll() is None:
+                self.process.kill()
+    
+    def format_progress_display(self, progress_info: Dict[str, Any]) -> str:
+        """格式化进度显示"""
+        try:
+            status = progress_info.get('status', 'unknown')
+            progress = progress_info.get('progress', 0)
+            current_step = progress_info.get('current_step', '初始化...')
+            elapsed = progress_info.get('elapsed_time', 0)
+            estimated_remaining = progress_info.get('estimated_remaining', 0)
+            
+            # 状态emoji
+            status_emoji = {
+                'running': '🚀',
+                'completed': '✅', 
+                'failed': '❌',
+                'error': '⚠️'
+            }
+            
+            # 进度条
+            bar_length = 30
+            filled_length = int(bar_length * progress / 100)
+            bar = '█' * filled_length + '░' * (bar_length - filled_length)
+            
+            # 时间格式化
+            def format_time(seconds):
+                if seconds < 60:
+                    return f"{int(seconds)}秒"
+                elif seconds < 3600:
+                    return f"{int(seconds//60)}分{int(seconds%60)}秒"
+                else:
+                    hours = int(seconds // 3600)
+                    minutes = int((seconds % 3600) // 60)
+                    return f"{hours}小时{minutes}分钟"
+            
+            display = f"{status_emoji.get(status, '🔄')} **Nextflow执行进度**\n\n"
+            display += f"📊 整体进度：[{bar}] {progress}%\n"
+            display += f"🔄 当前步骤：{current_step}\n"
+            display += f"⏰ 已执行：{format_time(elapsed)}"
+            
+            if estimated_remaining > 0:
+                display += f" | 预计剩余：{format_time(estimated_remaining)}"
+            
+            display += "\n"
+            
+            # 显示已完成的进程
+            completed = progress_info.get('completed_processes', [])
+            if completed:
+                display += f"\n✅ **已完成步骤** ({len(completed)})：\n"
+                for proc in completed:
+                    step_name = self.step_descriptions.get(proc, proc)
+                    display += f"• {step_name}\n"
+            
+            # 显示正在运行的进程
+            running = progress_info.get('running_processes', [])
+            if running:
+                display += f"\n🔄 **正在执行** ({len(running)})：\n"
+                for proc in running:
+                    step_name = self.step_descriptions.get(proc, proc)
+                    display += f"• {step_name}\n"
+            
+            # 显示最新日志（如果有）
+            latest_log = progress_info.get('latest_log')
+            if latest_log and 'process >' in latest_log:
+                display += f"\n📄 **最新活动**：\n```\n{latest_log}\n```"
+            
+            return display
+            
+        except Exception as e:
+            logger.error(f"格式化进度显示时出错: {str(e)}")
+            return f"⚠️ 显示格式化错误: {str(e)}"
 
 class ExecuteModeHandler:
     """
@@ -32,7 +396,7 @@ class ExecuteModeHandler:
         # 使用结构化链用于JSON格式输出
         self.chain = create_structured_chain_for_mode("execute")
         self.structured_chain = create_structured_chain_for_mode("execute")
-        self.nextflow_process = None  # 存储nextflow进程
+        self.progress_monitor = None  # 进度监控器
         self.execution_log = []  # 存储执行日志
     
     def _parse_json_response(self, response) -> Tuple[AIMessage, List[Dict[str, Any]]]:
@@ -209,9 +573,9 @@ class ExecuteModeHandler:
     
     def execute_nextflow(self, state: AgentState) -> Dict[str, Any]:
         """
-        执行nextflow流程 - 简化版
+        执行nextflow流程 - 带实时进度监控
         
-        直接执行命令并等待完成，不进行复杂监控
+        使用混合监控方案：实时输出解析 + 工作目录监控 + 时间估算
         """
         try:
             # 检查必要的状态信息
@@ -238,8 +602,6 @@ class ExecuteModeHandler:
             # 合并配置
             merged_config = {**default_config, **nextflow_config}
             logger.info(f"Merged config genome_version: '{merged_config.get('genome_version')}'")
-            logger.info(f"Original nextflow_config genome_version: '{nextflow_config.get('genome_version')}'")
-            logger.info(f"Default config genome_version: '{default_config.get('genome_version')}'")
             
             # 只有当genome_version为空时才使用默认值hg38
             if not merged_config.get("genome_version"):
@@ -247,7 +609,6 @@ class ExecuteModeHandler:
                 logger.info("使用默认基因组版本: hg38")
             else:
                 logger.info(f"使用配置的基因组版本: {merged_config['genome_version']}")
-            logger.info(f"Final merged config keys: {list(merged_config.keys())}")
             
             # 构建nextflow参数
             params = self._build_nextflow_params(merged_config)
@@ -272,79 +633,187 @@ class ExecuteModeHandler:
             command = " ".join(command_parts)
             logger.info(f"Executing nextflow command: {command}")
             
-            # 简化执行：直接运行并等待完成
-            try:
-                import subprocess
-                result = subprocess.run(
-                    command,
-                    shell=True,
-                    cwd=".",
-                    capture_output=True,
-                    text=True,
-                    timeout=1800  # 30分钟超时
-                )
-                
-                if result.returncode == 0:
-                    success_message = "🎉 **Nextflow执行成功完成！**\n\n"
-                    success_message += f"⏱️ **执行概况**\n"
-                    success_message += f"• 命令: `{command}`\n"
-                    success_message += f"• 工作目录: {work_dir}\n"
-                    success_message += f"• 退出代码: {result.returncode}\n\n"
-                    
-                    if result.stdout:
-                        success_message += "📊 **输出概要**:\n"
-                        success_message += f"```\n{result.stdout[-500:]}\n```\n\n"
-                    
-                    success_message += "✅ 分析结果已保存到输出目录中。"
-                    
-                    return {
-                        "execution_status": "completed",
-                        "messages": [AIMessage(content=success_message)]
-                    }
-                else:
-                    error_message = "❌ **Nextflow执行失败**\n\n"
-                    error_message += f"• 退出代码: {result.returncode}\n"
-                    error_message += f"• 命令: `{command}`\n\n"
-                    
-                    if result.stderr:
-                        error_message += "**错误信息 (stderr)**:\n"
-                        error_message += f"```\n{result.stderr[-1500:]}\n```\n\n"
-                    
-                    if result.stdout:
-                        error_message += "**输出信息 (stdout)**:\n"
-                        error_message += f"```\n{result.stdout[-1500:]}\n```\n\n"
-                    
-                    if not result.stderr and not result.stdout:
-                        error_message += "**注意**: 没有捕获到错误信息或输出信息\n\n"
-                    
-                    error_message += "**建议**: 检查配置参数和输入文件。可能的原因：\n"
-                    error_message += "- 文件权限问题\n"
-                    error_message += "- Docker环境中的路径问题\n" 
-                    error_message += "- 缺少依赖工具\n"
-                    error_message += "- 配置文件问题"
-                    
-                    return {
-                        "execution_status": "failed",
-                        "messages": [AIMessage(content=error_message)]
-                    }
-                    
-            except subprocess.TimeoutExpired:
+            # 获取UI管理器
+            ui_manager = get_ui_manager()
+            
+            # 初始化进度监控器
+            self.progress_monitor = NextflowProgressMonitor()
+            
+            # 启动监控
+            if not self.progress_monitor.start_monitoring(command, "./work"):
+                error_msg = "❌ **启动Nextflow进程失败**\n\n请检查系统环境和配置。"
                 return {
-                    "execution_status": "failed", 
-                    "messages": [AIMessage(content="⏰ **执行超时**\n\n执行时间超过30分钟，自动停止。\n\n建议检查输入数据大小和系统资源。")]
+                    "execution_status": "failed",
+                    "messages": [AIMessage(content=error_msg)]
                 }
+            
+            # 显示初始状态
+            initial_msg = "🚀 **正在启动Nextflow执行...**\n\n"
+            initial_msg += "📋 **执行计划**:\n"
+            if plan:
+                for i, step in enumerate(plan, 1):
+                    initial_msg += f"{i}. {step}\n"
+            else:
+                initial_msg += "• 基于配置的自动流程\n"
+            initial_msg += "\n⏳ 初始化中，请稍候..."
+            
+            ui_manager.show_info(initial_msg)
+            
+            # 定义进度更新回调函数
+            last_update_time = [0]  # 使用列表来避免闭包问题
+            
+            def update_progress_display(progress_info):
+                try:
+                    current_time = time.time()
+                    # 限制更新频率，避免刷屏
+                    if current_time - last_update_time[0] < 3:  # 3秒更新一次
+                        return
+                    
+                    last_update_time[0] = current_time
+                    
+                    # 格式化并显示进度
+                    display_text = self.progress_monitor.format_progress_display(progress_info)
+                    ui_manager.show_info(display_text)
+                    
+                except Exception as e:
+                    logger.error(f"更新进度显示时出错: {str(e)}")
+            
+            # 开始监控（这会阻塞直到完成）
+            logger.info("开始监控Nextflow执行...")
+            final_result = self.progress_monitor.monitor_progress(update_progress_display)
+            
+            # 处理最终结果
+            return self._process_execution_results(final_result, command, work_dir)
                 
         except Exception as e:
             logger.error(f"Error executing nextflow: {str(e)}")
+            import traceback
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
+            
+            # 停止监控器（如果存在）
+            if self.progress_monitor:
+                self.progress_monitor.stop()
+            
             return {
                 "execution_status": "failed",
-                "messages": [AIMessage(content=f"❌ **执行出错**: {str(e)}")]
+                "messages": [AIMessage(content=f"❌ **执行出错**: {str(e)}\n\n请检查系统配置和日志。")]
+            }
+    
+    def _process_execution_results(self, final_result: Dict[str, Any], command: str, work_dir: str) -> Dict[str, Any]:
+        """处理执行结果"""
+        try:
+            status = final_result.get('status', 'unknown')
+            return_code = final_result.get('return_code', -1)
+            elapsed_time = final_result.get('elapsed_time', 0)
+            completed_processes = final_result.get('completed_processes', [])
+            failed_processes = final_result.get('failed_processes', [])
+            final_logs = final_result.get('final_logs', [])
+            
+            def format_time(seconds):
+                if seconds < 60:
+                    return f"{int(seconds)}秒"
+                elif seconds < 3600:
+                    return f"{int(seconds//60)}分{int(seconds%60)}秒"
+                else:
+                    hours = int(seconds // 3600)
+                    minutes = int((seconds % 3600) // 60)
+                    return f"{hours}小时{minutes}分钟"
+            
+            if status == 'completed':
+                # 成功完成
+                success_message = "🎉 **Nextflow执行成功完成！**\n\n"
+                success_message += f"⏱️ **执行概况**:\n"
+                success_message += f"• 总用时: {format_time(elapsed_time)}\n"
+                success_message += f"• 工作目录: {work_dir}\n"
+                success_message += f"• 退出代码: {return_code}\n\n"
+                
+                # 显示完成的步骤
+                if completed_processes:
+                    success_message += f"✅ **完成的步骤** ({len(completed_processes)}):\n"
+                    for proc in completed_processes:
+                        step_name = self.progress_monitor.step_descriptions.get(proc, proc)
+                        success_message += f"• {step_name}\n"
+                    success_message += "\n"
+                
+                # 显示最近的日志
+                if final_logs:
+                    success_message += "📊 **执行摘要**:\n"
+                    success_message += "```\n"
+                    # 显示最后几行重要日志
+                    important_logs = [log for log in final_logs[-10:] 
+                                    if any(keyword in log for keyword in ['process >', 'executor >', 'Completed'])]
+                    if important_logs:
+                        success_message += '\n'.join(important_logs[-5:])
+                    else:
+                        success_message += '\n'.join(final_logs[-3:])
+                    success_message += "\n```\n\n"
+                
+                success_message += "✅ 分析结果已保存到输出目录中。您可以查看 `data/results/` 目录获取结果文件。"
+                
+                return {
+                    "execution_status": "completed",
+                    "messages": [AIMessage(content=success_message)]
+                }
+                
+            else:
+                # 执行失败
+                error_message = f"❌ **Nextflow执行失败**\n\n"
+                error_message += f"⏱️ **执行信息**:\n"
+                error_message += f"• 用时: {format_time(elapsed_time)}\n"
+                error_message += f"• 退出代码: {return_code}\n"
+                error_message += f"• 命令: `{command}`\n\n"
+                
+                # 显示已完成的步骤
+                if completed_processes:
+                    error_message += f"✅ **已完成步骤** ({len(completed_processes)}):\n"
+                    for proc in completed_processes:
+                        step_name = self.progress_monitor.step_descriptions.get(proc, proc)
+                        error_message += f"• {step_name}\n"
+                    error_message += "\n"
+                
+                # 显示失败的步骤
+                if failed_processes:
+                    error_message += f"❌ **失败步骤**:\n"
+                    for proc in failed_processes[-3:]:  # 只显示最后3个错误
+                        error_message += f"• {proc}\n"
+                    error_message += "\n"
+                
+                # 显示关键日志
+                if final_logs:
+                    error_message += "📄 **错误日志**:\n"
+                    error_message += "```\n"
+                    # 查找错误相关的日志
+                    error_logs = [log for log in final_logs 
+                                if any(keyword in log.upper() for keyword in ['ERROR', 'FAILED', 'EXCEPTION'])]
+                    if error_logs:
+                        error_message += '\n'.join(error_logs[-5:])
+                    else:
+                        error_message += '\n'.join(final_logs[-5:])
+                    error_message += "\n```\n\n"
+                
+                error_message += "**建议**:\n"
+                error_message += "• 检查输入文件格式和路径\n"
+                error_message += "• 验证基因组配置和索引文件\n"
+                error_message += "• 查看详细日志: `.nextflow.log`\n"
+                error_message += "• 检查系统资源和权限"
+                
+                return {
+                    "execution_status": "failed",
+                    "messages": [AIMessage(content=error_message)]
+                }
+                
+        except Exception as e:
+            logger.error(f"处理执行结果时出错: {str(e)}")
+            return {
+                "execution_status": "failed",
+                "messages": [AIMessage(content=f"❌ **结果处理出错**: {str(e)}")]
             }
     
     def monitor_execution(self, state: AgentState) -> Dict[str, Any]:
         """
         简化版监控 - 直接返回完成状态，避免循环
         """
+        _ = state  # 避免未使用参数警告
         return {
             "execution_status": "completed",
             "messages": [AIMessage(content="✅ **监控完成**\n\n执行流程已结束。")]
@@ -354,6 +823,7 @@ class ExecuteModeHandler:
         """
         简化版结果收集 - 直接返回完成状态
         """
+        _ = state  # 避免未使用参数警告
         return {
             "execution_status": "completed",
             "messages": [AIMessage(content="✅ **结果收集完成**\n\n分析结果已保存。")]

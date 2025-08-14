@@ -344,11 +344,14 @@ class EnhancedUIManager:
     
     def get_user_input(self, prompt_text: str = "请输入您的需求", mode: str = "normal") -> str:
         """
-        获取用户输入，处理UTF-8编码问题
-        
-        遵循策略模式：根据不同模式使用不同的提示样式
+        完全基于readline的输入系统
         """
         try:
+            import readline
+            
+            # 配置readline
+            self._setup_readline()
+            
             # 根据模式设置不同的提示符
             mode_icons = {
                 'normal': '💬',
@@ -357,25 +360,39 @@ class EnhancedUIManager:
             }
             
             icon = mode_icons.get(mode, '💬')
+            prompt = f"{icon} {prompt_text}: "
             
-            if self.use_rich and self.console:
-                # 使用Rich的输入
-                from rich.prompt import Prompt
-                user_input = Prompt.ask(
-                    f"[cyan]{icon} {prompt_text}[/]",
-                    console=self.console
-                )
-            else:
-                # 使用基础输入 - 先打印提示文本，再获取输入
-                self.safe_print(f"{icon} {prompt_text}: ", 'primary')
-                # 使用单独的input()调用，不与提示文本在同一行
-                user_input = input()
+            # 使用配置好readline的input()获取输入
+            user_input = input(prompt)
+            
+            # 处理多行输入（以反斜杠结尾）
+            if user_input.endswith('\\'):
+                lines = [user_input[:-1]]  # 移除末尾的反斜杠
+                print("  (继续输入，空行结束)")
+                
+                while True:
+                    try:
+                        line = input()
+                        if not line.strip():  # 空行结束多行输入
+                            break
+                        lines.append(line)
+                    except (EOFError, KeyboardInterrupt):
+                        break
+                
+                user_input = '\n'.join(lines)
             
             # 确保返回UTF-8字符串
             if isinstance(user_input, bytes):
                 user_input = user_input.decode('utf-8', errors='ignore')
             
             return user_input.strip()
+            
+        except ImportError:
+            # readline不可用时的回退
+            self.show_error("readline模块不可用，回退到基础输入")
+            icon = mode_icons.get(mode, '💬')
+            prompt = f"{icon} {prompt_text}: "
+            return input(prompt).strip()
             
         except (UnicodeDecodeError, UnicodeEncodeError) as e:
             self.show_error(f"编码错误: {e}")
@@ -391,7 +408,27 @@ class EnhancedUIManager:
         
         except Exception as e:
             self.show_error(f"输入错误: {e}")
-            return self.get_user_input(prompt_text, mode)
+            # 回退到基础输入
+            try:
+                icon = mode_icons.get(mode, '💬')
+                prompt = f"{icon} {prompt_text}: "
+                return input(prompt).strip()
+            except:
+                return "exit"
+    
+    def _setup_readline(self):
+        """
+        最基本的readline配置，专注解决输入问题
+        """
+        try:
+            import readline
+            
+            # 只配置最基本的编辑功能
+            readline.parse_and_bind("set editing-mode emacs")
+            readline.parse_and_bind("tab: complete")
+            
+        except Exception as e:
+            logger.warning(f"Readline配置失败: {e}")
     
     def show_ai_response(self, response: str, mode: str = "normal"):
         """
