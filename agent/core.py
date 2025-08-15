@@ -1,6 +1,6 @@
 import os
 from typing import Dict, Any, List
-from langchain.chat_models import init_chat_model
+from langchain_deepseek import ChatDeepSeek
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
 import json
@@ -56,42 +56,13 @@ class ToolCall(BaseModel):
     tool_name: str = Field(description="工具名称")
     parameters: Dict[str, Any] = Field(description="工具参数", default_factory=dict)
     reason: str = Field(description="调用原因", default="")
-    
-    @field_validator('parameters', mode='before')
-    @classmethod
-    def parse_parameters(cls, v):
-        """自动解析参数字符串格式"""
-        if isinstance(v, str):
-            try:
-                # 先尝试JSON格式
-                return json.loads(v)
-            except json.JSONDecodeError:
-                # 如果不是JSON，尝试解析Python参数格式: directory_path="data/fastq"
-                try:
-                    # 简单的参数解析
-                    if '=' in v:
-                        params = {}
-                        # 处理形如 key="value" 或 key=value 的格式
-                        import re
-                        matches = re.findall(r'(\w+)=(["\']?)([^"\']+)\2', v)
-                        for key, quote, value in matches:
-                            params[key] = value
-                        return params if params else {}
-                    return {}
-                except:
-                    return {}
-        elif isinstance(v, dict):
-            return v
-        else:
-            return {}
 
 class NormalModeResponse(BaseModel):
-    """Normal模式的结构化响应"""
+    """Normal模式的结构化响应 - 移除tool_calls字段，因为.with_structured_output()内部处理工具调用"""
     reasoning: str = Field(description="分析和推理过程")
     response: str = Field(description="给用户的回复") 
     suggested_actions: List[str] = Field(description="建议的后续操作", default_factory=list)
     need_more_info: bool = Field(description="是否需要更多信息", default=False)
-    tool_calls: List[ToolCall] = Field(description="需要调用的工具列表", default_factory=list)
 
 class PlanModeResponse(BaseModel):
     """Plan模式的结构化响应 - 优化为Gemini兼容格式"""
@@ -119,26 +90,6 @@ class PlanModeResponse(BaseModel):
         description="需要调用的工具列表", 
         default_factory=list
     )
-    
-    @field_validator('config_changes', mode='before')
-    @classmethod
-    def ensure_config_changes_is_dict(cls, v):
-        """确保config_changes是字典格式"""
-        if isinstance(v, str):
-            # 如果是字符串，尝试解析JSON或返回空字典
-            if v.lower() in ['无', '没有', 'none', '已更新', '']:
-                return {}
-            try:
-                import json
-                return json.loads(v)
-            except:
-                return {}
-        elif v is None:
-            return {}
-        elif isinstance(v, dict):
-            return v
-        else:
-            return {}
 
 class ExecuteModeResponse(BaseModel):
     """Execute模式的结构化响应"""
@@ -155,28 +106,22 @@ class ExecuteModeResponse(BaseModel):
 
 def create_llm():
     """
-    创建Gemini LLM实例，使用LangChain统一的init_chat_model方法
+    创建DeepSeek LLM实例，使用专门的ChatDeepSeek类
     
-    应用工厂模式：专门为Gemini优化的LLM创建
+    完全替换Gemini，仅使用DeepSeek提供服务
     """
-    api_key = os.environ.get("GOOGLE_API_KEY")
+    api_key = os.environ.get("DEEPSEEK_API_KEY")
     
     if not api_key:
-        raise ValueError("未找到GOOGLE_API_KEY环境变量，请在.env文件中配置")
+        raise ValueError("未找到DEEPSEEK_API_KEY环境变量，请在.env文件中配置")
     
-    try:
-        # 使用ChatGoogleGenerativeAI的推荐配置
-        llm = init_chat_model(
-            model="gemini-2.5-flash",
-            model_provider="google-genai",
-            api_key=api_key,
-            temperature=0.1,
-        )
-        
-        return llm
-        
-    except Exception as e:
-        raise Exception(f"创建Gemini LLM失败: {e}")
+    llm = ChatDeepSeek(
+        model="deepseek-chat",
+        api_key=api_key,
+        temperature=0.1,
+    )
+    
+    return llm
 
 # 基础LLM实例
 llm = create_llm()
@@ -245,9 +190,9 @@ def create_chain_for_mode(mode: str):
 
 def create_structured_chain_for_mode(mode: str):
     """
-    为指定模式创建结构化输出链，使用.with_structured_output()方法
+    为指定模式创建结构化输出链，强制使用json_mode方法
     
-    这是LangChain官方推荐的结构化输出方式，兼容多个LLM提供商
+    DeepSeek仅支持json_mode，不支持tool_calling
     """
     llm_config = get_llm_for_mode(mode)
     
@@ -265,13 +210,8 @@ def create_structured_chain_for_mode(mode: str):
     # 获取带工具的LLM并应用结构化输出
     llm_with_tools = llm_config["llm_with_tools"]
     
-    # 为Gemini明确指定json_mode方法以确保结构化输出稳定性
-    try:
-        structured_llm = llm_with_tools.with_structured_output(pydantic_model, method="json_mode")
-    except Exception as e:
-        # 如果json_mode不支持，回退到默认方法
-        print(f"警告：JSON模式不支持，使用默认结构化输出方法: {e}")
-        structured_llm = llm_with_tools.with_structured_output(pydantic_model)
+    # DeepSeek强制使用json_mode
+    structured_llm = llm_with_tools.with_structured_output(pydantic_model, method="json_mode")
     
     # 获取对应的prompt
     prompt = llm_config["prompt"]
@@ -279,7 +219,6 @@ def create_structured_chain_for_mode(mode: str):
     # 如果是Plan模式，使用专门的结构化输出prompt
     if mode == "plan":
         return get_structured_plan_prompt() | structured_llm
-    
     else:
         # 对于其他模式，直接使用已经优化过的原有prompt结构
         return prompt | structured_llm

@@ -21,13 +21,12 @@ class NormalModeHandler:
     """
     
     def __init__(self):
-        # 使用不带工具的LLM链用于JSON格式输出
-        self.chain = create_structured_chain_for_mode("normal")  
-        self.structured_chain = create_structured_chain_for_mode("normal")
+        # 使用结构化输出链，采用先绑定工具再结构化输出的正确方式
+        self.chain = create_structured_chain_for_mode("normal")
     
     def _process_llm_response(self, response) -> Tuple[AIMessage, List[Dict[str, Any]]]:
         """
-        处理LLM的结构化响应（.with_structured_output()返回Pydantic模型实例）
+        处理LLM的结构化响应 - 使用先绑定工具再结构化输出的方式
         
         返回: (AIMessage, tool_calls列表)
         """
@@ -36,15 +35,14 @@ class NormalModeHandler:
             logger.info(f"Normal模式收到响应类型: {type(response)}")
             logger.info(f"Normal模式收到响应内容: {response}")
             
-            # .with_structured_output()返回Pydantic模型实例
-            if hasattr(response, 'response') and hasattr(response, 'tool_calls'):  # NormalModeResponse模型
-                logger.info(f"Normal模式收到Pydantic模型响应")
+            # 结构化输出链返回Pydantic模型实例，但工具调用由LangChain内部处理
+            if hasattr(response, 'response'):  # NormalModeResponse模型
+                logger.info(f"Normal模式收到结构化输出响应")
                 
                 # 提取响应信息
                 user_message = getattr(response, "response", "响应完成")
                 suggested_actions = getattr(response, "suggested_actions", [])
                 need_more_info = getattr(response, "need_more_info", False)
-                tool_calls = getattr(response, "tool_calls", [])
                 
                 # 构建详细响应
                 detailed_response = user_message
@@ -55,105 +53,25 @@ class NormalModeHandler:
                 if need_more_info:
                     detailed_response += "\n\n❓ 需要更多信息才能继续。"
                 
-                logger.info(f"Normal模式提取到 {len(tool_calls)} 个工具调用")
-                
-                # 创建AIMessage
+                # 创建AIMessage - 工具调用由LangChain的with_structured_output内部处理
                 ai_message = AIMessage(content=detailed_response)
                 
-                # 如果有工具调用，设置为消息的tool_calls属性
-                if tool_calls:
-                    langchain_tool_calls = []
-                    for i, tool_call in enumerate(tool_calls):
-                        # 处理Pydantic模型中的工具调用
-                        if hasattr(tool_call, 'tool_name'):
-                            # tool_call是ToolCall Pydantic模型实例
-                            tool_call_obj = {
-                                "name": tool_call.tool_name,
-                                "args": tool_call.parameters,
-                                "id": f"call_{i}",
-                                "type": "tool_call"
-                            }
-                        else:
-                            # tool_call是字典格式
-                            tool_call_obj = {
-                                "name": tool_call.get("tool_name"),
-                                "args": tool_call.get("parameters", {}),
-                                "id": f"call_{i}",
-                                "type": "tool_call"
-                            }
-                        langchain_tool_calls.append(tool_call_obj)
-                    
-                    ai_message.tool_calls = langchain_tool_calls
-                    logger.info(f"Normal模式成功设置tool_calls属性")
+                logger.info(f"Normal模式成功处理结构化响应")
                 
-                return ai_message, tool_calls
-            elif isinstance(response, str) and 'query_fastq_files' in response:
-                # 特殊处理：如果DeepSeek直接返回了工具名字符串
-                logger.warning(f"DeepSeek返回了工具名字符串而不是结构化响应: {response}")
+                # 返回空的tool_calls列表，因为工具调用由内部处理
+                return ai_message, []
                 
-                # 尝试手动构造工具调用
-                ai_message = AIMessage(content="正在查询FASTQ文件信息...")
-                tool_call_obj = {
-                    "name": "query_fastq_files",
-                    "args": {},
-                    "id": "call_manual_0",
-                    "type": "tool_call"
-                }
-                ai_message.tool_calls = [tool_call_obj]
-                
-                manual_tool_calls = [{
-                    "tool_name": "query_fastq_files",
-                    "parameters": {},
-                    "reason": "用户请求查看FASTQ文件"
-                }]
-                
-                logger.info(f"手动构造了工具调用: query_fastq_files")
-                return ai_message, manual_tool_calls
-            elif isinstance(response, dict):
-                # 兼容旧的dict格式返回
-                logger.info(f"Normal模式收到dict格式响应: {list(response.keys())}")
-                
-                # 提取响应信息
-                user_message = response.get("response", "响应完成")
-                suggested_actions = response.get("suggested_actions", [])
-                need_more_info = response.get("need_more_info", False)
-                tool_calls = response.get("tool_calls", [])
-                
-                # 构建详细响应
-                detailed_response = user_message
-                if suggested_actions:
-                    detailed_response += "\n\n💡 **建议操作：**\n"
-                    detailed_response += "\n".join([f"  - {action}" for action in suggested_actions])
-                
-                if need_more_info:
-                    detailed_response += "\n\n❓ 需要更多信息才能继续。"
-                
+            # 如果收到的是AIMessage（可能是工具调用链的直接返回）
+            elif isinstance(response, AIMessage):
+                logger.info(f"Normal模式收到AIMessage响应")
+                tool_calls = getattr(response, 'tool_calls', [])
                 logger.info(f"Normal模式提取到 {len(tool_calls)} 个工具调用")
+                return response, tool_calls
                 
-                # 创建AIMessage
-                ai_message = AIMessage(content=detailed_response)
-                
-                # 如果有工具调用，设置为消息的tool_calls属性
-                if tool_calls:
-                    langchain_tool_calls = []
-                    for i, tool_call in enumerate(tool_calls):
-                        tool_call_obj = {
-                            "name": tool_call.get("tool_name"),
-                            "args": tool_call.get("parameters", {}),
-                            "id": f"call_{i}",
-                            "type": "tool_call"
-                        }
-                        langchain_tool_calls.append(tool_call_obj)
-                    
-                    ai_message.tool_calls = langchain_tool_calls
-                    logger.info(f"Normal模式成功设置tool_calls属性")
-                
-                return ai_message, tool_calls
             else:
-                # 降级处理：如果不是期望的格式
-                logger.warning(f"Normal模式收到未知响应格式: {type(response)}")
+                logger.error(f"Normal模式收到意外响应格式: {type(response)}")
                 content = str(response) if response else "响应为空"
-                return AIMessage(content=content), []
+                return AIMessage(content=f"响应解析错误: {content}"), []
             
         except Exception as e:
             logger.error(f"Normal模式处理响应时出错: {str(e)}")

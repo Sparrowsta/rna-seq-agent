@@ -152,25 +152,13 @@ def route_after_tools(state: AgentState) -> str:
     """
     工具调用后的路由决策
     
-    重构为支持Plan-Execute任务队列系统
+    直接根据模式进行路由，无需复杂的执行阶段判断
     """
     current_mode = state.get("mode", "normal")
-    execution_phase = state.get("execution_phase", "interacting")
     
-    print(f"[ROUTER] 工具调用后 - 模式: {current_mode}, 执行阶段: {execution_phase}")
+    print(f"[ROUTER] 工具调用后 - 模式: {current_mode}")
     
-    # 在Plan-Execute系统中，工具调用完成后的处理逻辑：
-    # 1. planning阶段的工具调用 → 任务队列 → executing阶段
-    # 2. 其他模式正常处理
-    
-    if current_mode == "plan" and execution_phase == "planning":
-        # Plan模式下的planning阶段：工具调用完成，需要将结果转换为任务队列
-        print(f"[ROUTER] Plan模式planning阶段工具调用完成，准备转换为任务")
-        
-        # 直接返回plan_mode_node，让它处理工具调用结果并转换为任务队列
-        return "plan_mode_node"
-    
-    # 其他情况按原有逻辑处理
+    # 直接根据模式进行路由
     mode_mapping = {
         "normal": "normal_mode_node", 
         "plan": "plan_mode_node",
@@ -206,20 +194,10 @@ def should_call_tools(state: AgentState) -> bool:
     """
     判断是否需要调用工具
     
-    重构为支持Plan-Execute任务队列系统
+    所有模式都支持工具调用
     """
     if not state.get("messages"):
         print("[ROUTER DEBUG] should_call_tools: 没有消息")
-        return False
-    
-    # 检查执行阶段
-    execution_phase = state.get("execution_phase", "interacting")
-    print(f"[ROUTER DEBUG] should_call_tools: 当前执行阶段: {execution_phase}")
-    
-    # 只有在planning阶段才允许LLM生成的工具调用
-    # executing阶段由AutoExecutor处理，不需要LLM工具调用
-    if execution_phase != "planning":
-        print(f"[ROUTER DEBUG] should_call_tools: 阶段 '{execution_phase}' 不允许LLM工具调用")
         return False
     
     last_message = state["messages"][-1]

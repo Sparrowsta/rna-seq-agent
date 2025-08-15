@@ -78,7 +78,7 @@ switch_to_plan_mode(target_mode="plan", reason="用户请求开始分析")
 - 设置need_more_info表示是否需要更多信息  
 - 包含tool_calls说明需要调用的工具
 
-你的回复将被自动解析为结构化格式。"""),
+**重要：你必须以JSON格式回复，确保包含所有必需字段。**"""),
     ("user", "{input}"),
     MessagesPlaceholder(variable_name="messages"),
 ])
@@ -146,7 +146,7 @@ PLAN_MODE_PROMPT = ChatPromptTemplate.from_messages([
 - 使用友好和专业的语调
 
 **输出要求：**
-你的回复将被自动解析为结构化格式，请确保包含以下信息：
+你必须以JSON格式回复，自动解析为结构化格式，请确保包含以下信息：
 
 - **reasoning**: 详细说明当前配置分析、推理过程和下一步计划
 - **plan_steps**: 列出具体的分析计划步骤（如果有）
@@ -210,7 +210,7 @@ EXECUTE_MODE_PROMPT = ChatPromptTemplate.from_messages([
 - 说明next_step下一步操作建议
 - 包含tool_calls需要调用的工具
 
-你的回复将被自动解析为结构化格式。
+你必须以JSON格式回复，将被自动解析为结构化格式。
 
 **重要原则：**
 - **执行命令 = 立即调用 execute_nextflow_pipeline**
@@ -294,7 +294,7 @@ PLAN_MODE_STRUCTURED_PROMPT_CONTENT = """你是RNA-seq分析配置专家，当�
 - 如果没有配置更改，必须设置为空对象 {{}}
 - 绝对不能使用字符串值如"无"、"没有"、"已更新"等
 
-你的回复将被自动解析为结构化格式，确保严格遵循JSON结构要求。"""
+你必须以JSON格式回复，将被自动解析为结构化格式，确保严格遵循JSON结构要求。"""
 
 # ============================================================================
 # Prompt Template Mapping

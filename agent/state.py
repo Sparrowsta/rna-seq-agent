@@ -18,7 +18,6 @@ class AgentState(TypedDict):
     task_queue: List[Dict[str, Any]]     # 待执行任务队列
     completed_tasks: List[Dict[str, Any]] # 已完成任务及结果
     current_task_index: int              # 当前执行任务索引
-    execution_phase: str                 # 执行阶段：planning/executing/collecting/interacting
     
     # === 执行上下文管理 ===
     execution_context: Dict[str, Any]    # 执行上下文信息
@@ -66,7 +65,6 @@ def create_initial_state() -> AgentState:
         task_queue=[],                   # 空任务队列
         completed_tasks=[],              # 空完成任务列表
         current_task_index=0,            # 从第一个任务开始
-        execution_phase="interacting",   # 初始为交互阶段（等待用户输入）
         
         # === 执行上下文初始化 ===
         execution_context={
@@ -229,13 +227,10 @@ def should_execute_tools(state: AgentState) -> bool:
     """
     判断当前阶段是否应该执行工具
     
-    重构为支持Plan-Execute系统的工具执行判断
+    所有模式（normal/plan/execute）都支持工具调用
     """
-    execution_phase = state.get("execution_phase", "interacting")
-    
-    # 只有在planning阶段允许LLM生成新的工具调用
-    # executing阶段由自动执行器处理，不需要LLM参与
-    return execution_phase == "planning"
+    # 所有模式都允许工具调用
+    return True
 
 # ============================================================================
 # Plan-Execute任务队列系统核心函数
@@ -299,30 +294,6 @@ def clear_task_queue(state: AgentState) -> AgentState:
     updated_state["current_task_index"] = 0
     return updated_state
 
-def update_execution_phase(state: AgentState, new_phase: str, reason: str = "") -> AgentState:
-    """
-    更新执行阶段
-    
-    phases: planning -> executing -> collecting -> interacting
-    """
-    valid_phases = ["planning", "executing", "collecting", "interacting"]
-    
-    if new_phase not in valid_phases:
-        raise ValueError(f"Invalid phase: {new_phase}. Must be one of {valid_phases}")
-    
-    updated_state = state.copy()
-    old_phase = updated_state.get("execution_phase", "interacting")
-    updated_state["execution_phase"] = new_phase
-    
-    # 记录阶段转换日志
-    if reason:
-        log_message = f"执行阶段转换: {old_phase} → {new_phase} ({reason})"
-    else:
-        log_message = f"执行阶段转换: {old_phase} → {new_phase}"
-    
-    updated_state["execution_log"].append(f"[PHASE] {log_message}")
-    
-    return updated_state
 
 def increment_iteration_count(state: AgentState) -> AgentState:
     """

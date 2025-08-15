@@ -466,57 +466,11 @@ class ExecuteModeHandler:
                     logger.info(f"Execute模式成功设置tool_calls属性")
                 
                 return ai_message, tool_calls
-            elif isinstance(response, dict):
-                # 兼容旧的dict格式返回
-                logger.info(f"Execute模式收到dict格式响应: {list(response.keys())}")
-                
-                # 提取响应信息
-                user_message = response.get("response", "执行完成")
-                status = response.get("status", "unknown")
-                progress = response.get("progress", "")
-                next_step = response.get("next_step", "")
-                results = response.get("results", {})
-                tool_calls = response.get("tool_calls", [])
-                
-                # 构建详细响应
-                detailed_response = user_message
-                if status and status != "unknown":
-                    detailed_response += f"\n\n📊 **状态**: {status}"
-                if progress:
-                    detailed_response += f"\n🔄 **进度**: {progress}"
-                if next_step:
-                    detailed_response += f"\n➡️ **下一步**: {next_step}"
-                if results:
-                    detailed_response += "\n\n📋 **结果**:\n"
-                    for key, value in results.items():
-                        detailed_response += f"  - {key}: {value}\n"
-                
-                logger.info(f"Execute模式提取到 {len(tool_calls)} 个工具调用")
-                
-                # 创建AIMessage
-                ai_message = AIMessage(content=detailed_response)
-                
-                # 如果有工具调用，设置为消息的tool_calls属性
-                if tool_calls:
-                    langchain_tool_calls = []
-                    for i, tool_call in enumerate(tool_calls):
-                        tool_call_obj = {
-                            "name": tool_call.get("tool_name"),
-                            "args": tool_call.get("parameters", {}),
-                            "id": f"call_exec_{i}",
-                            "type": "tool_call"
-                        }
-                        langchain_tool_calls.append(tool_call_obj)
-                    
-                    ai_message.tool_calls = langchain_tool_calls
-                    logger.info(f"Execute模式成功设置tool_calls属性")
-                
-                return ai_message, tool_calls
+            # DeepSeek + json_mode应该始终返回Pydantic模型，如果不是则为错误
             else:
-                # 降级处理：如果不是期望的格式
-                logger.warning(f"Execute模式收到未知响应格式: {type(response)}")
+                logger.error(f"Execute模式收到意外响应格式: {type(response)}，DeepSeek应该始终返回Pydantic模型")
                 content = str(response) if response else "响应为空"
-                return AIMessage(content=content), []
+                return AIMessage(content=f"响应解析错误: {content}"), []
             
         except Exception as e:
             logger.error(f"Execute模式处理响应时出错: {str(e)}")

@@ -22,3 +22,4 @@ temp
 run_comprehensive_tests.sh
 *.log*
 *.md
+langgraph.txt
