@@ -400,14 +400,75 @@ class ExecuteModeHandler:
     
     def _process_llm_response(self, response) -> Tuple[AIMessage, List[Dict[str, Any]]]:
         """
-        处理LLM的结构化响应（JsonOutputParser已处理JSON格式）
+        处理LLM的结构化响应（.with_structured_output()返回Pydantic模型实例）
         
         返回: (AIMessage, tool_calls列表)
         """
         try:
-            # JsonOutputParser已经返回dict格式，直接使用
-            if isinstance(response, dict):
-                logger.info(f"Execute模式收到结构化响应: {list(response.keys())}")
+            # 调试日志：查看响应类型和内容
+            logger.info(f"Execute模式收到响应类型: {type(response)}")
+            logger.info(f"Execute模式收到响应内容: {repr(response)[:200]}...")
+            
+            # .with_structured_output()返回Pydantic模型实例
+            if hasattr(response, 'status'):  # ExecuteModeResponse模型
+                logger.info(f"Execute模式收到Pydantic模型响应")
+                
+                # 提取响应信息
+                user_message = getattr(response, "response", "执行完成") if hasattr(response, "response") else "执行完成"
+                status = getattr(response, "status", "unknown")
+                progress = getattr(response, "progress", "")
+                next_step = getattr(response, "next_step", "")
+                results = getattr(response, "results", {})
+                tool_calls = getattr(response, "tool_calls", [])
+                
+                # 构建详细响应
+                detailed_response = user_message
+                if status and status != "unknown":
+                    detailed_response += f"\n\n📊 **状态**: {status}"
+                if progress:
+                    detailed_response += f"\n🔄 **进度**: {progress}"
+                if next_step:
+                    detailed_response += f"\n➡️ **下一步**: {next_step}"
+                if results:
+                    detailed_response += "\n\n📋 **结果**:\n"
+                    for key, value in results.items():
+                        detailed_response += f"  - {key}: {value}\n"
+                
+                logger.info(f"Execute模式提取到 {len(tool_calls)} 个工具调用")
+                
+                # 创建AIMessage
+                ai_message = AIMessage(content=detailed_response)
+                
+                # 如果有工具调用，设置为消息的tool_calls属性
+                if tool_calls:
+                    langchain_tool_calls = []
+                    for i, tool_call in enumerate(tool_calls):
+                        # 处理Pydantic模型中的工具调用
+                        if hasattr(tool_call, 'tool_name'):
+                            # tool_call是ToolCall Pydantic模型实例
+                            tool_call_obj = {
+                                "name": tool_call.tool_name,
+                                "args": tool_call.parameters,
+                                "id": f"call_exec_{i}",
+                                "type": "tool_call"
+                            }
+                        else:
+                            # tool_call是字典格式
+                            tool_call_obj = {
+                                "name": tool_call.get("tool_name"),
+                                "args": tool_call.get("parameters", {}),
+                                "id": f"call_exec_{i}",
+                                "type": "tool_call"
+                            }
+                        langchain_tool_calls.append(tool_call_obj)
+                    
+                    ai_message.tool_calls = langchain_tool_calls
+                    logger.info(f"Execute模式成功设置tool_calls属性")
+                
+                return ai_message, tool_calls
+            elif isinstance(response, dict):
+                # 兼容旧的dict格式返回
+                logger.info(f"Execute模式收到dict格式响应: {list(response.keys())}")
                 
                 # 提取响应信息
                 user_message = response.get("response", "执行完成")
@@ -452,8 +513,8 @@ class ExecuteModeHandler:
                 
                 return ai_message, tool_calls
             else:
-                # 降级处理：如果不是dict，可能是旧格式
-                logger.warning(f"Execute模式收到非结构化响应: {type(response)}")
+                # 降级处理：如果不是期望的格式
+                logger.warning(f"Execute模式收到未知响应格式: {type(response)}")
                 content = str(response) if response else "响应为空"
                 return AIMessage(content=content), []
             
@@ -461,7 +522,7 @@ class ExecuteModeHandler:
             logger.error(f"Execute模式处理响应时出错: {str(e)}")
             import traceback
             logger.error(f"错误堆栈: {traceback.format_exc()}")
-            return AIMessage(content="处理响应时出现错误"), []
+            return AIMessage(content=f"处理响应时出现错误: {str(e)}"), []
     
     def prepare_execution(self, state: AgentState) -> Dict[str, Any]:
         """

@@ -11,3 +11,4 @@ mcp
 langgraph
 langchain-google-genai
 rich
+langchain-deepseek

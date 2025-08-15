@@ -6,6 +6,7 @@
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 from .state import AgentState, create_initial_state
+from .state import update_current_stage, add_tool_to_execution_history
 from .router import IntelligentRouter, route_user_input, route_after_tools, should_call_tools
 from .core import ALL_TOOLS
 from .nodes.normal_mode_node import normal_mode_node, get_user_input
@@ -52,54 +53,13 @@ def route_from_mode_nodes(state: AgentState) -> str:
     遵循开放封闭原则：易于扩展新的路由逻辑
     """
     try:
-        # 首先检查执行状态 - 如果正在执行，继续在execute模式
-        execution_status = state.get("execution_status", "idle")
-        current_mode = state.get("mode", "normal")
-        
-        if execution_status == "running" and current_mode == "execute":
-            print(f"[ROUTER] 检测到执行状态为running，继续在execute模式监控")
-            return "execute_mode_node"
-        
         # 检查是否需要调用工具
         has_tools = should_call_tools(state)
-        print(f"[ROUTER DEBUG] should_call_tools返回: {has_tools}")
         
         if has_tools:
-            print(f"[ROUTER] 检测到工具调用，路由到call_tools")
             return "call_tools"
         
-        # 检查最后一条消息是否包含模式切换信息
-        if state.get("messages"):
-            last_message = state["messages"][-1]
-            print(f"[ROUTER DEBUG] 最后一条消息类型: {type(last_message)}")
-            
-            if hasattr(last_message, "tool_calls"):
-                print(f"[ROUTER DEBUG] tool_calls属性存在: {last_message.tool_calls}")
-            
-            # 检查AI消息内容中的模式切换标识
-            if hasattr(last_message, "content") and last_message.content:
-                content = str(last_message.content)
-                if "切换到计划模式" in content or "正在切换到计划模式" in content:
-                    print(f"[ROUTER] 检测到计划模式切换信号")
-                    return "plan_mode_node"
-                elif "切换到执行模式" in content or "正在切换到执行模式" in content:
-                    print(f"[ROUTER] 检测到执行模式切换信号")
-                    return "execute_mode_node"
-            
-            # 检查工具调用中的模式切换
-            if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-                for tool_call in last_message.tool_calls:
-                    tool_name = tool_call.get("name", "")
-                    if tool_name == "switch_to_plan_mode":
-                        print(f"[ROUTER] 工具调用切换到计划模式")
-                        return "plan_mode_node"
-                    elif tool_name == "switch_to_execute_mode":
-                        print(f"[ROUTER] 工具调用切换到执行模式")
-                        return "execute_mode_node"
-        
-        # 关键修复：所有模式节点处理完后都应该返回用户输入，等待用户响应
-        # 不再基于当前模式自动循环到相同节点
-        print(f"[ROUTER] 模式节点处理完成，返回用户输入节点等待用户响应")
+        # 所有模式节点处理完后都应该返回用户输入，等待用户响应
         return "user_input"
     
     except Exception as e:
@@ -110,97 +70,51 @@ def route_after_tool_calls(state: AgentState) -> str:
     """
     工具调用后的路由
     
-    应用责任链模式：按优先级处理不同类型的工具调用结果
-    解析工具返回的配置更新指令并更新AgentState
+    使用新的阶段化状态管理，防止工具循环调用
     """
     try:
-        # 解析工具调用结果中的配置更新指令
-        if state.get("messages"):
-            config_updates = {}
-            
-            # 检查最后几条消息中的工具调用结果
-            for message in state["messages"][-3:]:  # 检查最近3条消息
-                if hasattr(message, "content") and isinstance(message.content, str):
-                    content = message.content
-                    
-                    # 查找配置更新指令
-                    if "[CONFIG_UPDATE]" in content:
-                        try:
-                            # 提取JSON配置
-                            start_marker = "[CONFIG_UPDATE]"
-                            start_pos = content.find(start_marker)
-                            if start_pos != -1:
-                                json_str = content[start_pos + len(start_marker):].strip()
-                                # 提取第一行作为JSON
-                                json_str = json_str.split('\n')[0].strip()
-                                
-                                import json
-                                update_dict = json.loads(json_str)
-                                config_updates.update(update_dict)
-                                
-                                print(f"[ROUTER] 发现配置更新: {update_dict}")
-                        
-                        except (json.JSONDecodeError, IndexError) as e:
-                            print(f"[ROUTER] 配置更新解析失败: {str(e)}")
-            
-            # 如果有配置更新，应用到当前状态
-            if config_updates:
-                print(f"[ROUTER] 应用配置更新到AgentState: {config_updates}")
-                # 直接修改状态中的nextflow_config
-                current_config = state.get("nextflow_config", {})
-                current_config.update(config_updates)
-                # 注意：这里直接修改state，虽然不是最佳实践，但在路由函数中是可行的
-                state["nextflow_config"] = current_config
+        current_mode = state.get("mode", "normal")
+        current_stage = state.get("current_stage", "user_input")
         
-        # 检查工具调用结果中的模式切换
+        # 1. 首先处理模式切换（只检查最后一条消息）
         if state.get("messages"):
             last_message = state["messages"][-1]
-            
-            # 如果工具调用结果包含模式切换信息
-            if hasattr(last_message, "content") and last_message.content:
-                content = str(last_message.content)
-                if "切换到计划模式" in content or "正在切换到计划模式" in content:
-                    print(f"[ROUTER] 工具调用后检测到计划模式切换")
-                    return "plan_mode_node"
-                elif "切换到执行模式" in content or "正在切换到执行模式" in content:
-                    print(f"[ROUTER] 工具调用后检测到执行模式切换")
-                    return "execute_mode_node"
+            if hasattr(last_message, "type") and last_message.type == "tool":
+                tool_name = getattr(last_message, "name", "unknown")
+                if tool_name == "switch_to_plan_mode":
+                    state["mode"] = "plan"
+                    current_mode = "plan"
+                elif tool_name == "switch_to_execute_mode":
+                    state["mode"] = "execute"
+                    current_mode = "execute"
         
-        # 根据当前模式返回相应节点
-        current_mode = state.get("mode", "normal")
-        print(f"[ROUTER] 工具调用后当前模式: {current_mode}")
+        # 2. 记录已执行的工具到历史中（向前追溯到非工具消息）
+        if state.get("messages"):
+            for message in reversed(state["messages"]):
+                if hasattr(message, "type") and message.type == "tool":
+                    tool_name = getattr(message, "name", "unknown")
+                    state = add_tool_to_execution_history(state, tool_name)
+                else:
+                    break
         
+        # 3. 根据模式和阶段更新状态
+        if current_mode == "plan":
+            if current_stage == "tools_executing":
+                state = update_current_stage(state, "tools_completed", "计划工具执行完成")
+        
+        # 4. 根据当前模式返回相应节点
         mode_mapping = {
             "normal": "normal_mode_node",
             "plan": "plan_mode_node",
             "execute": "execute_mode_node"
         }
         
-        return mode_mapping.get(current_mode, "normal_mode_node")
+        next_node = mode_mapping.get(current_mode, "normal_mode_node")
+        return next_node
     
     except Exception as e:
         print(f"[ROUTER ERROR] 工具调用后路由出错: {str(e)}")
         return "normal_mode_node"
-
-def should_end_conversation(state: AgentState) -> str:
-    """
-    判断是否应该结束对话
-    
-    应用KISS原则：简单的结束条件判断
-    """
-    try:
-        if state.get("messages"):
-            last_message = state["messages"][-1]
-            if hasattr(last_message, "content"):
-                content = last_message.content.lower().strip()
-                if content in ["exit", "quit", "bye", "退出"]:
-                    return "end"
-        
-        return "continue"
-    
-    except Exception as e:
-        print(f"[ROUTER ERROR] 结束判断出错: {str(e)}")
-        return "continue"
 
 # ============================================================================
 # 节点包装函数 - 遵循适配器模式
@@ -423,54 +337,6 @@ def create_agent_graph():
 agent_executor = create_agent_graph()
 
 # ============================================================================
-# 图执行辅助函数 - 遵循DRY原则
-# ============================================================================
-
-def run_agent_with_initial_state(initial_input: str = "") -> dict:
-    """
-    使用初始状态运行agent
-    
-    应用模板方法模式：标准的执行流程
-    增加递归限制配置以避免工具调用过多
-    """
-    try:
-        # 创建初始状态
-        initial_state = create_initial_state()
-        
-        # 如果有初始输入，添加到消息中
-        if initial_input:
-            from langchain_core.messages import HumanMessage
-            initial_state["messages"] = [HumanMessage(content=initial_input)]
-        
-        # 执行图，设置递归限制为100以避免工具调用过多
-        result = agent_executor.invoke(initial_state, {"recursion_limit": 100})
-        
-        return result
-    
-    except Exception as e:
-        print(f"[EXECUTION ERROR] 执行agent时出错: {str(e)}")
-        return {"error": str(e)}
-
-def run_agent_step_by_step(state: AgentState) -> dict:
-    """
-    逐步执行agent
-    
-    用于调试和监控执行过程
-    增加递归限制配置以避免工具调用过多
-    """
-    try:
-        print(f"[STEP] 当前状态: mode={state.get('mode', 'unknown')}, messages={len(state.get('messages', []))}")
-        
-        # 执行一步，设置递归限制
-        result = agent_executor.invoke(state, {"recursion_limit": 100})
-        
-        print(f"[STEP] 执行结果: mode={result.get('mode', 'unknown')}, messages={len(result.get('messages', []))}")
-        
-        return result
-    
-    except Exception as e:
-        print(f"[STEP ERROR] 逐步执行出错: {str(e)}")
-        return {"error": str(e)}
 
 # ============================================================================
 # 图验证和调试 - 便于开发调试
