@@ -34,7 +34,7 @@ ALL_TOOLS = [
 MODE_TOOLS = {
     "normal": [
         query_fastq_files, query_genome_info, add_new_genome,
-        get_current_nextflow_config, switch_to_plan_mode, list_directory_tree
+        get_current_nextflow_config, list_directory_tree
     ],
     "plan": [
         query_fastq_files, query_genome_info, update_nextflow_param,
@@ -188,13 +188,22 @@ def create_chain_for_mode(mode: str):
     llm_config = get_llm_for_mode(mode)
     return llm_config["prompt"] | llm_config["llm_with_tools"]
 
-def create_structured_chain_for_mode(mode: str):
+def create_tool_calling_chain(mode: str):
     """
-    为指定模式创建结构化输出链，强制使用json_mode方法
+    创建纯工具调用链 - 双LLM架构第一阶段
     
-    DeepSeek仅支持json_mode，不支持tool_calling
+    专门负责工具调用，不处理结构化输出
     """
     llm_config = get_llm_for_mode(mode)
+    return llm_config["prompt"] | llm_config["llm_with_tools"]
+
+def create_structured_response_chain(mode: str):
+    """
+    创建纯结构化输出链 - 双LLM架构第二阶段
+    
+    专门负责将工具调用结果格式化为结构化输出
+    """
+    from langchain_core.prompts import ChatPromptTemplate
     
     # 根据模式选择对应的Pydantic模型
     if mode == "normal":
@@ -204,24 +213,55 @@ def create_structured_chain_for_mode(mode: str):
     elif mode == "execute":
         pydantic_model = ExecuteModeResponse
     else:
-        # 默认使用Normal模式
         pydantic_model = NormalModeResponse
     
-    # 获取带工具的LLM并应用结构化输出
-    llm_with_tools = llm_config["llm_with_tools"]
+    # 创建专门的结构化输出提示词
+    structured_prompt = ChatPromptTemplate.from_messages([
+        ("system", f"""你是RNA-seq分析助手。根据用户的原始请求和工具执行结果，生成结构化的响应。
+
+你需要分析工具调用的结果，并将其格式化为用户友好的响应格式。
+
+重要：你的响应必须是有效的JSON格式，包含以下字段：
+- reasoning: 分析和推理过程
+- response: 给用户的主要回复
+- suggested_actions: 建议的后续操作列表
+- need_more_info: 是否需要更多信息
+
+确保响应内容准确、专业且有帮助。"""),
+        ("user", "原始用户请求：{original_input}\n\n工具执行结果：{tool_results}\n\n请生成结构化响应：")
+    ])
     
-    # DeepSeek强制使用json_mode
-    structured_llm = llm_with_tools.with_structured_output(pydantic_model, method="json_mode")
+    # 获取基础LLM（不绑定工具）
+    llm_config = get_llm_for_mode(mode)
+    base_llm = llm_config["llm"]
     
-    # 获取对应的prompt
-    prompt = llm_config["prompt"]
+    # 创建结构化输出LLM
+    structured_llm = base_llm.with_structured_output(pydantic_model, method="json_mode")
     
-    # 如果是Plan模式，使用专门的结构化输出prompt
-    if mode == "plan":
-        return get_structured_plan_prompt() | structured_llm
-    else:
-        # 对于其他模式，直接使用已经优化过的原有prompt结构
-        return prompt | structured_llm
+    return structured_prompt | structured_llm
+
+def create_dual_llm_chain_for_mode(mode: str):
+    """
+    创建双LLM链 - 组合工具调用和结构化输出
+    
+    第一阶段：工具调用链处理工具执行
+    第二阶段：结构化输出链格式化响应
+    """
+    tool_chain = create_tool_calling_chain(mode)
+    response_chain = create_structured_response_chain(mode)
+    
+    return {
+        "tool_chain": tool_chain,
+        "response_chain": response_chain
+    }
+
+def create_structured_chain_for_mode(mode: str):
+    """
+    向后兼容函数 - 返回双LLM链配置
+    
+    保持现有接口，内部使用双LLM架构
+    """
+    return create_dual_llm_chain_for_mode(mode)
 
 # ============================================================================
 # 向后兼容 - 保持现有接口

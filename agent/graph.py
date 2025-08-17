@@ -7,7 +7,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 from .state import AgentState, create_initial_state
 from .state import update_current_stage, add_tool_to_execution_history
-from .router import IntelligentRouter, route_user_input, route_after_tools, should_call_tools
+from .router import IntelligentRouter, route_user_input, route_after_tools
 from .core import ALL_TOOLS
 from .nodes.normal_mode_node import normal_mode_node, get_user_input
 from .nodes.plan_mode_node import plan_mode_node
@@ -48,18 +48,13 @@ def route_from_user_input(state: AgentState) -> str:
 
 def route_from_mode_nodes(state: AgentState) -> str:
     """
-    从模式节点进行路由
+    从模式节点进行路由 - 基于结构化输出设计
     
-    遵循开放封闭原则：易于扩展新的路由逻辑
+    结构化输出模式下，所有工具调用在模式节点内部完成
+    模式切换通过特殊命令实现，无需检测工具调用
     """
     try:
-        # 检查是否需要调用工具
-        has_tools = should_call_tools(state)
-        
-        if has_tools:
-            return "call_tools"
-        
-        # 所有模式节点处理完后都应该返回用户输入，等待用户响应
+        # 结构化输出模式下，模式节点完成所有处理后直接等待用户输入
         return "user_input"
     
     except Exception as e:

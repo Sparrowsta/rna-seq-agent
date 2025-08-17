@@ -7,7 +7,7 @@ import logging
 from typing import Dict, Any, List, Tuple
 from langchain_core.messages import HumanMessage, AIMessage
 from ..state import AgentState, update_state_mode
-from ..core import create_chain_for_mode, create_structured_chain_for_mode
+from ..core import create_chain_for_mode, create_dual_llm_chain_for_mode
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -15,37 +15,156 @@ logger = logging.getLogger(__name__)
 
 class NormalModeHandler:
     """
-    Normal模式处理器
+    Normal模式处理器 - 双LLM架构
     
-    遵循单一职责原则：专门处理normal模式的业务逻辑
+    遵循LangGraph官方最佳实践：分离工具调用和结构化输出
     """
     
     def __init__(self):
-        # 使用结构化输出链，采用先绑定工具再结构化输出的正确方式
-        self.chain = create_structured_chain_for_mode("normal")
+        # 获取双LLM链配置
+        self.dual_chain = create_dual_llm_chain_for_mode("normal")
+        self.tool_chain = self.dual_chain["tool_chain"]
+        self.response_chain = self.dual_chain["response_chain"]
     
-    def _process_llm_response(self, response) -> Tuple[AIMessage, List[Dict[str, Any]]]:
+    def _execute_tool_chain(self, messages, user_input) -> Tuple[Any, List[Dict[str, Any]]]:
         """
-        处理LLM的结构化响应 - 使用先绑定工具再结构化输出的方式
+        执行工具调用链 - 双LLM架构第一阶段
         
-        返回: (AIMessage, tool_calls列表)
+        返回: (llm_response, tool_execution_results列表)
         """
         try:
-            # 调试日志：查看响应类型和内容
-            logger.info(f"Normal模式收到响应类型: {type(response)}")
-            logger.info(f"Normal模式收到响应内容: {response}")
+            logger.info("执行工具调用链...")
             
-            # 结构化输出链返回Pydantic模型实例，但工具调用由LangChain内部处理
-            if hasattr(response, 'response'):  # NormalModeResponse模型
-                logger.info(f"Normal模式收到结构化输出响应")
+            # 调用工具链获取工具调用意图
+            tool_response = self.tool_chain.invoke({
+                "messages": messages,
+                "input": user_input
+            })
+            
+            logger.info(f"工具链响应类型: {type(tool_response)}")
+            
+            # 检查是否有工具调用
+            tool_execution_results = []
+            if hasattr(tool_response, 'tool_calls') and tool_response.tool_calls:
+                logger.info(f"检测到 {len(tool_response.tool_calls)} 个工具调用")
                 
-                # 提取响应信息
-                user_message = getattr(response, "response", "响应完成")
-                suggested_actions = getattr(response, "suggested_actions", [])
-                need_more_info = getattr(response, "need_more_info", False)
+                # 实际执行每个工具调用
+                from ..core import ALL_TOOLS
+                
+                # 创建工具名称到工具对象的映射
+                tool_map = {tool.name: tool for tool in ALL_TOOLS}
+                
+                for i, tool_call in enumerate(tool_response.tool_calls):
+                    tool_name = tool_call.get('name', 'unknown')
+                    tool_args = tool_call.get('args', {})
+                    
+                    logger.info(f"执行工具调用 {i+1}: {tool_name} with args: {tool_args}")
+                    
+                    if tool_name in tool_map:
+                        try:
+                            # 实际执行工具
+                            tool_result = tool_map[tool_name].invoke(tool_args)
+                            tool_execution_results.append({
+                                'tool_name': tool_name,
+                                'args': tool_args,
+                                'result': tool_result
+                            })
+                            logger.info(f"工具 {tool_name} 执行成功")
+                        except Exception as tool_error:
+                            logger.error(f"工具 {tool_name} 执行失败: {str(tool_error)}")
+                            tool_execution_results.append({
+                                'tool_name': tool_name,
+                                'args': tool_args,
+                                'result': f"工具执行失败: {str(tool_error)}"
+                            })
+                    else:
+                        logger.error(f"未知工具: {tool_name}")
+                        tool_execution_results.append({
+                            'tool_name': tool_name,
+                            'args': tool_args,
+                            'result': f"未知工具: {tool_name}"
+                        })
+            else:
+                logger.info("没有检测到工具调用")
+            
+            return tool_response, tool_execution_results
+            
+        except Exception as e:
+            logger.error(f"工具链执行失败: {str(e)}")
+            import traceback
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
+            raise e
+    
+    def _execute_response_chain(self, original_input: str, tool_results: str) -> Any:
+        """
+        执行结构化响应链 - 双LLM架构第二阶段
+        
+        返回: 结构化响应对象
+        """
+        try:
+            logger.info("执行结构化响应链...")
+            
+            # 调用结构化响应链
+            structured_response = self.response_chain.invoke({
+                "original_input": original_input,
+                "tool_results": tool_results
+            })
+            
+            logger.info(f"结构化响应类型: {type(structured_response)}")
+            logger.info(f"结构化响应内容: {structured_response}")
+            
+            return structured_response
+            
+        except Exception as e:
+            logger.error(f"结构化响应链执行失败: {str(e)}")
+            import traceback
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
+            raise e
+    
+    def _format_tool_results(self, tool_response, tool_execution_results) -> str:
+        """
+        格式化工具执行结果
+        
+        将工具执行结果转换为可读的字符串格式，传递给第二阶段LLM
+        """
+        try:
+            if not tool_execution_results:
+                return "没有执行任何工具调用。"
+            
+            formatted_results = []
+            
+            # 处理实际的工具执行结果
+            for result in tool_execution_results:
+                tool_name = result.get('tool_name', 'unknown')
+                args = result.get('args', {})
+                tool_result = result.get('result', '无结果')
+                
+                formatted_results.append(f"工具: {tool_name}")
+                if args:
+                    formatted_results.append(f"参数: {args}")
+                formatted_results.append(f"执行结果: {tool_result}")
+                formatted_results.append("---")
+            
+            return "\n".join(formatted_results)
+            
+        except Exception as e:
+            logger.error(f"格式化工具结果失败: {str(e)}")
+            return f"工具执行完成，但结果格式化出错: {str(e)}"
+    
+    def _create_final_ai_message(self, structured_response) -> AIMessage:
+        """
+        基于结构化响应创建最终的AI消息
+        """
+        try:
+            # 检查是否是NormalModeResponse格式
+            if hasattr(structured_response, 'response'):
+                user_message = getattr(structured_response, "response", "响应完成")
+                suggested_actions = getattr(structured_response, "suggested_actions", [])
+                need_more_info = getattr(structured_response, "need_more_info", False)
                 
                 # 构建详细响应
                 detailed_response = user_message
+                
                 if suggested_actions:
                     detailed_response += "\n\n💡 **建议操作：**\n"
                     detailed_response += "\n".join([f"  - {action}" for action in suggested_actions])
@@ -53,37 +172,21 @@ class NormalModeHandler:
                 if need_more_info:
                     detailed_response += "\n\n❓ 需要更多信息才能继续。"
                 
-                # 创建AIMessage - 工具调用由LangChain的with_structured_output内部处理
-                ai_message = AIMessage(content=detailed_response)
-                
-                logger.info(f"Normal模式成功处理结构化响应")
-                
-                # 返回空的tool_calls列表，因为工具调用由内部处理
-                return ai_message, []
-                
-            # 如果收到的是AIMessage（可能是工具调用链的直接返回）
-            elif isinstance(response, AIMessage):
-                logger.info(f"Normal模式收到AIMessage响应")
-                tool_calls = getattr(response, 'tool_calls', [])
-                logger.info(f"Normal模式提取到 {len(tool_calls)} 个工具调用")
-                return response, tool_calls
-                
+                return AIMessage(content=detailed_response)
             else:
-                logger.error(f"Normal模式收到意外响应格式: {type(response)}")
-                content = str(response) if response else "响应为空"
-                return AIMessage(content=f"响应解析错误: {content}"), []
-            
+                # 如果不是预期格式，直接使用字符串表示
+                return AIMessage(content=str(structured_response))
+                
         except Exception as e:
-            logger.error(f"Normal模式处理响应时出错: {str(e)}")
-            import traceback
-            logger.error(f"错误堆栈: {traceback.format_exc()}")
-            return AIMessage(content=f"处理响应时出现错误: {str(e)}"), []
+            logger.error(f"创建AI消息失败: {str(e)}")
+            return AIMessage(content=f"响应处理出错: {str(e)}")
     
     def process_user_input(self, state: AgentState) -> Dict[str, Any]:
         """
-        处理用户输入
+        双阶段处理用户输入 - LangGraph官方双LLM架构
         
-        应用KISS原则：简单直接的用户输入处理
+        第一阶段：工具调用链处理工具执行
+        第二阶段：结构化响应链格式化输出
         """
         try:
             # 确保当前处于normal模式
@@ -98,45 +201,37 @@ class NormalModeHandler:
                 if hasattr(last_message, "content"):
                     user_input = last_message.content
             
-            # 调用LLM处理用户输入，传入input参数
+            logger.info(f"开始双阶段处理用户输入: {user_input}")
+            
+            # 第一阶段：执行工具调用链
             try:
-                logger.info(f"调用LLM链处理用户输入: {user_input}")
-                response = self.chain.invoke({
-                    "messages": state["messages"],
-                    "input": user_input
-                })
-                logger.info(f"LLM链调用成功，响应类型: {type(response)}")
-                logger.info(f"LLM响应内容: {repr(response)}")
-            except Exception as chain_error:
-                logger.error(f"LLM链调用失败: {str(chain_error)}")
-                import traceback
-                logger.error(f"链调用错误堆栈: {traceback.format_exc()}")
-                raise chain_error
+                tool_response, tool_calls = self._execute_tool_chain(state["messages"], user_input)
+                logger.info(f"第一阶段完成 - 工具调用链执行成功")
+            except Exception as tool_error:
+                logger.error(f"第一阶段失败 - 工具调用链执行失败: {str(tool_error)}")
+                raise tool_error
             
-            # 处理LLM的结构化响应
+            # 格式化工具执行结果
+            tool_results_text = self._format_tool_results(tool_response, tool_calls)
+            logger.info(f"工具执行结果格式化完成: {tool_results_text}")
+            
+            # 第二阶段：执行结构化响应链
             try:
-                parsed_response, tool_calls = self._process_llm_response(response)
-                logger.info(f"响应解析成功")
-            except Exception as parse_error:
-                logger.error(f"响应解析失败: {str(parse_error)}")
-                import traceback
-                logger.error(f"解析错误堆栈: {traceback.format_exc()}")
-                raise parse_error
+                structured_response = self._execute_response_chain(user_input, tool_results_text)
+                logger.info(f"第二阶段完成 - 结构化响应链执行成功")
+            except Exception as response_error:
+                logger.error(f"第二阶段失败 - 结构化响应链执行失败: {str(response_error)}")
+                raise response_error
             
-            # 如果有工具调用，添加到响应中
-            if tool_calls:
-                logger.info(f"检测到工具调用，准备返回带有tool_calls的消息")
-                logger.info(f"parsed_response.tool_calls: {getattr(parsed_response, 'tool_calls', None)}")
-            else:
-                logger.info("没有检测到工具调用")
+            # 创建最终的AI消息
+            final_ai_message = self._create_final_ai_message(structured_response)
             
-            logger.info(f"Normal mode response generated: {type(response)}")
-            logger.info(f"返回的消息tool_calls属性: {hasattr(parsed_response, 'tool_calls')} - {getattr(parsed_response, 'tool_calls', None)}")
+            logger.info(f"双阶段处理完成，返回最终响应")
             
-            return {"messages": [parsed_response]}
+            return {"messages": [final_ai_message]}
         
         except Exception as e:
-            logger.error(f"Error in normal mode processing: {str(e)}")
+            logger.error(f"Error in dual-stage processing: {str(e)}")
             error_message = AIMessage(
                 content=f"抱歉，处理您的请求时出现错误：{str(e)}。请重试或联系技术支持。"
             )
@@ -323,40 +418,6 @@ def handle_normal_mode_tools(state: AgentState) -> Dict[str, Any]:
 # ============================================================================
 # 便捷函数和工具 - 遵循DRY原则
 # ============================================================================
-
-def create_welcome_message(validation_results=None) -> AIMessage:
-    """
-    创建欢迎消息
-    
-    应用工厂模式：统一的消息创建
-    """
-    welcome_content = """🧬 **RNA-seq智能助手** 已启动！
-
-我是您的专业RNA-seq智能助手，可以帮助您：
-- 📁 查看和管理FASTQ文件
-- 🧬 配置基因组参考文件  
-- 📋 制定个性化处理计划
-- 🚀 执行完整的RNA-seq流程
-
-请告诉我您的需求，或输入"帮助"查看详细功能介绍。"""
-
-    # 如果有验证结果，添加系统状态信息
-    if validation_results:
-        status_content = "\n\n📋 **系统验证状态**:\n"
-        for status, message in validation_results:
-            status_content += f"  {status} {message}\n"
-        
-        # 统计结果
-        success_count = sum(1 for status, _ in validation_results if status == "✅")
-        total_count = len(validation_results)
-        status_content += f"\n📊 总结: {success_count}/{total_count} 项验证通过"
-        
-        if success_count == total_count:
-            status_content += " 🎉"
-        
-        welcome_content += status_content
-    
-    return AIMessage(content=welcome_content)
 
 def create_help_message() -> AIMessage:
     """

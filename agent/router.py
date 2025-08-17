@@ -190,31 +190,6 @@ def route_user_input(state: AgentState) -> str:
     router = IntelligentRouter()
     return router.route(state)
 
-def should_call_tools(state: AgentState) -> bool:
-    """
-    判断是否需要调用工具
-    
-    所有模式都支持工具调用
-    """
-    if not state.get("messages"):
-        print("[ROUTER DEBUG] should_call_tools: 没有消息")
-        return False
-    
-    last_message = state["messages"][-1]
-    print(f"[ROUTER DEBUG] should_call_tools: 最后一条消息类型: {type(last_message)}")
-    print(f"[ROUTER DEBUG] should_call_tools: 消息有tool_calls属性吗? {hasattr(last_message, 'tool_calls')}")
-    
-    if hasattr(last_message, "tool_calls"):
-        tool_calls = last_message.tool_calls
-        print(f"[ROUTER DEBUG] should_call_tools: tool_calls值: {tool_calls}")
-        print(f"[ROUTER DEBUG] should_call_tools: tool_calls长度: {len(tool_calls) if tool_calls else 0}")
-        
-        result = (tool_calls and len(tool_calls) > 0)
-        print(f"[ROUTER DEBUG] should_call_tools: 最终结果: {result}")
-        return result
-    else:
-        print("[ROUTER DEBUG] should_call_tools: 消息没有tool_calls属性")
-        return False
 
 def get_next_node_after_mode_switch(state: AgentState, switched_mode: str) -> str:
     """

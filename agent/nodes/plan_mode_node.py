@@ -9,7 +9,7 @@ import logging
 from typing import Dict, Any, List, Tuple
 from langchain_core.messages import HumanMessage, AIMessage
 from ..state import AgentState, update_state_mode
-from ..core import create_structured_chain_for_mode
+from ..core import create_dual_llm_chain_for_mode
 from ..ui_manager import get_ui_manager
 
 # 配置日志
@@ -18,15 +18,17 @@ logger = logging.getLogger(__name__)
 
 class PlanModeHandler:
     """
-    Plan模式处理器
+    Plan模式处理器 - 双LLM架构
     
-    遵循单一职责原则：专门处理plan模式的业务逻辑
-    采用JSON-first架构，与normal模式保持一致
+    遵循LangGraph官方最佳实践：分离工具调用和结构化输出
+    Plan模式专门处理配置更新和计划制定
     """
     
     def __init__(self):
-        # 使用Pydantic结构化输出链
-        self.chain = create_structured_chain_for_mode("plan")
+        # 获取双LLM链配置
+        self.dual_chain = create_dual_llm_chain_for_mode("plan")
+        self.tool_chain = self.dual_chain["tool_chain"]
+        self.response_chain = self.dual_chain["response_chain"]
     
     def _process_llm_response(self, response) -> Tuple[AIMessage, List[Dict[str, Any]]]:
         """

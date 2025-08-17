@@ -316,11 +316,12 @@ class EnhancedUIManager:
             safe_input = original_input.encode('ascii', errors='ignore').decode('ascii')
             return safe_input, True
     
-    def show_welcome_banner(self):
+    def show_welcome_banner(self, validation_results=None):
         """
-        显示欢迎横幅
+        显示欢迎横幅和系统状态
         
         应用模板方法模式：标准的欢迎界面格式
+        整合系统验证信息显示
         """
         banner = """
 ╔══════════════════════════════════════════════════════════════╗
@@ -339,7 +340,38 @@ class EnhancedUIManager:
         
         self.safe_print(banner, 'primary')
         self.safe_print(f"启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", 'dim')
+        
+        # 如果有验证结果，显示系统状态信息
+        if validation_results:
+            self.safe_print("=" * 60, 'dim')
+            self.safe_print("📋 系统验证状态:", 'info')
+            
+            for status, message in validation_results:
+                self.safe_print(f"  {status} {message}", 'info')
+            
+            # 统计结果
+            success_count = sum(1 for status, _ in validation_results if status == "✅")
+            total_count = len(validation_results)
+            
+            summary = f"📊 总结: {success_count}/{total_count} 项验证通过"
+            if success_count == total_count:
+                summary += " 🎉"
+            
+            self.safe_print(f"\n{summary}", 'secondary')
+        
         self.safe_print("=" * 60, 'dim')
+        self.safe_print("")
+        
+        # 显示功能介绍
+        welcome_content = """我是您的专业RNA-seq智能助手，可以帮助您：
+• 📁 查看和管理FASTQ文件
+• 🧬 配置基因组参考文件  
+• 📋 制定个性化处理计划
+• 🚀 执行完整的RNA-seq流程
+
+请告诉我您的需求，或输入"帮助"查看详细功能介绍。"""
+        
+        self.safe_print(welcome_content, 'info')
         self.safe_print("")
     
     def get_user_input(self, prompt_text: str = "请输入您的需求", mode: str = "normal") -> str:
