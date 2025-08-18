@@ -23,3 +23,4 @@ run_comprehensive_tests.sh
 *.log*
 *.md
 langgraph.txt
+docs/plan-and-execute.ipynb
