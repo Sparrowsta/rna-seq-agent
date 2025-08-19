@@ -13,7 +13,7 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from src.state import PlanExecuteState
+from src.state import NormalNodeState
 from src.graph import create_agent
 
 # 导入必要的组件
@@ -67,7 +67,7 @@ async def run_interactive_session(agent):
     print("   - /execute - 执行分析")
     print("   - quit - 退出程序\n")
     
-    state = PlanExecuteState()
+    state = NormalNodeState()
     
     while True:
         try:
