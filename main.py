@@ -15,11 +15,10 @@ sys.path.insert(0, str(project_root))
 
 from src.state import NormalNodeState
 from src.graph import create_agent
+from src.core import test_llm_connection
 
 # 导入必要的组件
 from dotenv import load_dotenv
-from langchain_deepseek import ChatDeepSeek
-from langchain_core.messages import HumanMessage
 
 def load_environment():
     """加载环境变量配置"""
@@ -39,64 +38,38 @@ def load_environment():
 
 
 def create_deepseek_llm():
-    """创建DeepSeek LLM实例"""
-
-    llm = ChatDeepSeek(
-            model="deepseek-chat",
-            api_key=os.environ["DEEPSEEK_API_KEY"],
-            temperature=0.1
-        )
+    """创建并测试DeepSeek LLM实例"""
+    success, message = test_llm_connection()
     
-    try:
-        # 测试连接
-        test_response = llm.invoke([HumanMessage(content="测试连接，请回复'连接成功'")])
-        print(f"✅ DeepSeek LLM连接成功: {test_response.content}")
-        
-        return llm
-    
-    except Exception as e:
-        print(f"❌ DeepSeek LLM连接失败: {e}")
+    if success:
+        print(f"✅ DeepSeek LLM连接成功: {message}")
+    else:
+        print(f"❌ DeepSeek LLM连接失败: {message}")
         sys.exit(1)
+        
+    return success
 
 async def run_interactive_session(agent):
     """运行交互式会话"""
     print("\n💬 RNA-seq智能分析助手启动")
     print("🔹 系统将直接进入用户通信模式")
-    print("🔹 输入 'quit' 可退出程序\n")
+    print("🔹 Agent将处理所有用户交互\n")
     
-    while True:
-        try:
-            user_input = input("👤 您: ").strip()
-            
-            if user_input.lower() in ['quit', 'exit', '退出']:
-                print("👋 再见！")
-                break
-            
-            if not user_input:
-                continue
-            
-            # 创建初始状态，直接传递给user_communication节点
-            initial_state = {
-                "input": user_input,
-                "messages": [{"role": "user", "content": user_input}],
-                "response": "",
-                "status": "processing"
-            }
-            
-            print("🤖 处理中...")
-            
-            # 调用Agent - 从user_communication节点开始
-            result = await agent.ainvoke(initial_state)
-            
-            # 显示结果
-            response = result.get("response", "处理完成")
-            print(f"🤖 助手: {response}\n")
-            
-        except KeyboardInterrupt:
-            print("\n👋 收到中断信号，退出程序")
-            break
-        except Exception as e:
-            print(f"❌ 处理错误: {e}\n")
+    # 创建空的初始状态，让user_communication节点来处理输入
+    initial_state = {
+        "response": "",
+        "status": "starting"
+    }
+    
+    try:
+        # 调用Agent - 从user_communication节点开始
+        result = await agent.ainvoke(initial_state)
+        print("🤖 会话结束")
+        
+    except KeyboardInterrupt:
+        print("\n👋 收到中断信号，退出程序")
+    except Exception as e:
+        print(f"❌ 处理错误: {e}")
 
 
 async def main():
@@ -104,8 +77,8 @@ async def main():
     # 加载环境配置
     load_environment()
     
-    # 创建LLM实例
-    llm = create_deepseek_llm()
+    # 测试LLM连接
+    create_deepseek_llm()
     
     # 创建Agent
     agent = create_agent()

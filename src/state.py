@@ -8,8 +8,7 @@ class BaseAgentState(BaseModel):
     """基础Agent状态 - 包含所有节点共享的公共字段"""
     
     # 公共字段 - 所有节点都需要
-    input: str = Field(default="", description="用户原始输入")
-    messages: List[dict] = Field(default=[], description="对话历史")
+    messages: List[Dict[str, str]] = Field(default=[], description="对话历史，格式: [{'role': 'user', 'content': '...'}]")
     response: str = Field(default="", description="当前阶段响应")
     status: str = Field(default="pending", description="当前状态: pending, planning, detecting, preparing, ready, replanning, confirming, executing")
 
