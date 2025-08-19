@@ -1,35 +1,38 @@
 from langgraph.graph import END
-from .state import NormalNodeState, PrepareNodeState, ReplanNodeState, UserConfirmState
+from .state import UserCommunicationNodeState, DetectNodeState, UserConfirmState
 
-async def route_from_normal(state: NormalNodeState) -> str:
-    """Normal节点后的路由决策"""
-    routing_decision = state.get("routing_decision", "normal")
+async def route_from_user_communication(state: UserCommunicationNodeState) -> str:
+    """User Communication节点后的路由决策"""
+    routing_decision = state.get("routing_decision", "end")
     
     if routing_decision == "plan":
-        print("➡️ 用户提出分析需求，进入Plan流程")
+        print("🚀 进入Plan分析流程")
         return "plan"
-    else:
-        print("🔄 继续Normal模式交互")
+    elif routing_decision == "normal":
+        print("🧠 进入意图分析")
         return "normal"
+    else:
+        print("🔚 会话结束")
+        return "end"
 
-async def should_continue(state: PrepareNodeState) -> str:
+async def should_continue(state: DetectNodeState) -> str:
     """决定是否继续执行"""
     plan = state.get("plan", [])
     if plan:
-        return "execute"
+        return "detect"
     else:
-        return END
+        return "prepare"
 
 async def route_after_confirm(state: UserConfirmState) -> str:
     """用户确认后的路由决策"""
     user_decision = state.get("user_decision", "").lower()
     
     if user_decision in ["e", "execute", "执行"]:
-        print("✅ 用户选择执行分析，结束配置流程")
+        print("✅ 开始执行分析")
         return "execute"
     elif user_decision in ["m", "modify", "修改"]:
-        print("🔄 用户选择修改配置，进入Replan流程")
+        print("🔄 修改配置")
         return "modify"
-    else:  # cancel or 取消 or empty
-        print("❌ 用户取消分析或输入为空，结束流程")
+    else:
+        print("❌ 取消分析")
         return "cancel"

@@ -60,14 +60,9 @@ def create_deepseek_llm():
 
 async def run_interactive_session(agent):
     """运行交互式会话"""
-    print("\n💬 进入交互模式 (输入 'quit' 退出)")
-    print("🔹 支持的命令:")
-    print("   - 任何自然语言描述的RNA-seq分析需求")
-    print("   - /plan - 制定分析计划")
-    print("   - /execute - 执行分析")
-    print("   - quit - 退出程序\n")
-    
-    state = NormalNodeState()
+    print("\n💬 RNA-seq智能分析助手启动")
+    print("🔹 系统将直接进入用户通信模式")
+    print("🔹 输入 'quit' 可退出程序\n")
     
     while True:
         try:
@@ -80,27 +75,28 @@ async def run_interactive_session(agent):
             if not user_input:
                 continue
             
-            # 更新状态
-            state["input"] = user_input
-            state["messages"].append({"role": "user", "content": user_input})
+            # 创建初始状态，直接传递给user_communication节点
+            initial_state = {
+                "input": user_input,
+                "messages": [{"role": "user", "content": user_input}],
+                "response": "",
+                "status": "processing"
+            }
             
-            print("🤖 AI助手思考中...")
+            print("🤖 处理中...")
             
-            # 调用Agent
-            result = await agent.ainvoke(state)
+            # 调用Agent - 从user_communication节点开始
+            result = await agent.ainvoke(initial_state)
             
             # 显示结果
             response = result.get("response", "处理完成")
-            print(f"🤖 AI助手: {response}")
-            
-            # 更新状态
-            state.update(result)
+            print(f"🤖 助手: {response}\n")
             
         except KeyboardInterrupt:
             print("\n👋 收到中断信号，退出程序")
             break
         except Exception as e:
-            print(f"❌ 处理错误: {e}")
+            print(f"❌ 处理错误: {e}\n")
 
 
 async def main():
