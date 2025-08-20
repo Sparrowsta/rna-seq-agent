@@ -50,8 +50,8 @@
   "danRer11": {
     "species": "zebrafish",
     "version": "danRer11",
-    "fasta": "data/genomes/zebrafish/danRer11/danRer11.fa",
-    "gtf": "data/genomes/zebrafish/danRer11/danRer11.ncbiRefSeq.gtf",
+    "fasta_path": "data/genomes/zebrafish/danRer11/danRer11.fa",
+    "gtf_path": "data/genomes/zebrafish/danRer11/danRer11.ncbiRefSeq.gtf",
     "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/danRer11/bigZips/danRer11.fa.gz",
     "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/danRer11/bigZips/genes/danRer11.ncbiRefSeq.gtf.gz"
   }

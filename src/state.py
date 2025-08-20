@@ -51,3 +51,26 @@ class AgentState(BaseModel):
     execution_status: str = Field(default="", description="执行状态: building/running/completed/failed")
     execution_output: str = Field(default="", description="执行输出日志")
     execution_result: Dict[str, Any] = Field(default={}, description="执行结果摘要")
+
+# ==================== 子状态模型 - 用于特定节点的结构化输出 ====================
+
+class NormalResponse(BaseModel):
+    """Normal节点的精简响应格式 - 兼容create_react_agent工具响应"""
+    query_response: str = Field(description="工具调用的完整结果")
+    user_intent: str = Field(description="用户意图分析") 
+    suggested_actions: List[str] = Field(default=[], description="建议的后续操作")
+    query_type: str = Field(default="info", description="查询类型")
+    
+    # 添加工具响应兼容字段
+    type: str = Field(default="", description="工具类型标识")
+    args: Dict[str, Any] = Field(default={}, description="工具参数")
+
+class PlanResponse(BaseModel):
+    """Plan节点的精简响应格式"""
+    plan: List[str] = Field(default=[], description="分析步骤计划")
+    analysis_intent: str = Field(default="", description="分析目标意图")
+
+class DetectResponse(BaseModel):
+    """Detect节点的精简响应格式"""
+    query_results: Dict[str, Any] = Field(default={}, description="系统检测结果")
+    query_summary: str = Field(default="", description="检测结果总结")
