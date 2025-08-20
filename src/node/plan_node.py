@@ -1,10 +1,10 @@
 from typing import Dict, Any
-from ..state import PlanNodeState
+from ..state import AgentState
 
-async def plan_node(state: PlanNodeState) -> Dict[str, Any]:
+async def plan_node(state: AgentState) -> Dict[str, Any]:
     """计划制定节点"""
     print(f"🎯 制定计划中...")
-    print(f"   用户输入: {state['input']}")
+    print(f"   用户消息: {len(state.messages)} 条对话历史")
     
     # TODO: 实现计划制定逻辑
     # 这里需要基于用户输入生成分析步骤计划

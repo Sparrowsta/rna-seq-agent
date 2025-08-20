@@ -1,5 +1,5 @@
 from langgraph.graph import StateGraph, START, END
-from .state import NormalNodeState
+from .state import AgentState
 from .node.normal_node import normal_node
 from .node.user_communication_node import user_communication_node
 from .node.plan_node import plan_node
@@ -14,7 +14,7 @@ def create_agent():
     """创建LangGraph Agent - User Communication为主的Plan-and-Execute架构"""
     
     # 创建状态图
-    workflow = StateGraph(NormalNodeState)
+    workflow = StateGraph(AgentState)
     
     # 添加所有节点
     workflow.add_node("normal", normal_node)

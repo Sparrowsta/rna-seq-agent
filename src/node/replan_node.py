@@ -1,10 +1,10 @@
 from typing import Dict, Any
-from ..state import ReplanNodeState
+from ..state import AgentState
 
-async def replan_node(state: ReplanNodeState) -> Dict[str, Any]:
+async def replan_node(state: AgentState) -> Dict[str, Any]:
     """重新计划节点 - 分析用户修改请求并决定路由"""
     print(f"🔄 重新计划中...")
-    print(f"   用户修改请求: {state['input']}")
+    print(f"   用户修改请求: {state.user_modification_input}")
     
     # TODO: 实现LLM驱动的修改意图分析
     # TODO: 实现智能路由决策逻辑
@@ -12,7 +12,7 @@ async def replan_node(state: ReplanNodeState) -> Dict[str, Any]:
     
     # 临时基础实现 - 统一路由到detect节点
     return {
-        "user_modification_input": state.get('input', ''),
+        "user_modification_input": state.user_modification_input,
         "modification_intent": {},
         "modification_mode": "incremental",
         "routing_decision": "detect",

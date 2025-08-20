@@ -13,7 +13,7 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-from src.state import NormalNodeState
+from src.state import AgentState
 from src.graph import create_agent
 from src.core import test_llm_connection
 

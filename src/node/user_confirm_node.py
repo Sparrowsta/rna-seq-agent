@@ -1,13 +1,13 @@
 from typing import Dict, Any
-from ..state import UserConfirmState
+from ..state import AgentState
 
-async def user_confirm_node(state: UserConfirmState) -> Dict[str, Any]:
+async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
     """用户确认节点 - 展示配置并等待用户决策"""
     print(f"⏳ 等待用户确认...")
     
     # 展示当前配置摘要
-    nextflow_config = state.get('nextflow_config', {})
-    config_reasoning = state.get('config_reasoning', '')
+    nextflow_config = state.nextflow_config
+    config_reasoning = state.config_reasoning
     
     print(f"📋 配置摘要:")
     for key, value in nextflow_config.items():

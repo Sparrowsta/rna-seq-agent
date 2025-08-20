@@ -1,7 +1,7 @@
 from typing import Dict, Any
-from ..state import UserCommunicationNodeState
+from ..state import AgentState
 
-async def user_communication_node(state: UserCommunicationNodeState) -> Dict[str, Any]:
+async def user_communication_node(state: AgentState) -> Dict[str, Any]:
     """User Communication节点 - 用户交互入口"""
     print(f"🔬 RNA-seq智能分析助手")
     print(f"   输入 /plan 开始分析 | /help 获取帮助 | /exit 退出")

@@ -1,10 +1,10 @@
 from typing import Dict, Any
-from ..state import ExecuteNodeState
+from ..state import AgentState
 
-async def execute_node(state: ExecuteNodeState) -> Dict[str, Any]:
+async def execute_node(state: AgentState) -> Dict[str, Any]:
     """执行节点 - 构建和执行Nextflow命令"""
     print(f"🚀 执行RNA-seq分析...")
-    print(f"   配置参数: {state.get('nextflow_config', {})}")
+    print(f"   配置参数: {state.nextflow_config}")
     
     # TODO: 实现nextflow命令构建逻辑
     # TODO: 实现subprocess命令执行

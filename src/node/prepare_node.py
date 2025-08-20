@@ -1,11 +1,11 @@
 from typing import Dict, Any
-from ..state import PrepareNodeState
+from ..state import AgentState
 
-async def prepare_node(state: PrepareNodeState) -> Dict[str, Any]:
+async def prepare_node(state: AgentState) -> Dict[str, Any]:
     """准备节点 - 配置决策专家"""
     print(f"⚙️ 准备执行配置中...")
-    print(f"   基于计划: {state['plan']}")
-    print(f"   检测结果: {state['query_summary']}")
+    print(f"   基于计划: {state.plan}")
+    print(f"   检测结果: {state.query_summary}")
     
     # TODO: 实现配置准备逻辑
     # 这里需要基于计划和检测结果生成最优配置

@@ -1,6 +1,6 @@
 import os
 from typing import Dict, Any
-from ..state import NormalNodeState
+from ..state import AgentState
 from ..tools import query_fastq_files, query_genome_info, get_help
 from ..core import get_shared_llm
 
@@ -34,11 +34,11 @@ def create_normal_agent():
     agent = create_react_agent(
         model=llm,
         tools=tools,
-        response_format=NormalNodeState  # 关键：使用Pydantic模型作为响应格式
+        response_format=AgentState  # 关键：使用Pydantic模型作为响应格式
     )
     return agent
 
-async def normal_node(state: NormalNodeState) -> Dict[str, Any]:
+async def normal_node(state: AgentState) -> Dict[str, Any]:
     """Normal节点 - 使用LangGraph React Agent预构件处理用户查询"""
     
     try:
@@ -47,7 +47,7 @@ async def normal_node(state: NormalNodeState) -> Dict[str, Any]:
             "messages": state.messages
         })
         
-        # LangGraph会自动生成符合NormalNodeState格式的结构化响应
+        # LangGraph会自动生成符合AgentState格式的结构化响应
         structured_response = result.get("structured_response")
         
         if structured_response:

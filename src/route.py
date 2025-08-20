@@ -1,7 +1,7 @@
 from langgraph.graph import END
-from .state import UserCommunicationNodeState, DetectNodeState, UserConfirmState
+from .state import AgentState
 
-async def route_from_user_communication(state: UserCommunicationNodeState) -> str:
+async def route_from_user_communication(state: AgentState) -> str:
     """User Communication节点后的路由决策"""
     routing_decision = state.routing_decision
     
@@ -15,17 +15,17 @@ async def route_from_user_communication(state: UserCommunicationNodeState) -> st
         print("🔚 会话结束")
         return "end"
 
-async def should_continue(state: DetectNodeState) -> str:
+async def should_continue(state: AgentState) -> str:
     """决定是否继续执行"""
-    plan = state.plan if hasattr(state, 'plan') else []
+    plan = state.plan
     if plan:
         return "detect"
     else:
         return "prepare"
 
-async def route_after_confirm(state: UserConfirmState) -> str:
+async def route_after_confirm(state: AgentState) -> str:
     """用户确认后的路由决策"""
-    user_decision = state.user_decision.lower() if hasattr(state, 'user_decision') else ""
+    user_decision = state.user_decision.lower() if state.user_decision else ""
     
     if user_decision in ["e", "execute", "执行"]:
         print("✅ 开始执行分析")

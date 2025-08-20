@@ -1,11 +1,11 @@
 from typing import Dict, Any
-from ..state import DetectNodeState
+from ..state import AgentState
 
-async def detect_node(state: DetectNodeState) -> Dict[str, Any]:
+async def detect_node(state: AgentState) -> Dict[str, Any]:
     """检测节点 - 信息收集专家"""
     print(f"🔍 检测系统信息中...")
-    print(f"   基于计划: {state['plan']}")
-    print(f"   分析意图: {state['analysis_intent']}")
+    print(f"   基于计划: {state.plan}")
+    print(f"   分析意图: {state.analysis_intent}")
     
     # TODO: 实现信息检测逻辑
     # 这里需要基于计划调用检测工具收集系统信息
