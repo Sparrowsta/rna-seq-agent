@@ -23,14 +23,14 @@ async def user_communication_node(state: AgentState) -> Dict[str, Any]:
                 "messages": [{"role": "user", "content": user_input}],
                 "routing_decision": "end",
                 "response": "再见！",
-                "status": "exiting"
+                "status": "normal"
             }
         elif user_input.lower() in ['/plan', '开始分析']:
             return {
                 "messages": [{"role": "user", "content": user_input}], 
                 "routing_decision": "plan",
                 "response": "进入分析计划流程...",
-                "status": "routing_to_plan"
+                "status": "plan"
             }
         else:
             # 其他输入交给normal节点处理
@@ -38,7 +38,7 @@ async def user_communication_node(state: AgentState) -> Dict[str, Any]:
                 "messages": [{"role": "user", "content": user_input}],
                 "routing_decision": "normal", 
                 "response": "正在分析您的需求...",
-                "status": "routing_to_normal"
+                "status": "normal"
             }
             
     except KeyboardInterrupt:

@@ -70,7 +70,7 @@ RUN mkdir -p /app/data
 COPY main.nf ./
 COPY config/ ./config/
 COPY main.py ./
-COPY agent/ ./agent/
+COPY src/ ./src/
 
 # 文件权限将由运行时的 --user 参数控制
 

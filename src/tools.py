@@ -511,373 +511,207 @@ def get_project_overview(query: str = "") -> str:
     except Exception as e:
         return f"生成项目概览时出错: {str(e)}"
 
-def smart_data_detection(query: str = "") -> str:
-    """智能数据检测 - 自动分析FASTQ文件配对和实验设计"""
+from .decorators import pure_detection, with_fastq_scan, get_system_info, tool_detection
+
+def analyze_fastq_data(query: str = "") -> dict:
+    """FASTQ数据收集 - 纯文件列表收集，不做任何分析判断"""
+    from .decorators import _scan_fastq_files
+    
     try:
-        result = "🔍 **智能数据检测报告**\n\n"
+        result = "🔍 **FASTQ文件收集**\n\n"
+        query_results = _scan_fastq_files()
         
-        # 扫描所有FASTQ文件
-        project_root = Path(".")
-        fastq_extensions = ["*.fastq", "*.fastq.gz", "*.fq", "*.fq.gz"]
-        all_fastq_files = []
-        for ext in fastq_extensions:
-            all_fastq_files.extend(project_root.rglob(ext))
-        
-        if not all_fastq_files:
-            return "❌ 未检测到任何FASTQ文件"
-        
-        # 过滤原始文件
-        excluded_dirs = ["work", "results", "tmp"]
-        processed_indicators = ["trimmed", "fastp", "cutadapt", "filtered", "processed", "qc"]
-        raw_fastq_files = []
-        
-        for file_path in all_fastq_files:
-            if not file_path.exists() or any(excluded_dir in file_path.parts for excluded_dir in excluded_dirs):
-                continue
-            filename_lower = file_path.name.lower()
-            if not any(indicator in filename_lower for indicator in processed_indicators):
-                raw_fastq_files.append(file_path)
-        
-        if not raw_fastq_files:
-            return "❌ 未检测到原始FASTQ文件（所有文件都已被处理或在工作目录中）"
-        
-        # 分析样本配对
-        samples = {}
-        naming_patterns = []
-        
-        for file_path in raw_fastq_files:
-            filename = file_path.name
-            naming_patterns.append(filename)
-            
-            # 检测配对模式
-            if "_1." in filename or "_R1" in filename:
-                sample_name = filename.split("_1.")[0].split("_R1")[0]
-                read_type = "R1"
-            elif "_2." in filename or "_R2" in filename:
-                sample_name = filename.split("_2.")[0].split("_R2")[0]
-                read_type = "R2"
-            else:
-                sample_name = filename.split(".")[0]
-                read_type = "single"
-            
-            if sample_name not in samples:
-                samples[sample_name] = {"R1": None, "R2": None, "single": None, "directory": str(file_path.parent)}
-            
-            samples[sample_name][read_type] = {
-                "filename": filename,
-                "size_mb": round(file_path.stat().st_size / 1024 / 1024, 2),
-                "path": str(file_path)
+        if query_results.get("detection_status") != "success":
+            result += "❌ FASTQ文件扫描出错\n"
+            return {
+                "result": result.strip(),
+                "query_results": query_results,
+                "config_updates": {}
             }
         
-        # 1. 样本配对分析
-        result += "📁 **样本配对分析:**\n"
-        paired_samples = 0
-        single_samples = 0
-        incomplete_pairs = 0
+        file_count = query_results.get("total_files_found", 0)
+        file_list = query_results.get("fastq_files", [])
         
-        for sample_name, files in samples.items():
-            if files["R1"] and files["R2"]:
-                paired_samples += 1
-                size_diff = abs(files["R1"]["size_mb"] - files["R2"]["size_mb"])
-                if size_diff > files["R1"]["size_mb"] * 0.1:  # 大小差异超过10%
-                    result += f"   ⚠️ {sample_name}: 配对文件大小差异较大 ({files['R1']['size_mb']}MB vs {files['R2']['size_mb']}MB)\n"
-                else:
-                    result += f"   ✅ {sample_name}: 完整配对 ({files['R1']['size_mb']}MB + {files['R2']['size_mb']}MB)\n"
-            elif files["single"]:
-                single_samples += 1
-                result += f"   📄 {sample_name}: 单端文件 ({files['single']['size_mb']}MB)\n"
-            else:
-                incomplete_pairs += 1
-                if files["R1"]:
-                    result += f"   ❌ {sample_name}: 缺少R2文件\n"
-                elif files["R2"]:
-                    result += f"   ❌ {sample_name}: 缺少R1文件\n"
+        result += f"📊 **文件统计:**\n"
+        result += f"   - 发现文件: {file_count} 个\n"
         
-        # 2. 命名规范分析
-        result += f"\n📝 **命名规范分析:**\n"
-        result += f"   - 双端样本: {paired_samples} 个\n"
-        result += f"   - 单端样本: {single_samples} 个\n"
-        result += f"   - 不完整配对: {incomplete_pairs} 个\n"
-        
-        # 分析命名模式
-        r1_patterns = [f for f in naming_patterns if "_1." in f or "_R1" in f]
-        r2_patterns = [f for f in naming_patterns if "_2." in f or "_R2" in f]
-        
-        if r1_patterns and r2_patterns:
-            result += "   - 命名格式: 标准双端命名 (R1/R2 或 1/2)\n"
-        elif single_samples > 0 and paired_samples == 0:
-            result += "   - 命名格式: 单端测序命名\n"
-        else:
-            result += "   - 命名格式: 混合或非标准命名\n"
-        
-        # 3. 实验设计推测
-        result += f"\n🧪 **实验设计推测:**\n"
-        total_samples = len(samples)
-        
-        if total_samples >= 6:
-            result += "   - 样本规模: 大型研究 (≥6样本)\n"
-            result += "   - 建议分析: 差异表达 + 功能富集 + 共表达网络\n"
-        elif total_samples >= 3:
-            result += "   - 样本规模: 标准研究 (3-5样本)\n"
-            result += "   - 建议分析: 差异表达分析\n"
-        elif total_samples == 2:
-            result += "   - 样本规模: 最小比较 (2样本)\n"
-            result += "   - 建议分析: 基础差异表达（统计功效有限）\n"
-        else:
-            result += "   - 样本规模: 单样本\n"
-            result += "   - 建议分析: 表达谱分析或质控检查\n"
-        
-        # 4. 质量预检
-        result += f"\n📊 **数据质量预检:**\n"
-        
-        # 文件大小分析
-        all_sizes = []
-        for sample_name, files in samples.items():
-            if files["R1"]:
-                all_sizes.append(files["R1"]["size_mb"])
-            if files["R2"]:
-                all_sizes.append(files["R2"]["size_mb"])
-            if files["single"]:
-                all_sizes.append(files["single"]["size_mb"])
-        
-        if all_sizes:
-            avg_size = sum(all_sizes) / len(all_sizes)
-            min_size = min(all_sizes)
-            max_size = max(all_sizes)
+        if file_count > 0:
+            total_size_mb = sum(f["size_mb"] for f in file_list)
+            result += f"   - 总大小: {total_size_mb:.1f} MB\n"
             
-            result += f"   - 平均文件大小: {avg_size:.1f} MB\n"
-            result += f"   - 大小范围: {min_size:.1f} - {max_size:.1f} MB\n"
+            result += f"\n📁 **文件清单:**\n"
+            for file_info in file_list[:10]:  # 只显示前10个
+                result += f"   • {file_info['filename']} ({file_info['size_mb']}MB)\n"
             
-            # 大小异常检测
-            if max_size / min_size > 3:  # 最大文件是最小文件的3倍以上
-                result += "   ⚠️ 文件大小差异较大，建议检查数据质量\n"
-            else:
-                result += "   ✅ 文件大小相对均匀\n"
-            
-            # 根据大小估算读数
-            estimated_reads = avg_size * 4  # 粗略估算：1MB ≈ 4M reads (压缩后)
-            result += f"   - 预估读数: ~{estimated_reads:.1f}M reads/样本\n"
-            
-            if estimated_reads < 10:
-                result += "   ⚠️ 读数可能较少，注意检查测序深度\n"
-            elif estimated_reads > 100:
-                result += "   💡 读数充足，适合深度分析\n"
-            else:
-                result += "   ✅ 读数适中，满足基础分析需求\n"
+            if file_count > 10:
+                result += f"   ... 还有 {file_count - 10} 个文件\n"
         
-        return result.strip()
+        result += "\n💡 **原始文件数据已收集，等待LLM分析配对关系和样本分组**"
+        
+        return {
+            "result": result.strip(),
+            "query_results": query_results,
+            "config_updates": {}
+        }
         
     except Exception as e:
-        return f"智能数据检测时出错: {str(e)}"
+        return {
+            "result": f"FASTQ文件收集时出错: {str(e)}",
+            "query_results": {"detection_status": "error", "error": str(e)},
+            "config_updates": {}
+        }
 
-def check_resource_readiness(query: str = "") -> str:
-    """分析就绪检查 - 评估项目分析准备度"""
+def assess_system_readiness(query: str = "") -> dict:
+    """系统硬件资源检测 - 使用装饰器检测CPU、内存、磁盘等硬件资源数据"""
     try:
-        result = "🔧 **分析就绪度检查**\n\n"
+        result = "💻 **系统硬件资源检测**\n\n"
+        query_results = get_system_info()
         
-        readiness_score = 0
-        max_score = 100
-        issues = []
-        recommendations = []
-        
-        # 1. 数据文件检查 (30分)
-        result += "📁 **数据文件状态:**\n"
-        
-        project_root = Path(".")
-        fastq_extensions = ["*.fastq", "*.fastq.gz", "*.fq", "*.fq.gz"]
-        raw_fastq_files = []
-        
-        for ext in fastq_extensions:
-            raw_fastq_files.extend(project_root.rglob(ext))
-        
-        # 过滤原始文件
-        excluded_dirs = ["work", "results", "tmp"]
-        processed_indicators = ["trimmed", "fastp", "cutadapt", "filtered", "processed", "qc"]
-        valid_fastq_files = []
-        
-        for file_path in raw_fastq_files:
-            if not file_path.exists():
-                continue
-            if any(excluded_dir in file_path.parts for excluded_dir in excluded_dirs):
-                continue
-            filename_lower = file_path.name.lower()
-            if not any(indicator in filename_lower for indicator in processed_indicators):
-                valid_fastq_files.append(file_path)
-        
-        if valid_fastq_files:
-            result += f"   ✅ 检测到 {len(valid_fastq_files)} 个FASTQ文件\n"
-            readiness_score += 30
+        if query_results.get("detection_status") == "missing_dependency":
+            result += "   ❌ 无法检测系统资源 (psutil未安装)\n"
+            result += "   请安装: uv add psutil\n"
+        elif query_results.get("detection_status") == "error":
+            result += f"   ⚠️ 资源检测错误: {query_results.get('error', '')}\n"
         else:
-            result += "   ❌ 未检测到有效的FASTQ文件\n"
-            issues.append("缺少输入数据文件")
-            recommendations.append("请确保FASTQ文件存在于data目录中")
-        
-        # 检查文件完整性
-        corrupted_files = 0
-        for file_path in valid_fastq_files:
-            try:
-                size = file_path.stat().st_size
-                if size == 0:
-                    corrupted_files += 1
-            except:
-                corrupted_files += 1
-        
-        if corrupted_files > 0:
-            result += f"   ⚠️ 发现 {corrupted_files} 个可能损坏的文件\n"
-            issues.append(f"{corrupted_files}个文件可能损坏")
-        else:
-            result += "   ✅ 所有文件完整性检查通过\n"
-        
-        # 2. 基因组配置检查 (40分)
-        result += "\n🧬 **基因组配置状态:**\n"
-        
-        genomes_file = Path("config/genomes.json")
-        if not genomes_file.exists():
-            result += "   ❌ 基因组配置文件不存在\n"
-            issues.append("缺少基因组配置文件")
-            recommendations.append("运行 '添加基因组' 命令配置参考基因组")
-        else:
-            try:
-                with open(genomes_file, 'r', encoding='utf-8') as f:
-                    genomes_data = json.load(f)
-                
-                if not genomes_data:
-                    result += "   ❌ 基因组配置为空\n"
-                    issues.append("基因组配置为空")
-                else:
-                    result += f"   ✅ 找到 {len(genomes_data)} 个已配置基因组\n"
-                    readiness_score += 20
-                    
-                    # 检查基因组文件完整性
-                    ready_genomes = []
-                    for genome_id, info in genomes_data.items():
-                        fasta_path = info.get('fasta_path', '')
-                        gtf_path = info.get('gtf_path', '')
-                        
-                        fasta_exists = fasta_path and Path(fasta_path).exists()
-                        gtf_exists = gtf_path and Path(gtf_path).exists()
-                        
-                        if fasta_exists and gtf_exists:
-                            ready_genomes.append(genome_id)
-                            result += f"      ✅ {genome_id}: FASTA + GTF 就绪\n"
-                        else:
-                            missing = []
-                            if not fasta_exists:
-                                missing.append("FASTA")
-                            if not gtf_exists:
-                                missing.append("GTF")
-                            result += f"      ⚠️ {genome_id}: 缺少 {', '.join(missing)}\n"
-                    
-                    if ready_genomes:
-                        readiness_score += 20
-                        result += f"   💡 推荐使用: {', '.join(ready_genomes[:3])}\n"
-                    else:
-                        issues.append("没有完整的基因组文件")
-                        recommendations.append("需要下载基因组FASTA和GTF文件")
-                        
-            except Exception as e:
-                result += f"   ❌ 读取基因组配置失败: {str(e)}\n"
-                issues.append("基因组配置文件损坏")
-        
-        # 3. 系统资源检查 (20分)
-        result += "\n💻 **系统资源评估:**\n"
-        
-        try:
-            import psutil
+            # 显示系统信息
+            cpu_info = query_results.get("cpu", {})
+            memory_info = query_results.get("memory", {})
+            disk_info = query_results.get("disk", {})
+            load_info = query_results.get("load", {})
             
-            # 内存检查
-            memory = psutil.virtual_memory()
-            memory_gb = memory.total / 1024**3
-            available_gb = memory.available / 1024**3
+            result += "🔧 **CPU资源:**\n"
+            result += f"   - 物理核心: {cpu_info.get('physical_cores', 0)} 个\n"
+            result += f"   - 逻辑核心: {cpu_info.get('logical_cores', 0)} 个\n"
+            if cpu_info.get('frequency_mhz'):
+                result += f"   - 基础频率: {cpu_info['frequency_mhz']:.0f} MHz\n"
             
-            result += f"   - 总内存: {memory_gb:.1f} GB\n"
-            result += f"   - 可用内存: {available_gb:.1f} GB\n"
+            result += "\n🧠 **内存资源:**\n"
+            result += f"   - 总内存: {memory_info.get('total_gb', 0)} GB\n"
+            result += f"   - 可用内存: {memory_info.get('available_gb', 0)} GB\n"
+            result += f"   - 内存使用率: {memory_info.get('used_percent', 0)}%\n"
             
-            if available_gb >= 16:
-                result += "   ✅ 内存充足，支持大型分析\n"
-                readiness_score += 10
-            elif available_gb >= 8:
-                result += "   ⚠️ 内存适中，建议监控使用量\n"
-                readiness_score += 5
-                recommendations.append("监控内存使用，必要时减少并行度")
-            else:
-                result += "   ❌ 内存不足，可能影响分析性能\n"
-                issues.append("内存不足(<8GB)")
-                recommendations.append("考虑增加内存或使用较小的数据集")
+            result += "\n💾 **磁盘空间:**\n"
+            result += f"   - 总容量: {disk_info.get('total_gb', 0)} GB\n"
+            result += f"   - 可用空间: {disk_info.get('free_gb', 0)} GB\n"
+            result += f"   - 使用率: {disk_info.get('used_percent', 0)}%\n"
             
-            # 磁盘空间检查
-            disk = psutil.disk_usage('.')
-            disk_free_gb = disk.free / 1024**3
-            
-            result += f"   - 可用磁盘空间: {disk_free_gb:.1f} GB\n"
-            
-            if disk_free_gb >= 100:
-                result += "   ✅ 磁盘空间充足\n"
-                readiness_score += 10
-            elif disk_free_gb >= 50:
-                result += "   ⚠️ 磁盘空间适中\n"
-                readiness_score += 5
-                recommendations.append("监控磁盘使用，定期清理临时文件")
-            else:
-                result += "   ❌ 磁盘空间不足\n"
-                issues.append("磁盘空间不足(<50GB)")
-                recommendations.append("清理磁盘空间或使用外部存储")
-                
-        except ImportError:
-            result += "   ⚠️ 无法检测系统资源 (psutil未安装)\n"
-            recommendations.append("安装psutil库以获得更好的资源监控")
-        except Exception as e:
-            result += f"   ⚠️ 资源检测错误: {str(e)}\n"
+            if "error" not in load_info:
+                result += "\n📊 **系统负载:**\n"
+                result += f"   - 1分钟平均负载: {load_info.get('load_1min', 0)}\n"
+                result += f"   - 5分钟平均负载: {load_info.get('load_5min', 0)}\n"
+                result += f"   - 15分钟平均负载: {load_info.get('load_15min', 0)}\n"
+                result += f"   - 负载比率: {load_info.get('load_ratio', 0)} (相对于CPU核心)\n"
         
-        # 4. 配置文件检查 (10分)
-        result += "\n⚙️ **配置文件状态:**\n"
+        result += "\n💡 **原始数据已返回给系统，可供其他模块分析使用**"
         
-        config_dir = Path("config")
-        if config_dir.exists():
-            result += "   ✅ config目录存在\n"
-            readiness_score += 5
-        else:
-            result += "   ⚠️ config目录不存在\n"
-            recommendations.append("创建config目录存放配置文件")
-        
-        # 检查Nextflow配置
-        nextflow_config = Path("nextflow.config")
-        if nextflow_config.exists():
-            result += "   ✅ 发现nextflow.config文件\n"
-            readiness_score += 5
-        else:
-            result += "   ⚠️ 未找到nextflow.config文件\n"
-            recommendations.append("将在分析时自动生成Nextflow配置")
-        
-        # 5. 总体评估
-        result += f"\n📊 **总体就绪度: {readiness_score}/{max_score} ({readiness_score}%)**\n"
-        
-        if readiness_score >= 80:
-            result += "🟢 **状态: 完全就绪** - 可以开始分析\n"
-        elif readiness_score >= 60:
-            result += "🟡 **状态: 基本就绪** - 建议解决警告后开始\n"
-        elif readiness_score >= 40:
-            result += "🟠 **状态: 需要配置** - 请解决关键问题\n"
-        else:
-            result += "🔴 **状态: 未就绪** - 需要完善基础配置\n"
-        
-        # 问题和建议汇总
-        if issues:
-            result += "\n❌ **发现的问题:**\n"
-            for issue in issues:
-                result += f"   • {issue}\n"
-        
-        if recommendations:
-            result += "\n💡 **改进建议:**\n"
-            for rec in recommendations:
-                result += f"   • {rec}\n"
-        
-        result += "\n🚀 准备就绪后，输入 '/plan' 开始配置分析流程"
-        
-        return result.strip()
+        return {
+            "result": result.strip(),
+            "query_results": query_results,
+            "config_updates": {}
+        }
         
     except Exception as e:
-        return f"就绪度检查时出错: {str(e)}"
+        return {
+            "result": f"系统硬件检测时出错: {str(e)}",
+            "query_results": {"detection_status": "error", "error": str(e)},
+            "config_updates": {}
+        }
+
+@tool_detection("fastp", "qc_env", ["fastp", "--version"])
+def check_fastp_availability() -> dict:
+    """检测fastp工具可用性 - 使用装饰器"""
+    pass
+
+@tool_detection("STAR", "align_env", ["STAR", "--version"])
+def check_star_availability() -> dict:
+    """检测STAR工具可用性 - 使用装饰器"""
+    pass
+
+@tool_detection("featureCounts", "quant_env", ["featureCounts", "-v"])
+def check_featurecounts_availability() -> dict:
+    """检测featureCounts工具可用性 - 使用装饰器"""
+    pass
+
+def verify_genome_setup(query: str = "") -> dict:
+    """基因组文件检测 - 纯文件存在性检查，不做就绪判断"""
+    try:
+        result = "🧬 **基因组文件检测**\n\n"
+        
+        # 使用装饰器加载基因组配置
+        from .decorators import _load_genome_config
+        config_data = _load_genome_config()
+        
+        if config_data.get("detection_status") == "no_config_file":
+            result += "❌ **基因组配置文件不存在**\n"
+            return {
+                "result": result.strip(),
+                "query_results": config_data,
+                "config_updates": {}
+            }
+        
+        if config_data.get("detection_status") == "empty_config":
+            result += "❌ **基因组配置为空**\n"
+            return {
+                "result": result.strip(),
+                "query_results": config_data,
+                "config_updates": {}
+            }
+        
+        if config_data.get("detection_status") == "error":
+            result += f"❌ **基因组配置文件读取失败**: {config_data.get('error', '')}\n"
+            return {
+                "result": result.strip(),
+                "query_results": config_data,
+                "config_updates": {}
+            }
+        
+        # 显示检测结果
+        genome_files = config_data.get("genome_files", {})
+        total_genomes = config_data.get("total_genomes", 0)
+        
+        result += f"✅ **找到 {total_genomes} 个已配置基因组**\n\n"
+        
+        for genome_id, info in genome_files.items():
+            result += f"🔍 **{genome_id} ({info.get('species', 'unknown')})**\n"
+            
+            fasta_file = info.get('fasta_file')
+            gtf_file = info.get('gtf_file')
+            star_index = info.get('star_index')
+            
+            if fasta_file:
+                if fasta_file.get('exists'):
+                    result += f"   - FASTA: ✅ {fasta_file['size_mb']}MB\n"
+                else:
+                    result += f"   - FASTA: ❌ 不存在\n"
+            
+            if gtf_file:
+                if gtf_file.get('exists'):
+                    result += f"   - GTF: ✅ {gtf_file['size_mb']}MB\n"
+                else:
+                    result += f"   - GTF: ❌ 不存在\n"
+            
+            if star_index:
+                if star_index.get('exists'):
+                    result += f"   - STAR索引: ✅ {star_index['file_count']}个文件\n"
+                else:
+                    result += f"   - STAR索引: ❌ 不存在\n"
+            
+            result += "\n"
+        
+        result += "💡 **基因组文件信息已收集，等待LLM分析就绪状态和配置需求**"
+        
+        return {
+            "result": result.strip(),
+            "query_results": config_data,
+            "config_updates": {}
+        }
+        
+    except Exception as e:
+        return {
+            "result": f"基因组文件检测时出错: {str(e)}",
+            "query_results": {"detection_status": "error", "error": str(e)},
+            "config_updates": {}
+        }
 
 def list_analysis_history(query: str = "") -> str:
     """历史分析管理 - 浏览和管理已完成的分析"""

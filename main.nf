@@ -345,17 +345,16 @@ process LINK_LOCAL_FASTQ {
     # 检查是否找到任何匹配的文件
     found_files=0
     
-    # 创建本地文件的软链接并重命名为标准格式
-    for pattern in ${params.local_fastq_files.split(',').join(' ')}; do
-        for file in ${projectDir}/\$pattern; do
-            if [ -f "\$file" ]; then
-                # 获取文件名并创建软链接到当前工作目录
-                filename=\$(basename "\$file")
-                ln -s \$(realpath "\$file") "\$filename"
-                echo "链接文件: \$file -> \$filename"
-                found_files=\$((found_files + 1))
-            fi
-        done
+    # 直接使用glob模式来查找文件
+    shopt -s nullglob
+    for file in ${projectDir}/${params.local_fastq_files}; do
+        if [ -f "\$file" ]; then
+            # 获取文件名并创建软链接到当前工作目录
+            filename=\$(basename "\$file")
+            ln -s \$(realpath "\$file") "\$filename"
+            echo "链接文件: \$file -> \$filename"
+            found_files=\$((found_files + 1))
+        fi
     done
     
     # 如果没有找到任何文件，报错退出
@@ -379,13 +378,14 @@ process prepare_genome_data {
     
     output:
     path "${params.genome_version}.fa", emit: genome_fasta
-    path "${params.genome_version}.gtf", emit: genome_gtf
+    path "*.gtf", emit: genome_gtf
     path "genome.prepared", emit: status_file
     
     script:
     def local_genome_paths = getGenomePaths(params.genome_version)
     def fasta_path = local_genome_paths.fasta.toString()
     def gtf_path = local_genome_paths.gtf.toString()
+    def gtf_filename = file(gtf_path).getName()
     
     if (params.run_download_genome) {
         // 下载基因组数据
@@ -395,8 +395,8 @@ process prepare_genome_data {
         gunzip ${params.genome_version}.fa.gz
         
         # 下载 GTF
-        wget ${local_genome_paths.gtf_url} -O ${params.genome_version}.gtf.gz
-        gunzip ${params.genome_version}.gtf.gz
+        wget ${local_genome_paths.gtf_url} -O ${gtf_filename}.gz
+        gunzip ${gtf_filename}.gz
         
         echo "基因组数据下载完成: ${params.genome_version}" > genome.prepared
         """
@@ -416,7 +416,7 @@ process prepare_genome_data {
         
         # 创建软链接
         ln -s \$(realpath "${fasta_path}") ${params.genome_version}.fa
-        ln -s \$(realpath "${gtf_path}") ${params.genome_version}.gtf
+        ln -s \$(realpath "${gtf_path}") ${gtf_filename}
         
         echo "本地基因组数据准备完成: ${params.genome_version}" > genome.prepared
         """
@@ -726,7 +726,6 @@ workflow {
     // --- 4. 处理FASTQ文件，组织为样本格式 ---
     fastq_samples_ch = input_fastq_ch
         .flatten()
-        .view()
         .map { file ->
             def sample_id = extractSampleId(file)
             def cleaned_id = cleanSampleId(sample_id)
@@ -741,12 +740,11 @@ workflow {
         }
         .groupTuple()
         .map { sample_id, type_list, file_list ->
-            def r1 = file_list.find { type_list[file_list.indexOf(it)] == 'read1' } ?: file('NO_FILE')
-            def r2 = file_list.find { type_list[file_list.indexOf(it)] == 'read2' } ?: file('NO_FILE')
-            def single = file_list.find { type_list[file_list.indexOf(it)] == 'single' } ?: file('NO_FILE')
+            def r1 = file_list.find { type_list[file_list.indexOf(it)] == 'read1' } ?: file("NO_FILE_${sample_id}_R1")
+            def r2 = file_list.find { type_list[file_list.indexOf(it)] == 'read2' } ?: file("NO_FILE_${sample_id}_R2")
+            def single = file_list.find { type_list[file_list.indexOf(it)] == 'single' } ?: file("NO_FILE_${sample_id}_SINGLE")
             return [sample_id, r1, r2, single]
         }
-        .view { "Final FASTQ samples for processing: $it" }
     
     // --- 5. 质控处理 ---
     if (params.qc_tool != "h") {

@@ -58,7 +58,7 @@ async def run_interactive_session(agent):
     # 创建空的初始状态，让user_communication节点来处理输入
     initial_state = {
         "response": "",
-        "status": "starting"
+        "status": "normal"
     }
     
     try:
