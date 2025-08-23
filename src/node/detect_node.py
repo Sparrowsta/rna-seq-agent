@@ -59,6 +59,12 @@ def create_detection_agent():
 3. 如果检测失败，记录错误但继续执行其他任务
 4. 收集所有检测结果，整合成统一的数据结构
 
+返回格式示例：
+{
+  "query_results": {"检测结果按任务整理": "工具已优化输出格式"},
+  "query_summary": "检测完成：基因组hg19可用，工具就绪，发现6个FASTQ文件"
+}
+
 可用的检测工具：
 - analyze_fastq_data: 分析FASTQ文件
 - assess_system_readiness: 检测系统资源

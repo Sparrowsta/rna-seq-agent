@@ -173,7 +173,7 @@ def _scan_fastq_files() -> Dict[str, Any]:
 
 def _load_genome_config() -> Dict[str, Any]:
     """纯基因组配置加载 - 只检查文件存在性，不做状态判断"""
-    genomes_file = Path("config/genomes.json")
+    genomes_file = Path("/config/genomes.json")
     
     if not genomes_file.exists():
         return {"detection_status": "no_config_file"}

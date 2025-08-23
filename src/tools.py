@@ -174,9 +174,9 @@ def query_fastq_files(query: str = "") -> str:
 def query_genome_info(query: str = "") -> str:
     """查询基因组配置信息"""
     try:
-        genomes_file = Path("config/genomes.json")
+        genomes_file = Path("/config/genomes.json")
         if not genomes_file.exists():
-            return "未找到config/genomes.json配置文件"
+            return "未找到/config/genomes.json配置文件"
         
         with open(genomes_file, 'r', encoding='utf-8') as f:
             genomes_data = json.load(f)
@@ -314,7 +314,7 @@ def add_genome_config(user_input: str = "") -> str:
         }
         
         # 读取现有配置
-        genomes_file = Path("config/genomes.json")
+        genomes_file = Path("/config/genomes.json")
         if genomes_file.exists():
             with open(genomes_file, 'r', encoding='utf-8') as f:
                 genomes_data = json.load(f)
@@ -338,7 +338,7 @@ def add_genome_config(user_input: str = "") -> str:
         genomes_data[genome_id] = new_genome_config
         
         # 保存配置
-        os.makedirs("config", exist_ok=True)
+        os.makedirs("/config", exist_ok=True)
         with open(genomes_file, 'w', encoding='utf-8') as f:
             json.dump(genomes_data, f, indent=2, ensure_ascii=False)
         
@@ -426,7 +426,7 @@ def get_project_overview(query: str = "") -> str:
         
         # 2. 基因组状态
         result += "\n🧬 **基因组状态:**\n"
-        genomes_file = Path("config/genomes.json")
+        genomes_file = Path("/config/genomes.json")
         ready_genomes = 0
         total_genomes = 0
         
@@ -548,9 +548,17 @@ def analyze_fastq_data(query: str = "") -> dict:
         
         result += "\n💡 **原始文件数据已收集，等待LLM分析配对关系和样本分组**"
         
+        # 简化query_results以减少JSON复杂度，但保持prepare_node需要的核心信息
+        simplified_results = {
+            "detection_status": query_results.get("detection_status"),
+            "file_count": query_results.get("total_files_found", 0),
+            "file_paths": [f["full_path"] for f in query_results.get("fastq_files", [])],
+            "samples": list(set([f["filename"].split("_")[0] for f in query_results.get("fastq_files", [])]))
+        }
+        
         return {
             "result": result.strip(),
-            "query_results": query_results,
+            "query_results": simplified_results,
             "config_updates": {}
         }
         
@@ -700,9 +708,31 @@ def verify_genome_setup(query: str = "") -> dict:
         
         result += "💡 **基因组文件信息已收集，等待LLM分析就绪状态和配置需求**"
         
+        # 简化config_data以减少JSON复杂度，但保持prepare_node需要的核心信息
+        genomes = config_data.get("genomes", {})
+        available_genomes = []
+        for name, info in genomes.items():
+            is_complete = all([
+                info.get("fasta_file", {}).get("exists", False),
+                info.get("gtf_file", {}).get("exists", False),
+                info.get("star_index", {}).get("exists", False)
+            ])
+            if is_complete:  # 只包含完整可用的基因组
+                available_genomes.append({
+                    "name": name, 
+                    "species": info.get("species"),
+                    "complete": True
+                })
+        
+        simplified_config = {
+            "detection_status": config_data.get("detection_status"),
+            "total_genomes": len(genomes),
+            "available_genomes": available_genomes
+        }
+        
         return {
             "result": result.strip(),
-            "query_results": config_data,
+            "query_results": simplified_config,
             "config_updates": {}
         }
         

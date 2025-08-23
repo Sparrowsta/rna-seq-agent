@@ -9,32 +9,39 @@ import sys
 import asyncio
 from typing import Dict, Any
 from pathlib import Path
-# 确保项目根目录在Python路径中
-project_root = Path(__file__).parent
-sys.path.insert(0, str(project_root))
+
+# 确保模块路径在Python路径中
+sys.path.insert(0, "/src")
 
 from src.state import AgentState
 from src.graph import create_agent
 from src.core import test_llm_connection
 
 # 导入必要的组件
-from dotenv import load_dotenv
 
 def load_environment():
-    """加载环境变量配置"""
-    env_path = project_root / "config" / ".env"
-    
-    if env_path.exists():
-        load_dotenv(env_path)
-        print(f"✅ 已加载环境配置: {env_path}")
+    """加载环境变量配置并验证必要文件"""
+    # 检查关键配置文件是否存在
+    genomes_file = Path("/config/genomes.json")
+    if genomes_file.exists():
+        print(f"✅ 基因组配置文件存在: {genomes_file}")
     else:
-        print("⚠️  未找到环境配置文件: config/.env")
+        print(f"⚠️ 基因组配置文件不存在: {genomes_file}")
     
-    # 验证必要的环境变量
+    # 检查Nextflow配置（如果有）
+    nextflow_config = Path("/config/nextflow.config")
+    if nextflow_config.exists():
+        print(f"✅ Nextflow配置文件存在: {nextflow_config}")
+    else:
+        print(f"💡 Nextflow配置文件不存在: {nextflow_config} (可选)")
+    
+    # 验证环境变量（Docker --env-file 注入）
     if not os.environ.get("DEEPSEEK_API_KEY"):
         print("❌ 错误: 未找到DEEPSEEK_API_KEY环境变量")
-        print("请在config/.env文件中设置: DEEPSEEK_API_KEY=your-api-key")
+        print("请确保config/.env文件存在且包含: DEEPSEEK_API_KEY=your-api-key")
         sys.exit(1)
+    else:
+        print("✅ 环境变量配置正确")
 
 
 def create_deepseek_llm():

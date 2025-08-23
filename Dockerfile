@@ -60,29 +60,30 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt && \
     rm /tmp/requirements.txt
 
 
-# 9. 设置工作目录（运行时将使用 --user 指定用户）
+# 9. 设置根目录为工作目录，数据通过volume映射
 
-# 10. 创建工作目录和数据目录
-WORKDIR /app
-RUN mkdir -p /app/data
+# 10. 设置工作目录为/data，与数据映射一致
+WORKDIR /data
 
-# 11. 复制应用文件（按变动频率排序）
-COPY main.nf ./
-COPY config/ ./config/
-COPY main.py ./
-COPY src/ ./src/
+# 11. 复制应用文件到根目录（应用与数据分离）
+COPY main.nf /
+COPY main.py /
+COPY src/ /src/
+
+# config和data目录将通过volume映射，不需要COPY
 
 # 文件权限将由运行时的 --user 参数控制
 
 # 12. 设置环境变量
-ENV HOME=/app \
-    NXF_HOME=/app/data/.nextflow \
-    NXF_WORK=/app/data/work \
-    NXF_TEMP=/app/data/tmp
+ENV HOME=/data \
+    NXF_HOME=/data/.nextflow \
+    NXF_WORK=/data/work \
+    NXF_TEMP=/data/tmp \
+    PYTHONPATH=/src
 
 # 13. 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python3 -c "import sys; sys.exit(0)"
 
 # 14. 启动命令
-CMD ["python3", "-u", "main.py"]
+CMD ["python3", "-u", "/main.py"]

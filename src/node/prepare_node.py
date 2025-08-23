@@ -10,12 +10,16 @@ def create_prepare_agent():
     return structured_llm
 
 async def prepare_node(state: AgentState) -> Dict[str, Any]:
-    """准备节点 - 基于检测数据让LLM直接生成配置参数"""
+    """准备节点 - 综合用户需求和检测数据生成配置参数"""
     print(f"⚙️ 开始智能配置分析...")
     
-    # 直接从state获取检测数据
+    # 获取所有必要信息
     detection_results = state.query_results or {}
     current_config = state.nextflow_config or {}
+    user_requirements = state.user_requirements or ""
+    
+    if user_requirements:
+        print(f"📝 用户需求: {user_requirements}")
     
     if not detection_results:
         print("⚠️ 未检测到任何数据，无法生成配置")
@@ -26,34 +30,93 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
             "status": "error"
         }
     
-    # 使用LLM直接生成配置
+    # 使用LLM综合分析用户需求和检测数据
     prepare_agent = create_prepare_agent()
     
     try:
         print("🧠 LLM正在分析检测数据并生成配置...")
         
-        # 构建简单的系统消息
-        system_message = """你是RNA-seq分析配置专家。基于检测数据直接生成Nextflow配置参数和分析理由。
+        # 构建综合分析的系统消息
+        system_message = """你是RNA-seq分析配置专家。综合用户需求和检测数据生成最优配置。
 
-重要：请返回有效的JSON格式，包含以下字段：
-- nextflow_config: 配置参数对象
-- config_reasoning: 配置理由字符串
+**核心任务：智能FASTQ文件配对分析**
+从fastq_analysis.file_paths中的文件列表，根据文件名模式智能识别：
+1. 样本分组：提取样本ID (移除_1/_2/_R1/_R2等后缀)
+2. 配对关系：判断单端(single-end)还是双端(paired-end)测序
+3. 生成sample_groups结构：为每个样本指定read1/read2文件
 
-示例：
+常见文件名模式：
+- 双端：sample_1.fastq.gz + sample_2.fastq.gz
+- 双端：sample_R1.fastq.gz + sample_R2.fastq.gz  
+- 单端：sample.fastq.gz (没有配对文件)
+
+配置决策优先级：
+1. **用户明确需求优先** - 如用户指定基因组版本，必须按要求设置
+2. **技术可行性考虑** - 如果用户需求的资源不存在，说明需要下载
+3. **系统推荐默认值** - 在用户没有明确要求时使用检测到的可用资源
+
+重要配置字段：
+- genome_version, species: 基因组相关配置
+- qc_tool, align_tool, quant_tool: 工具选择（必须使用小写：fastp, star, featurecounts）  
+- local_fastq_files: 原始文件路径列表
+- paired_end: 整体是否包含双端测序
+- sample_groups: 每个样本的详细配对信息
+- run_build_star_index：当STAR索引没有建立的时候，要启动本地构建基因组
+- run_download_genome：当所需的基因组没有在本地时，需要通过url下载
+
+sample_groups格式示例：
+[
+  {
+    "sample_id": "SRR17469061",
+    "read1": "fastq/SRR17469061_1.fastq.gz",
+    "read2": "fastq/SRR17469061_2.fastq.gz", 
+    "is_paired": true
+  },
+  {
+    "sample_id": "sample_single",
+    "read1": "fastq/sample_single.fastq.gz",
+    "read2": null,
+    "is_paired": false
+  }
+]
+
+返回JSON格式：
 {
-  "nextflow_config": {"genome_version": "hg38", "qc_tool": "fastp", "threads": 8},
-  "config_reasoning": "基于检测数据选择标准工具链"
+  "nextflow_config": {
+    "genome_version": "hg38",
+    "local_fastq_files": ["file1.fastq.gz", "file2.fastq.gz"],
+    "paired_end": true,
+    "sample_groups": [样本配对数组]
+  },
+  "config_reasoning": "详细分析说明"
 }"""
         
-        # 直接使用原始检测数据，不需要格式化
-        user_message = f"""请基于以下检测数据生成配置参数：
-
-检测数据 (JSON格式):
-{json.dumps(detection_results, indent=2, ensure_ascii=False)}
-
-当前配置: {current_config}
-
-请分析检测数据并生成合适的Nextflow配置参数。"""
+        # 构建包含所有信息的用户消息
+        user_message_parts = [
+            "请综合以下信息生成最优配置：",
+            "",
+            "=== 检测数据 ===",
+            json.dumps(detection_results, indent=2, ensure_ascii=False),
+            "",
+            f"=== 当前配置 ===", 
+            json.dumps(current_config, indent=2, ensure_ascii=False)
+        ]
+        
+        if user_requirements:
+            user_message_parts.extend([
+                "",
+                f"=== 用户明确需求 ===",
+                f"**{user_requirements}**",
+                "",
+                "注意：用户需求应优先满足，即使检测数据显示相关资源不存在，也要按用户要求配置，并在reasoning中说明解决方案。"
+            ])
+        
+        user_message_parts.extend([
+            "",
+            "请分析所有信息，生成既满足用户需求又考虑技术可行性的配置参数。"
+        ])
+        
+        user_message = "\n".join(user_message_parts)
         
         messages = [
             {"role": "system", "content": system_message},

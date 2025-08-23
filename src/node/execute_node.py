@@ -78,7 +78,7 @@ async def execute_node(state: AgentState) -> Dict[str, Any]:
 async def generate_runtime_config(nextflow_config: Dict[str, Any]) -> Dict[str, Any]:
     """生成运行时配置文件"""
     try:
-        config_dir = Path("config")
+        config_dir = Path("/config")
         config_dir.mkdir(exist_ok=True)
         
         # 创建运行时配置
@@ -102,8 +102,8 @@ async def generate_runtime_config(nextflow_config: Dict[str, Any]) -> Dict[str, 
 
 def build_nextflow_command(nextflow_config: Dict[str, Any]) -> str:
     """构建Nextflow命令"""
-    # 基础命令
-    cmd_parts = ["nextflow", "run", "main.nf"]
+    # 基础命令 - 从data目录执行根目录的main.nf
+    cmd_parts = ["nextflow", "run", "/main.nf"]
     
     # 添加参数
     if nextflow_config.get("genome_version"):
@@ -118,24 +118,23 @@ def build_nextflow_command(nextflow_config: Dict[str, Any]) -> str:
     if nextflow_config.get("quant_tool"):
         cmd_parts.extend(["--quant_tool", nextflow_config["quant_tool"]])
     
-    # 本地FASTQ文件设置 - 从配置中读取detect阶段检测到的文件列表
-    fastq_files = nextflow_config.get("local_fastq_files", [])
-    if fastq_files:
-        cmd_parts.extend(["--local_fastq_files", " ".join(fastq_files)])
-    else:
-        cmd_parts.extend(["--local_fastq_files", "data/fastq/*.fastq.gz"])
-    cmd_parts.extend(["--run_download_srr", "false"])  # 使用本地文件，不下载
+    # 样本配对信息 - Agent分析的结果，包含完整的文件路径信息
+    sample_groups = nextflow_config.get("sample_groups", [])
+    if sample_groups:
+        import json
+        # 将样本配对信息转换为JSON字符串传递给Nextflow
+        sample_groups_json = json.dumps(sample_groups, separators=(',', ':'))
+        cmd_parts.extend(["--sample_groups", f"'{sample_groups_json}'"])
     
     # 基因组和索引管理
     if nextflow_config.get("run_download_genome"):
-        cmd_parts.extend(["--run_download_genome", nextflow_config["run_download_genome"]])
+        cmd_parts.extend(["--run_download_genome", str(nextflow_config["run_download_genome"]).lower()])
     
     if nextflow_config.get("run_build_star_index"):
-        cmd_parts.extend(["--run_build_star_index", nextflow_config["run_build_star_index"]])
+        cmd_parts.extend(["--run_build_star_index", str(nextflow_config["run_build_star_index"]).lower()])
     
-    # 工作目录设置
-    cmd_parts.extend(["-work-dir", "data/work"])
-    
+    # 工作目录设置 - 使用相对路径
+    cmd_parts.extend(["-work-dir", "work"])
     # 生成清理选项(可选)
     cmd_parts.append("-resume")  # 支持断点续传
     
@@ -148,7 +147,7 @@ async def execute_nextflow_pipeline(command: str) -> Dict[str, Any]:
     try:
         print(f"🔄 执行命令: {command}")
         
-        # 直接执行真实Nextflow
+        # 在Docker容器环境中执行，当前工作目录应该已经是/data
         print(f"🚀 启动Nextflow执行...")
         process = await asyncio.create_subprocess_shell(
             command,

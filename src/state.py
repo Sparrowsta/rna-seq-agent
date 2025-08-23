@@ -16,14 +16,10 @@ class AgentState(BaseModel):
     routing_decision: str = Field(default="", description="路由决策: normal/plan/end")
     query_response: str = Field(default="", description="查询响应内容")
     
-    # === User Communication字段 ===
-    execution_result: Dict[str, Any] = Field(default={}, description="功能执行结果")
-    user_feedback: str = Field(default="", description="用户反馈")
-    next_action: str = Field(default="", description="下一步操作建议")
-    
     # === Plan分析字段 ===
     plan: List[str] = Field(default=[], description="分析步骤计划")
     analysis_intent: str = Field(default="", description="分析目标意图")
+    user_requirements: str = Field(default="", description="用户明确需求")
     
     # === Detect检测字段 ===
     query_results: Dict[str, Any] = Field(default={}, description="系统检测结果")

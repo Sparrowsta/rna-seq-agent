@@ -71,7 +71,8 @@ async def plan_node(state: AgentState) -> Dict[str, Any]:
     return {
         "plan": detection_plan,
         "response": response_message,
-        "status": "plan"
+        "status": "plan",
+        "user_requirements": user_requirements  # 保存用户需求给后续节点使用
     }
 
 def _build_initial_planning_prompt(state: AgentState, user_requirements: str = "") -> str:
@@ -91,11 +92,11 @@ def _build_initial_planning_prompt(state: AgentState, user_requirements: str = "
 6. check_featurecounts_availability - 检测featureCounts工具可用性
 
 **智能跳过规则**:
-- 如果已配置genome_version且species → 可跳过verify_genome_setup
-- 如果已配置完整工具链(qc_tool, align_tool, quant_tool) → 可跳过assess_system_readiness
+- 如果已配置完整工具链(qc_tool, align_tool, quant_tool) → 可跳过相应工具检测
+- verify_genome_setup必须执行，确保基因组文件完整性
 
 **用户需求处理**:
-- 如果用户提到特定基因组(如hg38, mm10)，应重点执行verify_genome_setup
+- 如果用户提到特定基因组(如hg38, mm10)，必须执行verify_genome_setup验证可用性
 - 如果用户提到工具选择，应执行相应的工具可用性检测
 
 请返回JSON格式:
