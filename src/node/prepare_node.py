@@ -10,16 +10,19 @@ def create_prepare_agent():
     return structured_llm
 
 async def prepare_node(state: AgentState) -> Dict[str, Any]:
-    """准备节点 - 综合用户需求和检测数据生成配置参数"""
+    """准备节点 - 优先基于Normal模式传来的用户需求生成配置参数"""
     print(f"⚙️ 开始智能配置分析...")
     
     # 获取所有必要信息
     detection_results = state.query_results or {}
     current_config = state.nextflow_config or {}
-    user_requirements = state.user_requirements or ""
+    initial_requirements = state.user_requirements or {}
+    replan_requirements = state.replan_requirements or {}
     
-    if user_requirements:
-        print(f"📝 用户需求: {user_requirements}")
+    print(f"📝 初始配置需求: {initial_requirements}")
+    if replan_requirements:
+        print(f"🔄 重新规划需求: {replan_requirements}")
+    print(f"📊 当前配置状态: {current_config}")
     
     if not detection_results:
         print("⚠️ 未检测到任何数据，无法生成配置")
@@ -34,97 +37,88 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
     prepare_agent = create_prepare_agent()
     
     try:
-        print("🧠 LLM正在分析检测数据并生成配置...")
+        print("🧠 LLM正在基于用户需求分析检测数据并生成配置...")
         
-        # 构建综合分析的系统消息
-        system_message = """你是RNA-seq分析配置专家。综合用户需求和检测数据生成最优配置。
+        # 构建统一的完整prompt
+        requirements_section = ""
+        if initial_requirements:
+            requirements_section += f"\n**初始配置需求: {initial_requirements}**"
+        if replan_requirements:
+            requirements_section += f"\n**重新规划需求: {replan_requirements}** (优先级更高)"
+        
+        unified_prompt = f"""你是RNA-seq分析配置专家。请基于用户需求和检测数据生成最优配置。
 
-**核心任务：智能FASTQ文件配对分析**
-从fastq_analysis.file_paths中的文件列表，根据文件名模式智能识别：
-1. 样本分组：提取样本ID (移除_1/_2/_R1/_R2等后缀)
-2. 配对关系：判断单端(single-end)还是双端(paired-end)测序
-3. 生成sample_groups结构：为每个样本指定read1/read2文件
+请以JSON格式返回分析结果。
 
-常见文件名模式：
-- 双端：sample_1.fastq.gz + sample_2.fastq.gz
-- 双端：sample_R1.fastq.gz + sample_R2.fastq.gz  
-- 单端：sample.fastq.gz (没有配对文件)
+{requirements_section}
 
-配置决策优先级：
-1. **用户明确需求优先** - 如用户指定基因组版本，必须按要求设置
-2. **技术可行性考虑** - 如果用户需求的资源不存在，说明需要下载
-3. **系统推荐默认值** - 在用户没有明确要求时使用检测到的可用资源
+**需求处理策略：**
+- 如果同时存在初始需求和重新规划需求，优先满足重新规划需求
+- 重新规划需求可以覆盖初始需求中的任何配置项
+- 综合考虑所有需求，确保生成的配置满足用户的最终意图
 
-重要配置字段：
-- genome_version, species: 基因组相关配置
-- qc_tool, align_tool, quant_tool: 工具选择（必须使用小写：fastp, star, featurecounts）  
-- local_fastq_files: 原始文件路径列表
-- paired_end: 整体是否包含双端测序
-- sample_groups: 每个样本的详细配对信息
-- run_build_star_index：当STAR索引没有建立的时候，要启动本地构建基因组
-- run_download_genome：当所需的基因组没有在本地时，需要通过url下载
+**配置决策优先级：**
+1. **重新规划需求绝对优先** - 如存在重新规划需求，优先采用
+2. **初始需求作为基础** - 初始需求作为基础配置参考
+3. **技术可行性适配** - 确保配置在技术上可行
+4. **系统智能推荐** - 仅在用户未指定的配置项使用检测推荐值
 
-sample_groups格式示例：
+**核心任务：**
+1. **应用用户配置** - 优先级：重新规划需求 > 初始需求 > 系统推荐
+2. **FASTQ文件配对分析** - 基于fastq_analysis进行智能文件配对
+3. **填充缺失配置** - 对用户未指定的字段使用系统推荐值
+
+**FASTQ配对分析：**
+从fastq_analysis.file_paths分析文件名模式并使用完整路径：
+- 双端：sample_1.fastq.gz + sample_2.fastq.gz  
+- 双端：sample_R1.fastq.gz + sample_R2.fastq.gz
+- 单端：sample.fastq.gz
+- **重要：必须使用file_paths中的完整路径，如"fastq/SRR17469061_1.fastq.gz"**
+
+**sample_groups格式要求（重要）：**
+必须生成数组格式，每个元素包含sample_id、read1、read2字段，使用完整文件路径：
 [
-  {
-    "sample_id": "SRR17469061",
-    "read1": "fastq/SRR17469061_1.fastq.gz",
-    "read2": "fastq/SRR17469061_2.fastq.gz", 
-    "is_paired": true
-  },
-  {
-    "sample_id": "sample_single",
-    "read1": "fastq/sample_single.fastq.gz",
-    "read2": null,
-    "is_paired": false
-  }
+  {{"sample_id": "SRR17469061", "read1": "fastq/SRR17469061_1.fastq.gz", "read2": "fastq/SRR17469061_2.fastq.gz"}},
+  {{"sample_id": "SRR17469059", "read1": "fastq/SRR17469059_1.fastq.gz", "read2": "fastq/SRR17469059_2.fastq.gz"}}
 ]
+注意：不是字典格式，是数组格式！
 
-返回JSON格式：
-{
-  "nextflow_config": {
-    "genome_version": "hg38",
-    "local_fastq_files": ["file1.fastq.gz", "file2.fastq.gz"],
-    "paired_end": true,
-    "sample_groups": [样本配对数组]
-  },
-  "config_reasoning": "详细分析说明"
-}"""
-        
-        # 构建包含所有信息的用户消息
-        user_message_parts = [
-            "请综合以下信息生成最优配置：",
-            "",
-            "=== 检测数据 ===",
-            json.dumps(detection_results, indent=2, ensure_ascii=False),
-            "",
-            f"=== 当前配置 ===", 
-            json.dumps(current_config, indent=2, ensure_ascii=False)
-        ]
-        
-        if user_requirements:
-            user_message_parts.extend([
-                "",
-                f"=== 用户明确需求 ===",
-                f"**{user_requirements}**",
-                "",
-                "注意：用户需求应优先满足，即使检测数据显示相关资源不存在，也要按用户要求配置，并在reasoning中说明解决方案。"
-            ])
-        
-        user_message_parts.extend([
-            "",
-            "请分析所有信息，生成既满足用户需求又考虑技术可行性的配置参数。"
-        ])
-        
-        user_message = "\n".join(user_message_parts)
-        
-        messages = [
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": user_message}
-        ]
+**必需配置字段：**
+- genome_version, species: 基因组相关（优先使用用户指定值）
+- qc_tool, align_tool, quant_tool: 工具链（小写，优先使用用户指定值）
+- local_fastq_files: 文件路径列表
+- paired_end: 是否包含双端数据
+- sample_groups: 详细样本配对信息
+- run_build_star_index: 索引构建控制
+- run_download_genome: 基因组下载控制
+
+**决策说明要求：**
+在config_reasoning中以文本格式详细说明：
+1. 用户需求如何被直接应用 (初始需求: [initial_requirements], 重新规划需求: [replan_requirements])  
+2. 系统检测结果在哪些字段被使用
+3. 每个关键配置的最终决策理由
+
+**返回JSON格式字段：**
+- nextflow_config: 完整的Nextflow配置参数字典
+- config_reasoning: 配置决策理由的详细文本说明（字符串格式，不是嵌套字典）
+
+**config_reasoning格式示例：**
+"基于用户需求分析：无特殊要求，采用系统推荐配置。基因组选择：hg19_test因文件完整性最佳。工具选择：fastp+STAR+featureCounts基于可用性检测。FASTQ配对：检测到3个双端样本，生成数组格式sample_groups。索引策略：现有STAR索引完整，无需重建。"
+
+=== 📊 系统检测数据 ===
+{json.dumps(detection_results, indent=2, ensure_ascii=False)}
+
+=== ⚙️ 当前配置状态 ===
+{json.dumps(current_config, indent=2, ensure_ascii=False)}
+
+**重要提醒：**
+1. 重新规划需求优先级高于初始需求，如有冲突以重新规划需求为准
+2. 基于检测数据进行FASTQ文件智能配对
+3. 对用户未指定的字段使用系统检测推荐值
+4. 在reasoning中详细说明用户需求的应用情况"""
         
         # LLM直接输出PrepareResponse格式
-        analysis_result = prepare_agent.invoke(messages)
+        analysis_result = await prepare_agent.ainvoke([{"role": "user", "content": unified_prompt}])
         
         # 检查LLM响应
         if not analysis_result:
@@ -132,18 +126,28 @@ sample_groups格式示例：
         
         # 提取结果
         config_params = analysis_result.nextflow_config or {}
-        reasoning = analysis_result.config_reasoning or "基于检测数据的智能分析"
+        reasoning = analysis_result.config_reasoning or "基于用户需求和检测数据的智能分析"
         
-        print(f"✅ 配置生成完成")
+        print(f"✅ 配置生成完成，严格遵循用户需求")
         
-        # 合并配置参数
+        # 合并配置参数（新配置优先）
         final_config = current_config.copy()
         final_config.update(config_params)
+        
+        # 构建需求满足情况说明
+        user_satisfaction_note = ""
+        if initial_requirements or replan_requirements:
+            satisfaction_parts = []
+            if initial_requirements:
+                satisfaction_parts.append(f"初始需求: {initial_requirements}")
+            if replan_requirements:
+                satisfaction_parts.append(f"重新规划需求: {replan_requirements} (已优先应用)")
+            user_satisfaction_note = f"\n\n🎯 **用户需求满足情况：**\n" + "\n".join(satisfaction_parts)
         
         return {
             "nextflow_config": final_config,
             "config_reasoning": reasoning,
-            "response": f"智能配置分析完成\n\n💡 {reasoning}\n\n🔧 生成了 {len(config_params)} 个配置参数",
+            "response": f"智能配置分析完成{user_satisfaction_note}\n\n💡 {reasoning}\n\n🔧 生成了 {len(config_params)} 个配置参数",
             "status": "confirm"
         }
         

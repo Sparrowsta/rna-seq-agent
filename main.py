@@ -62,11 +62,11 @@ async def run_interactive_session(agent):
     print("🔹 系统将直接进入用户通信模式")
     print("🔹 Agent将处理所有用户交互\n")
     
-    # 创建空的初始状态，让user_communication节点来处理输入
-    initial_state = {
-        "response": "",
-        "status": "normal"
-    }
+    # 创建完整的初始状态
+    initial_state = AgentState(
+        response="",
+        status="normal"
+    )
     
     try:
         # 调用Agent - 从user_communication节点开始

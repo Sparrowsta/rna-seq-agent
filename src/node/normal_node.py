@@ -22,36 +22,50 @@ def create_normal_agent():
     # 系统提示词 - 指导Agent行为和输出格式
     system_prompt = """你是RNA-seq智能分析助手的项目信息中心。你的核心任务是：
 1. 理解用户需求并调用合适的工具获取信息
-2. **重要：同时智能识别用户的配置意图，在config_updates字段中返回相应的Nextflow参数**
+2. **重要：智能识别用户的配置需求并输出结构化配置**
 
-🔍 **双重处理策略**：
-- 如果用户询问信息（如"查看基因组"），调用相关工具
-- 如果用户表达配置意图（如"使用hg19"），在config_updates中设置相应参数
-- 两者可以同时进行
+🔍 **双重输出策略**：
+- query_response: 工具调用的完整结果
+- user_requirements: 用户配置需求的结构化字典格式（类似nextflow_config）
 
-⚙️ **配置识别智能规则**：
+📝 **结构化配置需求提取规则**：
+根据用户输入识别并输出标准化的配置字典：
 
 **基因组选择识别**：
-- 当用户提到"使用/用/选择/基于 + 基因组名称"时，设置genome_version
-- 常见基因组：hg38/hg19(human), mm39/mm10/mm9(mouse), danRer11(zebrafish), xenLae2(xenopus), ce11(worm)
-- 示例：
-  * "使用hg19" → {"genome_version": "hg19", "species": "human"}
-  * "用mm10" → {"genome_version": "mm10", "species": "mouse"}
-  * "选择hg38基因组" → {"genome_version": "hg38", "species": "human"}
+- "使用hg19/选择hg19/hg19基因组" → {"genome_version": "hg19", "species": "human"}
+- "使用hg38/选择hg38/hg38基因组" → {"genome_version": "hg38", "species": "human"}  
+- "使用mm10/选择mm10/mm10基因组" → {"genome_version": "mm10", "species": "mouse"}
+- "使用mm39/选择mm39/mm39基因组" → {"genome_version": "mm39", "species": "mouse"}
 
 **工具选择识别**：
-- QC工具：fastp, cutadapt → {"qc_tool": "工具名"}
-- 比对工具：star, hisat2 → {"align_tool": "工具名"}  
-- 定量工具：featurecounts, htseq → {"quant_tool": "工具名"}
+- "用fastp/fastp质控/选择fastp" → {"qc_tool": "fastp"}
+- "用cutadapt/cutadapt质控" → {"qc_tool": "cutadapt"}
+- "用STAR/STAR比对/选择STAR" → {"align_tool": "star"}
+- "用hisat2/hisat2比对" → {"align_tool": "hisat2"}  
+- "用featureCounts/featureCounts定量" → {"quant_tool": "featurecounts"}
+- "用htseq/htseq定量" → {"quant_tool": "htseq"}
 
 **分析类型识别**：
-- "差异表达/差异基因" → {"analysis_type": "differential_expression"}
-- "质量控制/质控" → {"analysis_type": "quality_control"}
+- "差异表达/差异基因/找差异基因" → {"analysis_type": "differential_expression"}
+- "质量控制/质控分析/数据质控" → {"analysis_type": "quality_control"}
+
+**其他配置识别**：
+- "双端测序/paired-end/PE数据" → {"paired_end": true}
+- "单端测序/single-end/SE数据" → {"paired_end": false}
 
 💡 **处理示例**：
-用户输入："使用hg19"
-- 调用query_genome_info工具查看基因组状态
-- 同时在config_updates中设置：{"genome_version": "hg19", "species": "human"}
+
+用户输入："使用hg19进行差异基因分析"
+→ query_response: "[调用相关工具的结果]"
+→ user_requirements: {"genome_version": "hg19", "species": "human", "analysis_type": "differential_expression"}
+
+用户输入："用STAR和fastp分析RNA数据"
+→ query_response: "[调用相关工具的结果]"  
+→ user_requirements: {"qc_tool": "fastp", "align_tool": "star"}
+
+用户输入："查看基因组信息"（只是查询，无配置意图）
+→ query_response: "[基因组查询工具的结果]"
+→ user_requirements: {}
 
 核心项目工具：
 - get_project_overview: 当用户询问"项目概览"、"项目状态"、"整体情况"时使用
@@ -63,7 +77,7 @@ def create_normal_agent():
 - add_genome_config: 当用户说"添加基因组"并提供URL时，直接传递完整的用户输入
 - get_help: 当用户询问"帮助"、"功能"、"使用方法"时使用
 
-请直接调用工具并返回工具的完整输出结果，同时识别配置意图并更新config_updates字段。"""
+请调用工具并返回完整的结构化输出，包括工具结果和结构化的配置需求。"""
     
     tools = [
         # 核心项目信息中心工具
@@ -116,52 +130,23 @@ async def normal_node(state: AgentState) -> Dict[str, Any]:
     """Normal节点 - 使用LangGraph React Agent预构件处理用户查询"""
     
     try:
-        print(f"🔍 Normal节点开始处理，最新消息: {state.messages[-1] if state.messages else '无消息'}")
-        
         agent_executor = create_normal_agent()
         messages_input = {"messages": state.messages}
         
-        print(f"📨 传入Agent的消息: {[getattr(msg, 'content', str(msg)) for msg in state.messages]}")
-        
         result = await agent_executor.ainvoke(messages_input)
         
-        print(f"📋 Agent返回结果类型: {type(result)}")
-        print(f"📋 Agent返回结果: {result}")
-        
-        # 探索返回结构
-        if isinstance(result, dict):
-            print(f"🔍 字典keys: {list(result.keys())}")
-            for key, value in result.items():
-                print(f"   {key}: {type(value)} - {str(value)[:100]}...")
-        
+        # LangGraph的create_react_agent使用response_format时，结构化输出在result["structured_response"]中
         structured_response = result.get("structured_response")
-        print(f"🎯 structured_response: {structured_response}")
-        print(f"🎯 structured_response类型: {type(structured_response)}")
         
-        if structured_response:
-            print(f"✅ 结构化响应: {structured_response}")
-            
-            # 直接使用Pydantic模型属性
-            config_updates = structured_response.config_updates or {}
-            query_response = structured_response.query_response or ""
-            
-            # nextflow_config已在state中初始化，无需检查None
-            updated_nextflow_config = state.nextflow_config.copy()
-            
-            if config_updates:
-                print(f"🔧 检测到配置更新: {config_updates}")
-                updated_nextflow_config.update(config_updates)
-                print(f"📝 更新后的nextflow_config: {updated_nextflow_config}")
-            
-            return {
-                "messages": state.messages,
-                "query_response": query_response,
-                "status": "normal",
-                "nextflow_config": updated_nextflow_config
-            }
-        else:
-            print("❌ Agent未返回预期的结构化响应")
-            raise Exception("Agent未返回预期的结构化响应")
+        query_response = structured_response.query_response
+        user_requirements = structured_response.user_requirements
+        
+        return {
+            "messages": result.get("messages", state.messages),
+            "query_response": query_response,
+            "user_requirements": user_requirements,
+            "status": "normal"
+        }
         
     except Exception as e:
         print(f"❌ Normal节点处理出错: {str(e)}")

@@ -54,16 +54,31 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
         elif user_choice_lower in ['/quit', '/exit', 'quit', 'exit', '退出', 'bye']:
             user_decision = "quit"
             decision_msg = "🚪 退出程序"
-        elif user_choice_lower in ['/replan', '/重新规划', '/修改']:
+        elif user_choice_lower in ['/replan', '/重新规划', '/修改'] or user_choice_lower.startswith('/replan '):
             user_decision = "replan"
             decision_msg = "🔄 重新规划配置"
+            
+            # 处理/replan命令中的新需求
+            if user_choice_lower.startswith('/replan'):
+                # 智能提取/replan后面的内容，处理有无空格的情况
+                replan_content = user_choice_lower.replace('/replan', '', 1).strip()
+                if replan_content:
+                    print(f"📝 检测到新配置需求: {replan_content}")
+                    # 将新需求直接保存为user_requirements，让Plan节点的LLM来解析
+                    new_user_requirements = {"raw_input": replan_content}
+                else:
+                    # 纯/replan命令，清空旧需求
+                    new_user_requirements = {}
+                    print(f"📝 清空旧配置需求，重新规划")
         elif user_choice_lower in ['/cancel', '/取消']:
             user_decision = "cancel"
             decision_msg = "❌ 取消分析"
         else:
-            # 其他所有输入都视为重新规划请求
-            user_decision = "replan"
-            decision_msg = "🔄 重新规划请求"
+            # 无效输入，提示用户重新选择
+            print(f"❌ 无效输入: {user_choice}")
+            print(f"请选择有效的命令: /execute, /replan, /cancel, /quit")
+            # 递归调用自己，重新获取用户输入
+            return await user_confirm_node(state)
         
         print(f"🎯 {decision_msg}")
         
@@ -95,6 +110,10 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
         "response": decision_msg,
         "status": "confirm",
         
-        # 将用户输入添加到messages中，供modify_node使用
+        # 重新规划时设置replan需求，保持初始user_requirements不变
+        "user_requirements": getattr(state, 'user_requirements', {}),  # 保持初始需求
+        "replan_requirements": new_user_requirements if 'new_user_requirements' in locals() else {},  # replan需求
+        
+        # 保存用户选择用于后续处理
         "messages": [{"role": "user", "content": user_choice}]
     }

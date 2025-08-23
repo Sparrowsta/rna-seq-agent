@@ -58,8 +58,8 @@
   "hg19_test": {
     "species": "human",
     "version": "hg19_test",
-    "fasta_path": "genomes_test/human/hg19/hg19_partial.fa",
-    "gtf_path": "genomes_test/human/hg19/hg19_partial.gtf",
+    "fasta_path": "genomes/human/hg19_test/hg19_partial.fa",
+    "gtf_path": "genomes/human/hg19_test/hg19_partial.gtf",
     "description": "小型测试数据集，用于快速开发测试"
   }
 }

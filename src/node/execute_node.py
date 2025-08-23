@@ -7,74 +7,6 @@ from pathlib import Path
 from typing import Dict, Any
 from ..state import AgentState
 
-async def execute_node(state: AgentState) -> Dict[str, Any]:
-    """执行节点 - 构建和执行Nextflow命令"""
-    print(f"\n{'='*60}")
-    print(f"🚀 **RNA-seq分析执行**")
-    print(f"{'='*60}")
-    
-    # 获取配置
-    nextflow_config = state.nextflow_config or {}
-    print(f"📊 **分析配置:**")
-    for key, value in nextflow_config.items():
-        print(f"   {key}: {value}")
-    
-    # 生成运行时配置文件
-    print(f"\n📝 **生成运行时配置...**")
-    config_result = await generate_runtime_config(nextflow_config)
-    
-    if not config_result["success"]:
-        return {
-            "nextflow_command": "",
-            "execution_status": "failed",
-            "execution_output": f"配置生成失败: {config_result['error']}",
-            "execution_result": {"success": False, "error": config_result["error"]},
-            "response": "分析执行失败：配置生成错误",
-            "status": "failed"
-        }
-    
-    # 构建Nextflow命令
-    print(f"\n🔧 **构建Nextflow命令...**")
-    nextflow_command = build_nextflow_command(nextflow_config)
-    print(f"📋 命令: {nextflow_command}")
-    
-    # 执行Nextflow流水线
-    print(f"\n⚡ **执行Nextflow流水线...**")
-    print(f"🕐 开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    
-    execution_result = await execute_nextflow_pipeline(nextflow_command)
-    
-    print(f"🕐 结束时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"📊 **执行结果:** {'✅ 成功' if execution_result['success'] else '❌ 失败'}")
-    
-    # 生成响应消息
-    if execution_result["success"]:
-        response_msg = f"""🎉 **RNA-seq分析执行成功！**
-
-📋 **执行摘要:**
-   - 基因组版本: {nextflow_config.get('genome_version', 'unknown')}
-   - 分析工具链: {nextflow_config.get('qc_tool', 'unknown')}-{nextflow_config.get('align_tool', 'unknown')}-{nextflow_config.get('quant_tool', 'unknown')}
-   - 执行时长: {execution_result.get('duration', 'unknown')}
-   - 输出目录: data/results/
-
-💡 **下一步:** 查看 data/results/ 目录中的分析结果"""
-    else:
-        response_msg = f"""❌ **RNA-seq分析执行失败**
-
-🔍 **错误信息:**
-{execution_result.get('error', '未知错误')}
-
-💡 **建议:** 检查配置参数和数据文件完整性"""
-    
-    return {
-        "nextflow_command": nextflow_command,
-        "execution_status": "completed" if execution_result["success"] else "failed",
-        "execution_output": execution_result.get("output", ""),
-        "execution_result": execution_result,
-        "response": response_msg,
-        "status": "execute"
-    }
-
 async def generate_runtime_config(nextflow_config: Dict[str, Any]) -> Dict[str, Any]:
     """生成运行时配置文件"""
     try:
@@ -212,3 +144,71 @@ async def execute_nextflow_pipeline(command: str) -> Dict[str, Any]:
             "error": error_msg,
             "mode": "error"
         }
+
+async def execute_node(state: AgentState) -> Dict[str, Any]:
+    """执行节点 - 构建和执行Nextflow命令"""
+    print(f"\n{'='*60}")
+    print(f"🚀 **RNA-seq分析执行**")
+    print(f"{'='*60}")
+    
+    # 获取配置
+    nextflow_config = state.nextflow_config or {}
+    print(f"📊 **分析配置:**")
+    for key, value in nextflow_config.items():
+        print(f"   {key}: {value}")
+    
+    # 生成运行时配置文件
+    print(f"\n📝 **生成运行时配置...**")
+    config_result = await generate_runtime_config(nextflow_config)
+    
+    if not config_result["success"]:
+        return {
+            "nextflow_command": "",
+            "execution_status": "failed",
+            "execution_output": f"配置生成失败: {config_result['error']}",
+            "execution_result": {"success": False, "error": config_result["error"]},
+            "response": "分析执行失败：配置生成错误",
+            "status": "failed"
+        }
+    
+    # 构建Nextflow命令
+    print(f"\n🔧 **构建Nextflow命令...**")
+    nextflow_command = build_nextflow_command(nextflow_config)
+    print(f"📋 命令: {nextflow_command}")
+    
+    # 执行Nextflow流水线
+    print(f"\n⚡ **执行Nextflow流水线...**")
+    print(f"🕐 开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    execution_result = await execute_nextflow_pipeline(nextflow_command)
+    
+    print(f"🕐 结束时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"📊 **执行结果:** {'✅ 成功' if execution_result['success'] else '❌ 失败'}")
+    
+    # 生成响应消息
+    if execution_result["success"]:
+        response_msg = f"""🎉 **RNA-seq分析执行成功！**
+
+📋 **执行摘要:**
+   - 基因组版本: {nextflow_config.get('genome_version', 'unknown')}
+   - 分析工具链: {nextflow_config.get('qc_tool', 'unknown')}-{nextflow_config.get('align_tool', 'unknown')}-{nextflow_config.get('quant_tool', 'unknown')}
+   - 执行时长: {execution_result.get('duration', 'unknown')}
+   - 输出目录: data/results/
+
+💡 **下一步:** 查看 data/results/ 目录中的分析结果"""
+    else:
+        response_msg = f"""❌ **RNA-seq分析执行失败**
+
+🔍 **错误信息:**
+{execution_result.get('error', '未知错误')}
+
+💡 **建议:** 检查配置参数和数据文件完整性"""
+    
+    return {
+        "nextflow_command": nextflow_command,
+        "execution_status": "completed" if execution_result["success"] else "failed",
+        "execution_output": execution_result.get("output", ""),
+        "execution_result": execution_result,
+        "response": response_msg,
+        "status": "execute"
+    }

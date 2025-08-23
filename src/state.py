@@ -1,5 +1,5 @@
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 from pydantic import BaseModel, Field
 
 # ==================== 统一Agent状态 ====================
@@ -8,7 +8,8 @@ class AgentState(BaseModel):
     """RNA-seq Agent统一状态 - 包含所有节点的字段"""
     
     # === 基础通信字段 ===
-    messages: List[Dict[str, str]] = Field(default=[], description="对话历史")
+    messages: List[Any] = Field(default=[], description="完整的LangChain消息历史")
+    input: str = Field(default="", description="用户当前输入")
     response: str = Field(default="", description="当前响应")
     status: str = Field(default="normal", description="系统状态: normal/plan/confirm/execute")
     
@@ -19,7 +20,8 @@ class AgentState(BaseModel):
     # === Plan分析字段 ===
     plan: List[str] = Field(default=[], description="分析步骤计划")
     analysis_intent: str = Field(default="", description="分析目标意图")
-    user_requirements: str = Field(default="", description="用户明确需求")
+    user_requirements: Dict[str, Any] = Field(default={}, description="初始用户配置需求(从user_communication来)")
+    replan_requirements: Dict[str, Any] = Field(default={}, description="重新规划配置需求(从user_confirm来)")
     
     # === Detect检测字段 ===
     query_results: Dict[str, Any] = Field(default={}, description="系统检测结果")
@@ -44,14 +46,11 @@ class AgentState(BaseModel):
 class NormalResponse(BaseModel):
     """Normal节点的精简响应格式 - 兼容create_react_agent工具响应"""
     query_response: str = Field(description="工具调用的完整结果")
-    
-    # 配置更新支持
-    config_updates: Dict[str, Any] = Field(default={}, description="需要更新到nextflow_config的配置项")
+    user_requirements: Dict[str, Any] = Field(default={}, description="从用户输入中提取的结构化配置需求")
 
 class PlanResponse(BaseModel):
     """Plan节点的精简响应格式"""
     plan: List[str] = Field(default=[], description="分析步骤计划")
-    analysis_intent: str = Field(default="", description="分析目标意图")
 
 class DetectResponse(BaseModel):
     """Detect节点的精简响应格式"""
