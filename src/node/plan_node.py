@@ -58,7 +58,8 @@ def _build_planning_prompt(state: AgentState, initial_requirements: dict, replan
 
 **智能跳过规则**:
 - 如果已配置完整工具链(qc_tool, align_tool, quant_tool) → 可跳过相应工具检测
-- verify_genome_setup必须执行，确保基因组文件完整性"""
+- verify_genome_setup必须执行，确保基因组文件完整性
+- analyze_fastq_data必须执行，这是RNA-seq分析的基础步骤"""
 
     task_section = """
 

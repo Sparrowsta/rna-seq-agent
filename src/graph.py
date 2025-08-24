@@ -7,7 +7,8 @@ from .node.detect_node import detect_node
 from .node.prepare_node import prepare_node
 from .node.user_confirm_node import user_confirm_node
 from .node.execute_node import execute_node
-from .route import route_from_user_communication, route_after_confirm
+from .node.analysis_node import analysis_node
+from .route import route_from_user_communication, route_after_confirm, route_after_analysis
 
 def create_agent():
     """创建LangGraph Agent - User Communication为主的Plan-and-Execute架构"""
@@ -23,6 +24,7 @@ def create_agent():
     workflow.add_node("prepare", prepare_node)
     workflow.add_node("user_confirm", user_confirm_node)
     workflow.add_node("execute", execute_node)
+    workflow.add_node("analysis", analysis_node)
     
     # 入口点：直接进入User Communication节点
     workflow.add_edge(START, "user_communication")
@@ -58,12 +60,21 @@ def create_agent():
         }
     )
     
-    # 执行完成后结束
-    workflow.add_edge("execute", END)
+    # 执行后直接进入分析总结
+    workflow.add_edge("execute", "analysis")
+    
+    # 分析总结后回到用户交互
+    workflow.add_conditional_edges(
+        "analysis",
+        route_after_analysis,
+        {
+            "user_communication": "user_communication"
+        }
+    )
     
     # 编译图
     app = workflow.compile()
     
     print("🤖 RNA-seq智能分析助手已启动")
-    print("   架构: User Communication → Normal → Plan → Execute (支持循环重规划)")
+    print("   架构: User Communication → Normal → Plan → Execute → Analysis (简化路由)")
     return app

@@ -40,6 +40,13 @@ class AgentState(BaseModel):
     execution_status: str = Field(default="", description="执行状态: building/running/completed/failed")
     execution_output: str = Field(default="", description="执行输出日志")
     execution_result: Dict[str, Any] = Field(default={}, description="执行结果摘要")
+    
+    # === Analysis分析字段 ===
+    analysis_summary: str = Field(default="", description="分析结果总结")
+    analysis_insights: List[str] = Field(default=[], description="分析洞察和建议")
+    result_files: Dict[str, str] = Field(default={}, description="关键结果文件路径")
+    quality_metrics: Dict[str, Any] = Field(default={}, description="质量评估指标")
+    next_steps: List[str] = Field(default=[], description="后续分析建议")
 
 # ==================== 子状态模型 - 用于特定节点的结构化输出 ====================
 
@@ -61,3 +68,11 @@ class PrepareResponse(BaseModel):
     """Prepare节点的精简响应格式"""
     nextflow_config: Dict[str, Any] = Field(default={}, description="生成的Nextflow配置参数")
     config_reasoning: str = Field(default="", description="配置决策理由")
+
+class AnalysisResponse(BaseModel):
+    """Analysis节点的精简响应格式"""
+    analysis_summary: str = Field(description="分析结果总结")
+    analysis_insights: List[str] = Field(default=[], description="分析洞察和发现")
+    result_files: Dict[str, str] = Field(default={}, description="关键结果文件路径")
+    quality_metrics: Dict[str, Any] = Field(default={}, description="质量评估指标")
+    next_steps: List[str] = Field(default=[], description="后续分析建议")

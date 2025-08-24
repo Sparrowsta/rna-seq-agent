@@ -49,3 +49,8 @@ async def route_after_confirm(state: AgentState) -> str:
     else:
         print(f"⚠️ [ROUTE] 未识别的决策 '{user_decision}'，默认取消")
         return "cancel"
+
+async def route_after_analysis(state: AgentState) -> str:
+    """Analysis节点分析完毕后的路由决策"""
+    print("✅ [ROUTE] 分析总结完成，返回用户交互")
+    return "user_communication"

@@ -66,7 +66,7 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
 **核心任务：**
 1. **应用用户配置** - 优先级：重新规划需求 > 初始需求 > 系统推荐
 2. **FASTQ文件配对分析** - 基于fastq_analysis进行智能文件配对
-3. **填充缺失配置** - 对用户未指定的字段使用系统推荐值
+3. **基因组配置** - 对用户想要使用的基因组进行配置，没有则按照系统推荐。根据基因组是否存在，基因组索引是否构建来调整对应的配置字段
 
 **FASTQ配对分析：**
 从fastq_analysis.file_paths分析文件名模式并使用完整路径：
@@ -81,7 +81,7 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
   {{"sample_id": "SRR17469061", "read1": "fastq/SRR17469061_1.fastq.gz", "read2": "fastq/SRR17469061_2.fastq.gz"}},
   {{"sample_id": "SRR17469059", "read1": "fastq/SRR17469059_1.fastq.gz", "read2": "fastq/SRR17469059_2.fastq.gz"}}
 ]
-注意：不是字典格式，是数组格式！
+注意：不是字典格式，是数组格式
 
 **必需配置字段：**
 - genome_version, species: 基因组相关（优先使用用户指定值）

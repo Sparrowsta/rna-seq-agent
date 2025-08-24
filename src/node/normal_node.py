@@ -2,8 +2,8 @@ import os
 from typing import Dict, Any
 from ..state import AgentState, NormalResponse
 from ..tools import (
-    query_fastq_files, 
-    query_genome_info, 
+    scan_fastq_files,
+    scan_genome_files, 
     get_help,
     add_genome_config,
     get_project_overview,
@@ -72,8 +72,8 @@ def create_normal_agent():
 - list_analysis_history: 当用户询问"历史分析"、"分析记录"、"历史结果"时使用
 
 详细查询工具：
-- query_fastq_files: 当用户询问"FASTQ文件"、"测序数据"、"数据文件"时使用
-- query_genome_info: 当用户询问"基因组"、"参考基因组"、"基因组信息"时使用  
+- scan_fastq_files: 当用户询问"FASTQ文件"、"测序数据"、"数据文件"时使用
+- scan_genome_files: 当用户询问"基因组"、"参考基因组"、"基因组信息"时使用  
 - add_genome_config: 当用户说"添加基因组"并提供URL时，直接传递完整的用户输入
 - get_help: 当用户询问"帮助"、"功能"、"使用方法"时使用
 
@@ -92,15 +92,15 @@ def create_normal_agent():
             description="历史分析管理 - 浏览和管理已完成的分析。显示分析记录、结果大小、分析步骤和可复用配置。当用户询问'历史分析'、'分析记录'、'历史结果'时调用此工具。"
         ),
         
-        # 详细信息查询工具
+        # 详细信息查询工具（使用新的双模式工具）
         Tool(
-            name="query_fastq_files",
-            func=query_fastq_files,
+            name="scan_fastq_files",
+            func=lambda query="": scan_fastq_files(mode="normal", depth="detailed"),
             description="详细FASTQ文件分析 - 在整个项目目录递归扫描并列出所有可用的FASTQ文件。提供智能概览、统计信息、分析建议和详细样本信息。当用户询问'查看FASTQ文件'、'测序数据'、'数据文件'时调用此工具。"
         ),
         Tool(
-            name="query_genome_info", 
-            func=query_genome_info,
+            name="scan_genome_files", 
+            func=lambda query="": scan_genome_files(mode="normal"),
             description="基因组配置查询 - 自动列出系统中所有可用的参考基因组。显示基因组版本、下载状态和文件大小。当用户询问'基因组'、'参考基因组'、'基因组信息'时调用此工具。"
         ),
         Tool(

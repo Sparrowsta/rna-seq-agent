@@ -3,9 +3,9 @@ from ..state import AgentState, DetectResponse
 from langgraph.prebuilt import create_react_agent
 from langchain.tools import Tool
 from ..tools import (
-    analyze_fastq_data,
-    assess_system_readiness,
-    verify_genome_setup,
+    scan_fastq_files,
+    scan_system_resources,
+    scan_genome_files,
     check_fastp_availability,
     check_star_availability,
     check_featurecounts_availability
@@ -21,17 +21,17 @@ def create_detection_agent():
     tools = [
         Tool(
             name="analyze_fastq_data",
-            func=analyze_fastq_data,
+            func=lambda query="": scan_fastq_files(mode="detect", depth="detailed"),
             description="扫描和分析FASTQ文件。收集项目中所有FASTQ文件的信息，包括文件大小、样本配对关系、测序类型等。"
         ),
         Tool(
             name="assess_system_readiness", 
-            func=assess_system_readiness,
+            func=lambda query="": scan_system_resources(mode="detect"),
             description="检测系统硬件资源。评估CPU核心数、内存容量、磁盘空间、系统负载等硬件信息。"
         ),
         Tool(
             name="verify_genome_setup",
-            func=verify_genome_setup, 
+            func=lambda query="": scan_genome_files(mode="detect"), 
             description="验证基因组文件配置。检查已配置基因组的FASTA文件、GTF文件、STAR索引文件的存在性和完整性。"
         ),
         Tool(

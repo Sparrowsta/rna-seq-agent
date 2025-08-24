@@ -55,48 +55,64 @@ def getGenomeDir(genome_version) {
     return "genomes/${genome_paths.species}/${genome_version}"
 }
 
-
-// =====================================================
-// 日志信息
-// =====================================================
-
-// 获取基因组配置信息用于日志显示
-def global_genome_paths = getGenomePaths(params.genome_version)
-
-log.info """
-================================================
-RNA-seq 分析工作流（重构版 - 工具选择模式）
-================================================
-基因组版本: ${params.genome_version} (${global_genome_paths.species})
-基因组文件: ${global_genome_paths.fasta}
-GTF文件: ${global_genome_paths.gtf}
-STAR索引: ${global_genome_paths.star_index}
-
-本地FASTQ文件: ${params.local_fastq_files ?: "未提供"}
-主输出目录: ${params.data}/results
-------------------------------------------------
-工具选择:
-  质控工具: ${params.qc_tool}
-  比对工具: ${params.align_tool}
-  定量工具: ${params.quant_tool}
-------------------------------------------------
-执行控制:
-  参考基因组下载: ${params.run_download_genome}
-  STAR 索引构建: ${params.run_build_star_index}
-================================================
-"""
-
-// 统一的基因组管理process
-process prepare_genome_data {
-    tag "准备基因组数据: ${params.genome_version}"
+// 进程级并行: 分离FASTA下载
+process download_genome_fasta {
+    tag "下载FASTA: ${params.genome_version}"
     
-    publishDir "${getGenomeDir(params.genome_version)}", mode: 'copy', pattern: "*.{fa,gtf}", enabled: params.run_download_genome
-    publishDir "${getGenomeDir(params.genome_version)}/logs", mode: 'copy', pattern: "*.prepared"
+    publishDir "${getGenomeDir(params.genome_version)}", mode: 'copy', pattern: "*.fa", enabled: params.run_download_genome
     
     output:
     path "${params.genome_version}.fa", emit: genome_fasta
-    path "*.gtf", emit: genome_gtf
+    
+    when:
+    params.run_download_genome
+    
+    script:
+    def local_genome_paths = getGenomePaths(params.genome_version)
+    """
+    echo "开始下载基因组FASTA: ${params.genome_version}" 
+    wget ${local_genome_paths.fasta_url} -O ${params.genome_version}.fa.gz
+    gunzip ${params.genome_version}.fa.gz
+    echo "FASTA下载完成: ${params.genome_version}"
+    """
+}
+
+// 进程级并行: 分离GTF下载
+process download_genome_gtf {
+    tag "下载GTF: ${params.genome_version}"
+    
+    publishDir "${getGenomeDir(params.genome_version)}", mode: 'copy', pattern: "*.gtf", enabled: params.run_download_genome
+    
+    output:
+    path "${params.genome_version}.gtf", emit: genome_gtf
+    
+    when:
+    params.run_download_genome
+    
+    script:
+    def local_genome_paths = getGenomePaths(params.genome_version)
+    def gtf_path = local_genome_paths.gtf.toString()
+    def gtf_filename = file(gtf_path).getName()
+    
+    """
+    echo "开始下载基因组GTF: ${params.genome_version}"
+    wget ${local_genome_paths.gtf_url} -O ${params.genome_version}.gtf.gz
+    gunzip ${params.genome_version}.gtf.gz
+    echo "GTF下载完成: ${params.genome_version}"
+    """
+}
+
+// 本地基因组文件准备
+process prepare_local_genome {
+    tag "准备本地基因组: ${params.genome_version}"
+    
+    output:
+    path "${params.genome_version}.fa", emit: genome_fasta
+    path "${params.genome_version}.gtf", emit: genome_gtf
     path "genome.prepared", emit: status_file
+    
+    when:
+    !params.run_download_genome
     
     script:
     def local_genome_paths = getGenomePaths(params.genome_version)
@@ -104,47 +120,31 @@ process prepare_genome_data {
     def gtf_path = local_genome_paths.gtf.toString()
     def gtf_filename = file(gtf_path).getName()
     
-    if (params.run_download_genome) {
-        // 下载基因组数据
-        """
-        # 下载基因组
-        wget ${local_genome_paths.fasta_url} -O ${params.genome_version}.fa.gz
-        gunzip ${params.genome_version}.fa.gz
-        
-        # 下载 GTF
-        wget ${local_genome_paths.gtf_url} -O ${gtf_filename}.gz
-        gunzip ${gtf_filename}.gz
-        
-        echo "基因组数据下载完成: ${params.genome_version}" > genome.prepared
-        """
-    } else {
-        // 使用本地基因组文件
-        """
-        # 检查本地文件是否存在
-        if [ ! -f "${fasta_path}" ]; then
-            echo "错误: 本地基因组文件不存在: ${fasta_path}"
-            exit 1
-        fi
-        
-        if [ ! -f "${gtf_path}" ]; then
-            echo "错误: 本地GTF文件不存在: ${gtf_path}"
-            exit 1
-        fi
-        
-        # 创建软链接
-        ln -s \$(realpath "${fasta_path}") ${params.genome_version}.fa
-        ln -s \$(realpath "${gtf_path}") ${gtf_filename}
-        
-        echo "本地基因组数据准备完成: ${params.genome_version}" > genome.prepared
-        """
-    }
+    """
+    # 检查本地文件是否存在
+    if [ ! -f "${fasta_path}" ]; then
+        echo "错误: 本地基因组文件不存在: ${fasta_path}"
+        exit 1
+    fi
+    
+    if [ ! -f "${gtf_path}" ]; then
+        echo "错误: 本地GTF文件不存在: ${gtf_path}"
+        exit 1
+    fi
+    
+    # 创建软链接
+    ln -s \$(realpath "${fasta_path}") ${params.genome_version}.fa
+    ln -s \$(realpath "${gtf_path}") ${params.genome_version}.gtf
+    
+    echo "本地基因组数据准备完成: ${params.genome_version}" > genome.prepared
+    """
 }
 
-// 统一的STAR索引构建process
-process prepare_star_index {
-    tag "准备STAR索引: ${params.genome_version}"
+// STAR索引构建process
+process build_star_index {
+    tag "构建STAR索引: ${params.genome_version}"
     
-    publishDir "${getGenomeDir(params.genome_version)}", mode: 'copy', pattern: "star_index", enabled: params.run_build_star_index
+    publishDir "${getGenomeDir(params.genome_version)}", mode: 'copy', pattern: "star_index"
     publishDir "${getGenomeDir(params.genome_version)}/logs", mode: 'copy', pattern: "*.prepared"
     
     input:
@@ -155,40 +155,58 @@ process prepare_star_index {
     path "star_index", emit: index_dir
     path "star_index.prepared", emit: status_file
     
+    when:
+    params.run_build_star_index
+    
+    script:
+    """
+    mkdir -p star_index
+    
+    micromamba run -n align_env STAR \\
+        --runMode genomeGenerate \\
+        --genomeDir star_index \\
+        --genomeFastaFiles ${genome_fasta} \\
+        --sjdbGTFfile ${genome_gtf} \\
+        --sjdbOverhang 100 \\
+        --runThreadN ${task.cpus}
+    
+    echo "STAR索引构建完成: ${params.genome_version}" > star_index.prepared
+    """
+}
+
+// STAR索引链接process
+process link_star_index {
+    tag "链接本地STAR索引: ${params.genome_version}"
+    
+    publishDir "${getGenomeDir(params.genome_version)}/logs", mode: 'copy', pattern: "*.prepared"
+    
+    input:
+    path genome_fasta
+    path genome_gtf
+    
+    output:
+    path "star_index", emit: index_dir
+    path "star_index.prepared", emit: status_file
+    
+    when:
+    !params.run_build_star_index
+    
     script:
     def local_genome_paths = getGenomePaths(params.genome_version)
     def star_index_path = local_genome_paths.star_index.toString()
     
-    if (params.run_build_star_index) {
-        // 构建STAR索引
-        """
-        mkdir -p star_index
-        
-        micromamba run -n align_env STAR \\
-            --runMode genomeGenerate \\
-            --genomeDir star_index \\
-            --genomeFastaFiles ${genome_fasta} \\
-            --sjdbGTFfile ${genome_gtf} \\
-            --sjdbOverhang 100 \\
-            --runThreadN ${task.cpus}
-        
-        echo "STAR索引构建完成: ${params.genome_version}" > star_index.prepared
-        """
-    } else {
-        // 使用本地STAR索引
-        """
-        # 检查本地索引是否存在
-        if [ ! -d "${star_index_path}" ]; then
-            echo "错误: 本地STAR索引不存在: ${star_index_path}"
-            exit 1
-        fi
-        
-        # 创建软链接
-        ln -s \$(realpath "${star_index_path}") star_index
-        
-        echo "本地STAR索引准备完成: ${params.genome_version}" > star_index.prepared
-        """
-    }
+    """
+    # 检查本地索引是否存在
+    if [ ! -d "${star_index_path}" ]; then
+        echo "错误: 本地STAR索引不存在: ${star_index_path}"
+        exit 1
+    fi
+    
+    # 创建软链接
+    ln -s \$(realpath "${star_index_path}") star_index
+    
+    echo "本地STAR索引准备完成: ${params.genome_version}" > star_index.prepared
+    """
 }
 
 // 统一的质控process - 支持工具选择
@@ -379,14 +397,8 @@ process run_quantification {
 
 workflow {
     // --- 1. 数据输入 ---
-    // 使用Agent分析的样本配对信息，避免复杂的文件名解析
-    def sample_groups_json = params.sample_groups
-    if (!sample_groups_json) {
-        error "缺少样本配对信息：params.sample_groups未提供。请通过Agent分析生成配对信息。"
-    }
-    
     // 解析Agent提供的样本分组信息
-    def sample_groups = new groovy.json.JsonSlurper().parseText(sample_groups_json)
+    def sample_groups = new groovy.json.JsonSlurper().parseText(params.sample_groups)
     
     // 创建样本Channel，使用Agent的配对分析结果
     fastq_samples_ch = Channel.from(sample_groups)
@@ -399,41 +411,47 @@ workflow {
             return [sample_id, read1, read2, single]
         }
 
-    // --- 2. 准备基因组数据 ---
-    genome_data_ch = prepare_genome_data()
+    // --- 2. 准备基因组数据 (when条件自动处理) ---
+    download_genome_fasta()  // when: params.run_download_genome
+    download_genome_gtf()    // when: params.run_download_genome  
+    prepare_local_genome()   // when: !params.run_download_genome
     
-    // --- 3. 准备STAR索引 ---
-    star_index_ch = prepare_star_index(
-        genome_data_ch.genome_fasta,
-        genome_data_ch.genome_gtf
+    // 混合输出 - Nextflow自动处理空channel
+    fasta_ch = download_genome_fasta.out.genome_fasta.mix(
+        prepare_local_genome.out.genome_fasta
+    )
+    gtf_ch = download_genome_gtf.out.genome_gtf.mix(
+        prepare_local_genome.out.genome_gtf
     )
     
-    // --- 4. 质控处理 ---
-    if (params.qc_tool != "none") {
-        qc_results_ch = run_quality_control(fastq_samples_ch)
-        processed_reads_ch = qc_results_ch.qc_reads
-    } else {
-        processed_reads_ch = fastq_samples_ch
-    }
+    // --- 3. 准备STAR索引 (when条件自动处理) ---
+    build_star_index(fasta_ch, gtf_ch)      // when: params.run_build_star_index
+    link_star_index(fasta_ch, gtf_ch)       // when: !params.run_build_star_index
     
-    // --- 6. 序列比对 ---
-    if (params.align_tool != "none") {
-        align_results_ch = run_alignment(
-            processed_reads_ch,
-            star_index_ch.index_dir
-        )
-        bam_files_ch = align_results_ch.bam_files
-    } else {
-        bam_files_ch = Channel.empty()
-    }
+    // 混合两个索引process的输出
+    star_index_ch = build_star_index.out.index_dir.mix(
+        link_star_index.out.index_dir
+    )
     
-    // --- 7. 基因定量 ---
-    if (params.quant_tool != "none" && params.align_tool != "none") {
-        quant_results_ch = run_quantification(
-            bam_files_ch.map { sample_id, bam -> bam }.collect(),
-            genome_data_ch.genome_gtf
-        )
-    }
+    // --- 4. 质控处理 (when条件自动处理) ---
+    qc_results_ch = run_quality_control(fastq_samples_ch)  // when: params.qc_tool != "none"
+    
+    // 混合原始和处理后的reads
+    processed_reads_ch = qc_results_ch.qc_reads.mix(
+        fastq_samples_ch.filter { params.qc_tool == "none" }
+    )
+    
+    // --- 5. 序列比对 (when条件自动处理) ---
+    align_results_ch = run_alignment(
+        processed_reads_ch,
+        star_index_ch
+    )  // when: params.align_tool != "none"
+    
+    // --- 6. 基因定量 (when条件自动处理) ---
+    run_quantification(
+        align_results_ch.bam_files.map { sample_id, bam -> bam }.collect(),
+        gtf_ch
+    )  // when: params.quant_tool != "none"
 }
 
 // =====================================================

@@ -64,7 +64,6 @@ async def run_interactive_session(agent):
     
     # 创建完整的初始状态
     initial_state = AgentState(
-        response="",
         status="normal"
     )
     
