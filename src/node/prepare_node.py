@@ -19,13 +19,7 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
     initial_requirements = state.user_requirements or {}
     replan_requirements = state.replan_requirements or {}
     
-    print(f"📝 初始配置需求: {initial_requirements}")
-    if replan_requirements:
-        print(f"🔄 重新规划需求: {replan_requirements}")
-    print(f"📊 当前配置状态: {current_config}")
-    
     if not detection_results:
-        print("⚠️ 未检测到任何数据，无法生成配置")
         return {
             "nextflow_config": current_config,
             "config_reasoning": "未获取到检测数据，保持现有配置",
@@ -104,7 +98,6 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
 **必需配置字段：**
 - genome_version, species: 基因组相关（优先使用用户指定值）
 - qc_tool, align_tool, quant_tool: 工具链（小写，优先使用用户指定值）
-- local_fastq_files: 文件路径列表
 - paired_end: 是否包含双端数据
 - sample_groups: 详细样本配对信息
 - run_build_star_index: 索引构建控制

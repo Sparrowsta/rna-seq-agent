@@ -87,12 +87,6 @@ async def plan_node(state: AgentState) -> Dict[str, Any]:
     # 判断是否为重新规划
     is_replanning = bool(replan_requirements)
     
-    print(f"{'🔄 检测到重新规划请求' if is_replanning else '🎆 初次规划，生成检测计划'}...")
-    if initial_requirements:
-        print(f"📝 初始配置需求: {initial_requirements}")
-    if replan_requirements:
-        print(f"🔄 重新规划需求: {replan_requirements}")
-    
     # 统一使用一个prompt构建函数
     planning_prompt = _build_planning_prompt(state, initial_requirements, replan_requirements, is_replanning)
     

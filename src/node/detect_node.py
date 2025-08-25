@@ -109,8 +109,6 @@ async def detect_node(state: AgentState) -> Dict[str, Any]:
         print(f"🤖 开始执行检测任务")
         result = await agent_executor.ainvoke(messages_input)
         
-        print(f"📋 Agent返回结果类型: {type(result)}")
-        print(f"📋 Agent返回结果: {result}")
         
         structured_response = result.get("structured_response")
         print(f"🎯 structured_response: {structured_response}")
@@ -120,9 +118,6 @@ async def detect_node(state: AgentState) -> Dict[str, Any]:
             
             query_results = structured_response.query_results or {}
             query_summary = structured_response.query_summary or "检测完成"
-            
-            print(f"📊 query_results keys: {list(query_results.keys())}")
-            print(f"📝 query_summary: {query_summary}")
             
             return {
                 "query_summary": query_summary,

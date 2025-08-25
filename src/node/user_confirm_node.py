@@ -25,6 +25,25 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
                 print(f"   🎯 比对工具: {value}")
             elif key == "quant_tool":
                 print(f"   📊 定量工具: {value}")
+            elif key == "sample_groups":
+                print(f"   📂 样本文件: {len(value)}个样本")
+                for i, sample in enumerate(value, 1):
+                    sample_id = sample.get('sample_id', 'Unknown')
+                    read1 = sample.get('read1', '')
+                    read2 = sample.get('read2', '')
+                    print(f"      {i}. {sample_id}")
+                    print(f"         R1: {read1}")
+                    if read2:
+                        print(f"         R2: {read2}")
+            elif key == "paired_end":
+                end_type = "双端测序" if value else "单端测序"
+                print(f"   🔄 测序类型: {end_type}")
+            elif key == "run_download_genome":
+                download_status = "是" if value else "否"
+                print(f"   ⬇️ 下载基因组: {download_status}")
+            elif key == "run_build_star_index":
+                build_status = "是" if value else "否"
+                print(f"   🏗️ 构建索引: {build_status}")
             else:
                 print(f"   ⚙️ {key}: {value}")
     else:
@@ -34,16 +53,15 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
     print(f"   {config_reasoning}")
     
     print(f"\n🔄 **请选择下一步操作:**")
-    print(f"   /execute  - 🚀 执行分析")
-    print(f"   /replan   - 🔄 重新规划")  
-    print(f"   /cancel   - ❌ 取消分析")
-    print(f"   /quit     - 🚪 退出程序")
+    print(f"   /execute         - 🚀 执行分析")
+    print(f"   /replan [需求]   - 🔄 重新规划")  
+    print(f"   /cancel          - ❌ 取消分析返回普通模式")
+    print(f"   /quit            - 🚪 退出程序")
     print(f"{'='*60}")
     
     # 获取用户输入
     try:
         user_choice = input("请输入命令: ").strip()
-        print(f"📝 用户输入: {user_choice}")
         
         # 处理用户输入 - 简化逻辑
         user_choice_lower = user_choice.lower()
@@ -71,10 +89,8 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
                     break
             
             if replan_content:
-                print(f"📝 检测到新配置需求: {replan_content}")
                 new_user_requirements = {"raw_input": replan_content}
             else:
-                print(f"📝 清空旧配置需求，重新规划")
                 new_user_requirements = {}
         elif user_choice_lower in ['/cancel', '/取消']:
             user_decision = "cancel"
