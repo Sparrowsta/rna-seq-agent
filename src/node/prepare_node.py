@@ -2,12 +2,20 @@ import json
 from typing import Dict, Any
 from ..state import AgentState, PrepareResponse
 from ..core import get_shared_llm
+from langgraph.prebuilt import create_react_agent
 
 def create_prepare_agent():
     """创建Prepare节点的智能配置Agent"""
     llm = get_shared_llm()
-    structured_llm = llm.with_structured_output(PrepareResponse, method="json_mode")
-    return structured_llm
+    
+    # 使用create_react_agent但不提供tools，纯推理模式
+    agent = create_react_agent(
+        model=llm,
+        tools=[],  # 空工具列表，纯推理
+        prompt="你是RNA-seq分析配置专家。请基于用户需求和系统检测数据，生成最优化的Nextflow配置参数。",
+        response_format=PrepareResponse
+    )
+    return agent
 
 async def prepare_node(state: AgentState) -> Dict[str, Any]:
     """准备节点 - 优先基于Normal模式传来的用户需求生成配置参数"""
@@ -28,7 +36,6 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
         }
     
     # 使用LLM综合分析用户需求和检测数据
-    prepare_agent = create_prepare_agent()
     
     try:
         print("🧠 LLM正在基于用户需求分析检测数据并生成配置...")
@@ -129,8 +136,17 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
 3. 对用户未指定的字段使用系统检测推荐值
 4. 在reasoning中详细说明用户需求的应用情况"""
         
-        # LLM直接输出PrepareResponse格式
-        analysis_result = await prepare_agent.ainvoke([{"role": "user", "content": unified_prompt}])
+        # 使用create_react_agent调用方式
+        agent_executor = create_prepare_agent()
+        messages_input = {"messages": [{"role": "user", "content": unified_prompt}]}
+        
+        result = await agent_executor.ainvoke(messages_input)
+        structured_response = result.get("structured_response")
+        
+        if structured_response:
+            analysis_result = structured_response
+        else:
+            raise Exception("Agent未返回预期的结构化响应")
         
         # 检查LLM响应
         if not analysis_result:

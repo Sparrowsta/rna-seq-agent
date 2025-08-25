@@ -111,7 +111,6 @@ async def detect_node(state: AgentState) -> Dict[str, Any]:
         
         
         structured_response = result.get("structured_response")
-        print(f"🎯 structured_response: {structured_response}")
         
         if structured_response:
             print(f"✅ 检测成功，准备返回数据")

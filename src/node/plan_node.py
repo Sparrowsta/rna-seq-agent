@@ -1,12 +1,20 @@
 from typing import Dict, Any
 from ..state import AgentState, PlanResponse
 from ..core import get_shared_llm
+from langgraph.prebuilt import create_react_agent
 
 def create_plan_agent():
     """创建Plan节点的智能规划Agent"""
     llm = get_shared_llm()
-    structured_llm = llm.with_structured_output(PlanResponse, method="json_mode")
-    return structured_llm
+    
+    # 使用create_react_agent但不提供tools，纯推理模式
+    agent = create_react_agent(
+        model=llm,
+        tools=[],  # 空工具列表，纯推理
+        prompt="你是RNA-seq分析规划专家。请基于用户提供的详细需求和配置状态，进行智能推理并生成最优化的检测任务计划。",
+        response_format=PlanResponse
+    )
+    return agent
 
 def _build_planning_prompt(state: AgentState, initial_requirements: dict, replan_requirements: dict, is_replanning: bool = False) -> str:
     """构建统一的规划提示词"""
@@ -78,7 +86,6 @@ def _build_planning_prompt(state: AgentState, initial_requirements: dict, replan
 
 async def plan_node(state: AgentState) -> Dict[str, Any]:
     """增强的Plan节点 - 支持初次规划和重新规划"""
-    plan_agent = create_plan_agent()
     
     # 分别获取两种需求
     initial_requirements = getattr(state, 'user_requirements', {})
@@ -91,11 +98,20 @@ async def plan_node(state: AgentState) -> Dict[str, Any]:
     planning_prompt = _build_planning_prompt(state, initial_requirements, replan_requirements, is_replanning)
     
     try:
-        plan_response = await plan_agent.ainvoke([{"role": "user", "content": planning_prompt}])
-        detection_plan = plan_response.plan or []
+        agent_executor = create_plan_agent()
+        messages_input = {"messages": [{"role": "user", "content": planning_prompt}]}
+        
+        result = await agent_executor.ainvoke(messages_input)
+        structured_response = result.get("structured_response")
+        
+        if structured_response:
+            detection_plan = structured_response.plan or []
+        else:
+            # 如果没有结构化响应，使用默认计划
+            detection_plan = ["analyze_fastq_data", "verify_genome_setup", "assess_system_readiness"]
         
         if not detection_plan:
-            raise Exception("LLM未生成有效的检测计划")
+            raise Exception("未生成有效的检测计划")
             
     except Exception as e:
         print(f"❌ LLM规划失败: {e}")

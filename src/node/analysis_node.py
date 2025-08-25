@@ -5,6 +5,20 @@ from pathlib import Path
 
 from ..core import get_shared_llm
 from ..state import AgentState, AnalysisResponse
+from langgraph.prebuilt import create_react_agent
+
+def create_analysis_agent():
+    """创建Analysis节点的智能分析Agent"""
+    llm = get_shared_llm()
+    
+    # 使用create_react_agent但不提供tools，纯推理模式
+    agent = create_react_agent(
+        model=llm,
+        tools=[],  # 空工具列表，纯推理
+        prompt="你是RNA-seq数据分析专家。请基于具体的技术指标生成专业的分析总结报告。",
+        response_format=AnalysisResponse
+    )
+    return agent
 
 
 def extract_nextflow_metrics(data_dir: str = ".") -> Dict[str, Any]:
@@ -339,8 +353,8 @@ def save_analysis_report(analysis_response: AnalysisResponse, data_dir: str = ".
         saved_files["markdown"] = str(md_file.relative_to(Path(data_dir)))
         
         # 3. 保存最新报告的符号链接
-        latest_json = results_path / "analysis_report_latest.json"
-        latest_md = results_path / "analysis_summary_latest.md"
+        latest_json = reports_path / "analysis_report_latest.json"
+        latest_md = reports_path / "analysis_summary_latest.md"
         
         # 删除旧的符号链接(如果存在)
         if latest_json.is_symlink():
@@ -455,8 +469,7 @@ async def analysis_node(state: AgentState) -> Dict[str, Any]:
     }
     
     # 3. 让LLM基于具体指标生成专业分析
-    llm = get_shared_llm()
-    structured_llm = llm.with_structured_output(AnalysisResponse, method="json_mode")
+    agent_executor = create_analysis_agent()
     
     analysis_prompt = f"""你是RNA-seq数据分析专家。请基于以下具体的技术指标生成专业的分析总结报告。
 
@@ -494,13 +507,14 @@ async def analysis_node(state: AgentState) -> Dict[str, Any]:
     
     try:
         # LLM基于具体指标生成分析
-        raw_response = await structured_llm.ainvoke([{"role": "user", "content": analysis_prompt}])
+        messages_input = {"messages": [{"role": "user", "content": analysis_prompt}]}
+        result = await agent_executor.ainvoke(messages_input)
+        structured_response = result.get("structured_response")
         
-        # 确保返回正确的AnalysisResponse类型
-        if isinstance(raw_response, dict):
-            analysis_response = AnalysisResponse(**raw_response)
+        if structured_response:
+            analysis_response = structured_response
         else:
-            analysis_response = raw_response
+            raise Exception("Agent未返回预期的结构化响应")
             
         # 确保技术指标被保留
         if not analysis_response.quality_metrics:

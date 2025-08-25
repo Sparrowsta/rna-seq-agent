@@ -68,8 +68,20 @@ async def run_interactive_session(agent):
     )
     
     try:
-        # 调用Agent - 从user_communication节点开始
-        result = await agent.ainvoke(initial_state)
+        # 使用流式调用 - 从user_communication节点开始
+        async for chunk in agent.astream(initial_state):
+            # 流式显示更新
+            for node_name, node_update in chunk.items():
+                if node_update and isinstance(node_update, dict):
+                    # 显示节点更新信息
+                    response = node_update.get("response", "")
+                    if response:
+                        print(f"🔄 [{node_name}]: {response}")
+                    
+                    status = node_update.get("status", "")
+                    if status:
+                        print(f"📊 状态更新: {status}")
+        
         print("🤖 会话结束")
         
     except KeyboardInterrupt:

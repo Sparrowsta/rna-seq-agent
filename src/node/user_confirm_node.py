@@ -60,6 +60,7 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
     print(f"{'='*60}")
     
     # 获取用户输入
+    user_choice = ""  # 初始化变量避免引用错误
     try:
         user_choice = input("请输入命令: ").strip()
         
@@ -106,10 +107,12 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
         
     except KeyboardInterrupt:
         print(f"\n⚠️ 用户中断，取消分析")
+        user_choice = "/cancel"  # 设置默认值避免引用错误
         user_decision = "cancel"
         decision_msg = "❌ 用户中断取消"
     except Exception as e:
         print(f"❌ 输入处理错误: {e}")
+        user_choice = "/cancel"  # 设置默认值避免引用错误
         user_decision = "cancel"
         decision_msg = "❌ 输入错误取消"
     
