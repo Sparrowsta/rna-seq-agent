@@ -48,28 +48,34 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
         # 处理用户输入 - 简化逻辑
         user_choice_lower = user_choice.lower()
         
+        # 定义replan等价命令
+        replan_prefixes = ['/replan', '/重新规划', '/修改']
+        is_replan_command = (user_choice_lower in replan_prefixes or 
+                            any(user_choice_lower.startswith(f"{prefix} ") for prefix in replan_prefixes))
+        
         if user_choice_lower in ['/execute', '/执行']:
             user_decision = "execute"
             decision_msg = "✅ 确认执行分析"
-        elif user_choice_lower in ['/quit', '/exit', 'quit', 'exit', '退出', 'bye']:
+        elif user_choice_lower in ['/quit', '/exit', '/退出', '/bye']:
             user_decision = "quit"
             decision_msg = "🚪 退出程序"
-        elif user_choice_lower in ['/replan', '/重新规划', '/修改'] or user_choice_lower.startswith('/replan '):
+        elif is_replan_command:
             user_decision = "replan"
             decision_msg = "🔄 重新规划配置"
             
-            # 处理/replan命令中的新需求
-            if user_choice_lower.startswith('/replan'):
-                # 智能提取/replan后面的内容，处理有无空格的情况
-                replan_content = user_choice_lower.replace('/replan', '', 1).strip()
-                if replan_content:
-                    print(f"📝 检测到新配置需求: {replan_content}")
-                    # 将新需求直接保存为user_requirements，让Plan节点的LLM来解析
-                    new_user_requirements = {"raw_input": replan_content}
-                else:
-                    # 纯/replan命令，清空旧需求
-                    new_user_requirements = {}
-                    print(f"📝 清空旧配置需求，重新规划")
+            # 处理replan等价命令中的新需求 - 优雅的参数提取
+            replan_content = ""
+            for prefix in replan_prefixes:
+                if user_choice_lower.startswith(prefix):
+                    replan_content = user_choice_lower.replace(prefix, '', 1).strip()
+                    break
+            
+            if replan_content:
+                print(f"📝 检测到新配置需求: {replan_content}")
+                new_user_requirements = {"raw_input": replan_content}
+            else:
+                print(f"📝 清空旧配置需求，重新规划")
+                new_user_requirements = {}
         elif user_choice_lower in ['/cancel', '/取消']:
             user_decision = "cancel"
             decision_msg = "❌ 取消分析"
