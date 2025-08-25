@@ -21,7 +21,8 @@ async def route_from_user_communication(state: AgentState) -> str:
 async def should_continue(state: AgentState) -> str:
     """决定是否继续执行"""
     plan = state.plan
-    if plan:
+    # plan现在是List[List[str]]格式，检查是否有任务组
+    if plan and any(group for group in plan):
         return "detect"
     else:
         return "prepare"

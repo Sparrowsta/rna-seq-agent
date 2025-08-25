@@ -18,7 +18,9 @@ class AgentState(BaseModel):
     query_response: str = Field(default="", description="查询响应内容")
     
     # === Plan分析字段 ===
-    plan: List[str] = Field(default=[], description="分析步骤计划")
+    plan: List[List[str]] = Field(default=[], description="并行任务组列表，每个组内任务串行执行")
+    group_descriptions: List[str] = Field(default=[], description="任务组功能描述")
+    execution_strategy: str = Field(default="parallel", description="执行策略")
     analysis_intent: str = Field(default="", description="分析目标意图")
     user_requirements: Dict[str, Any] = Field(default={}, description="初始用户配置需求(从user_communication来)")
     replan_requirements: Dict[str, Any] = Field(default={}, description="重新规划配置需求(从user_confirm来)")
@@ -57,7 +59,9 @@ class NormalResponse(BaseModel):
 
 class PlanResponse(BaseModel):
     """Plan节点的精简响应格式"""
-    plan: List[str] = Field(default=[], description="分析步骤计划")
+    plan: List[List[str]] = Field(default=[], description="并行任务组列表，每个组内任务串行执行")
+    group_descriptions: List[str] = Field(default=[], description="每个任务组的功能描述")
+    execution_strategy: str = Field(default="parallel", description="执行策略: parallel/sequential")
 
 class DetectResponse(BaseModel):
     """Detect节点的精简响应格式"""
