@@ -66,7 +66,25 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
 **核心任务：**
 1. **应用用户配置** - 优先级：重新规划需求 > 初始需求 > 系统推荐
 2. **FASTQ文件配对分析** - 基于fastq_analysis进行智能文件配对
-3. **基因组配置** - 对用户想要使用的基因组进行配置，没有则按照系统推荐。根据基因组是否存在，基因组索引是否构建来调整对应的配置字段
+**基因组配置 - 对用户想要使用的基因组进行配置，没有则按照系统推荐。根据基因组是否存在，基因组索引是否构建来调整对应的配置字段：
+
+**关键配置决策逻辑：**
+- **run_download_genome**: 
+  - 如果基因组文件(FASTA+GTF)都已存在 → 设为 false
+  - 如果基因组文件缺失或不完整 → 设为 true
+- **run_build_star_index**: 
+  - 如果STAR索引目录已存在且包含完整索引文件 → 设为 false  
+  - 如果STAR索引不存在或不完整 → 设为 true
+
+**基因组状态检查重点：**
+从系统检测数据的genome_analysis中查看：
+- 每个基因组的fasta_file.exists和gtf_file.exists状态
+- 每个基因组的star_index.exists状态和file_count
+- 优先选择文件完整且已有索引的基因组减少处理时间
+
+**示例决策：**
+- 如果hg19的FASTA/GTF存在且STAR索引已构建(file_count > 10) → run_download_genome: false, run_build_star_index: false
+- 如果用户指定基因组但文件不存在 → run_download_genome: true, run_build_star_index: true
 
 **FASTQ配对分析：**
 从fastq_analysis.file_paths分析文件名模式并使用完整路径：
@@ -95,15 +113,16 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
 **决策说明要求：**
 在config_reasoning中以文本格式详细说明：
 1. 用户需求如何被直接应用 (初始需求: [initial_requirements], 重新规划需求: [replan_requirements])  
-2. 系统检测结果在哪些字段被使用
-3. 每个关键配置的最终决策理由
+2. 基因组索引决策的详细分析 - **必须明确说明 run_download_genome 和 run_build_star_index 的设置理由**
+3. 系统检测结果在哪些字段被使用
+4. 每个关键配置的最终决策理由
 
 **返回JSON格式字段：**
 - nextflow_config: 完整的Nextflow配置参数字典
 - config_reasoning: 配置决策理由的详细文本说明（字符串格式，不是嵌套字典）
 
 **config_reasoning格式示例：**
-"基于用户需求分析：无特殊要求，采用系统推荐配置。基因组选择：hg19_test因文件完整性最佳。工具选择：fastp+STAR+featureCounts基于可用性检测。FASTQ配对：检测到3个双端样本，生成数组格式sample_groups。索引策略：现有STAR索引完整，无需重建。"
+"基于用户需求分析：用户指定hg19基因组进行分析。基因组配置检查：hg19 FASTA/GTF文件已存在，STAR索引已构建(15个文件)，因此设置 run_download_genome: false, run_build_star_index: false。工具选择：fastp+STAR+featureCounts基于用户要求和系统可用性。FASTQ配对：检测到3个双端样本，生成数组格式sample_groups。最终配置优化了处理时间，跳过不必要的下载和索引构建。"
 
 === 📊 系统检测数据 ===
 {json.dumps(detection_results, indent=2, ensure_ascii=False)}

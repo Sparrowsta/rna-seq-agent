@@ -61,7 +61,6 @@
     "fasta_path": "genomes/human/hg19_test/hg19_partial.fa",
     "gtf_path": "genomes/human/hg19_test/hg19_partial.gtf",
     "fasta_url": "",
-    "gtf_url": "",
-    "description": "小型测试数据集，用于快速开发测试"
+    "gtf_url": ""
   }
 }

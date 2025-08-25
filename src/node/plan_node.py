@@ -67,9 +67,9 @@ def _build_planning_prompt(state: AgentState, initial_requirements: dict, replan
 1. analyze_fastq_data - FASTQ数据分析和样本配对检测
 2. assess_system_readiness - 系统资源和环境准备度评估  
 3. verify_genome_setup - 基因组设置和文件完整性验证
-4. check_fastp_availability - 检测fastp工具可用性
-5. check_star_availability - 检测STAR工具可用性
-6. check_featurecounts_availability - 检测featureCounts工具可用性
+4. check_fastp_availability - 检测fastp工具可用性(初次必须)
+5. check_star_availability - 检测STAR工具可用性（初次必须）
+6. check_featurecounts_availability - 检测featureCounts工具可用性（初次必须）
 
 请返回JSON格式:
 - plan: 检测任务列表"""

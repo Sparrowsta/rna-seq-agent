@@ -479,6 +479,7 @@ def _format_genome_report(genome_data: dict) -> str:
     """格式化基因组数据为用户友好的报告"""
     total_genomes = genome_data.get("total_genomes", 0)
     genome_files = genome_data.get("genome_files", {})
+    highlighted_genome = genome_data.get("highlighted_genome")
     
     if total_genomes == 0:
         return "未找到基因组配置文件或配置为空"
@@ -492,12 +493,17 @@ def _format_genome_report(genome_data: dict) -> str:
         # 检查本地文件状态
         fasta_info = info.get('fasta_file', {})
         gtf_info = info.get('gtf_file', {})
-        star_index_info = info.get('star_index', {})
+        star_index_info = info.get('star_index', {}) or {}
         
         fasta_status = "✅ 已下载" if fasta_info.get('exists') else "❌ 未下载"
         gtf_status = "✅ 已下载" if gtf_info.get('exists') else "❌ 未下载"
         
-        result += f"🧬 {genome_id} ({species})\n"
+        # 高亮显示特定基因组
+        if highlighted_genome == genome_id:
+            result += f"🎯 **{genome_id} ({species})** [重点关注]\n"
+        else:
+            result += f"🧬 {genome_id} ({species})\n"
+            
         result += f"   - 版本: {version}\n"
         result += f"   - FASTA: {fasta_status}\n"
         result += f"   - GTF: {gtf_status}\n"
@@ -670,7 +676,7 @@ def scan_genome_files(mode: str = "normal", genome_id: str = None) -> Union[str,
             else:
                 return error_msg
         
-        # 如果指定了特定基因组，过滤数据
+        # 如果指定了特定基因组，验证存在性并标记
         if genome_id and genome_data.get("genome_files"):
             if genome_id not in genome_data["genome_files"]:
                 error_msg = f"未找到基因组配置: {genome_id}"
@@ -683,13 +689,8 @@ def scan_genome_files(mode: str = "normal", genome_id: str = None) -> Union[str,
                 else:
                     return error_msg
             
-            # 过滤为特定基因组
-            filtered_data = {
-                **genome_data,
-                "genome_files": {genome_id: genome_data["genome_files"][genome_id]},
-                "total_genomes": 1
-            }
-            genome_data = filtered_data
+            # 保持所有基因组信息，但标记特定基因组
+            genome_data["highlighted_genome"] = genome_id
         
         if mode == "detect":
             # Detect模式：返回结构化数据
@@ -705,7 +706,7 @@ def scan_genome_files(mode: str = "normal", genome_id: str = None) -> Union[str,
                     "name": name,
                     "species": info.get("species"),
                     "complete": is_complete,
-                    "has_star_index": info.get("star_index", {}).get("exists", False)
+                    "has_star_index": (info.get("star_index") or {}).get("exists", False)
                 })
             
             simplified_config = {

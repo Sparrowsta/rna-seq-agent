@@ -25,7 +25,29 @@ async def user_communication_node(state: AgentState) -> Dict[str, Any]:
                 "response": "再见！",
                 "status": "normal"
             }
-        elif user_input.lower() in ['/plan', '开始分析']:
+        elif user_input.lower().startswith('/plan'):
+            # 智能提取/plan后面的内容，处理有无空格的情况
+            plan_content = user_input.replace('/plan', '', 1).strip()
+            
+            if plan_content:
+                print(f"📝 检测到分析需求: {plan_content}")
+                # 将新需求直接保存为user_requirements，让Plan节点的LLM来解析
+                plan_user_requirements = {"raw_input": plan_content}
+                response_msg = f"进入分析计划流程...\n📝 分析需求: {plan_content}"
+            else:
+                # 纯/plan命令，无额外需求
+                plan_user_requirements = {}
+                response_msg = "进入分析计划流程..."
+                print("📝 纯/plan命令，无额外需求")
+            
+            return {
+                "messages": [{"role": "user", "content": user_input}], 
+                "routing_decision": "plan",
+                "response": response_msg,
+                "user_requirements": plan_user_requirements,  # 传递给plan节点
+                "status": "plan"
+            }
+        elif user_input.lower() in ['开始分析']:
             return {
                 "messages": [{"role": "user", "content": user_input}], 
                 "routing_decision": "plan",

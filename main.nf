@@ -268,7 +268,7 @@ process run_quality_control {
 process run_alignment {
     tag "比对: ${params.align_tool} - ${sample_id}"
     
-    publishDir "${params.data}/results/bam/${sample_id}", mode: 'copy', pattern: "*.{bam,bai}"
+    publishDir "${params.data}/results/bam/${sample_id}", mode: 'copy', pattern: "*.{bam,bai,star.log}"
     publishDir "${params.data}/logs", mode: 'copy', pattern: "*.done"
     
     input:
@@ -302,9 +302,11 @@ process run_alignment {
                 --outFileNamePrefix ${sample_id}. \\
                 --outSAMtype BAM SortedByCoordinate \\
                 --outSAMunmapped Within \\
-                --outSAMattributes Standard
+                --outSAMattributes Standard \\
+                --outReadsUnmapped Fastx
             
             mv ${sample_id}.Aligned.sortedByCoord.out.bam ${sample_id}.bam
+            mv ${sample_id}.Log.final.out ${sample_id}.star.log
             micromamba run -n align_env samtools index ${sample_id}.bam
             
             touch ${sample_id}.star.done
@@ -322,9 +324,11 @@ process run_alignment {
                 --outSAMunmapped Within \\
                 --outSAMattributes Standard \\
                 --outSAMstrandField intronMotif \\
-                --outFilterIntronMotifs RemoveNoncanonical
+                --outFilterIntronMotifs RemoveNoncanonical \\
+                --outReadsUnmapped Fastx
             
             mv ${sample_id}.Aligned.sortedByCoord.out.bam ${sample_id}.bam
+            mv ${sample_id}.Log.final.out ${sample_id}.star.log
             micromamba run -n align_env samtools index ${sample_id}.bam
             
             touch ${sample_id}.star.done
@@ -434,12 +438,14 @@ workflow {
     )
     
     // --- 4. 质控处理 (when条件自动处理) ---
-    qc_results_ch = run_quality_control(fastq_samples_ch)  // when: params.qc_tool != "none"
-    
-    // 混合原始和处理后的reads
-    processed_reads_ch = qc_results_ch.qc_reads.mix(
-        fastq_samples_ch.filter { params.qc_tool == "none" }
-    )
+    // 解决Channel消费冲突：需要先fork channel再使用
+    if (params.qc_tool != "none") {
+        qc_results_ch = run_quality_control(fastq_samples_ch)
+        processed_reads_ch = qc_results_ch.qc_reads
+    } else {
+        // 如果不进行质控，直接使用原始reads
+        processed_reads_ch = fastq_samples_ch
+    }
     
     // --- 5. 序列比对 (when条件自动处理) ---
     align_results_ch = run_alignment(
