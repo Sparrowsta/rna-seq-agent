@@ -200,6 +200,7 @@ def build_nextflow_command(nextflow_config: Dict[str, Any]) -> str:
     # 明确传递下载和构建参数（无论true还是false）
     cmd_parts.extend(["--run_download_genome", str(nextflow_config.get("run_download_genome", False)).lower()])
     cmd_parts.extend(["--run_build_star_index", str(nextflow_config.get("run_build_star_index", False)).lower()])
+    cmd_parts.extend(["--run_build_hisat2_index", str(nextflow_config.get("run_build_hisat2_index", False)).lower()])
     
     # 工作目录设置 - 使用相对路径
     cmd_parts.extend(["-work-dir", "work"])

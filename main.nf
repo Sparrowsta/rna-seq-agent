@@ -18,6 +18,7 @@ params.sample_groups = ""                   // Agent分析的样本配对信息(
 // === 基因组和索引控制 ===  
 params.run_download_genome = false          // 是否下载基因组
 params.run_build_star_index = false         // 是否构建STAR索引
+params.run_build_hisat2_index = false       // 是否构建HISAT2索引
 
 // === 工具选择参数（可扩展设计）===
 params.qc_tool = "fastp"                    // 质控工具: fastp, trimmomatic, none
@@ -44,6 +45,7 @@ def getGenomePaths(genome_version) {
         fasta_url: genome_config.fasta_url,
         gtf_url: genome_config.gtf_url,
         star_index: file(genome_config.fasta_path).getParent().resolve("star_index"),
+        hisat2_index: file(genome_config.fasta_path).getParent().resolve("hisat2_index"),
         species: genome_config.species,
         version: genome_config.version
     ]
@@ -209,6 +211,69 @@ process link_star_index {
     """
 }
 
+// HISAT2索引构建process - 在内存不足时替代STAR
+process build_hisat2_index {
+    tag "构建HISAT2索引: ${params.genome_version}"
+    
+    publishDir "${getGenomeDir(params.genome_version)}", mode: 'copy', pattern: "hisat2_index"
+    
+    input:
+    path fasta
+    path gtf
+    
+    output:
+    path "hisat2_index", emit: index_dir
+    path "hisat2_index.prepared", emit: status_file
+    
+    when:
+    params.run_build_hisat2_index
+    
+    script:
+    """
+    mkdir -p hisat2_index
+    
+    # 构建HISAT2索引
+    micromamba run -n align_env hisat2-build \\
+        -p ${task.cpus} \\
+        ${fasta} \\
+        hisat2_index/genome
+        
+    echo "HISAT2索引构建完成: ${params.genome_version}" > hisat2_index.prepared
+    """
+}
+
+// 链接本地HISAT2索引
+process link_hisat2_index {
+    tag "链接HISAT2索引: ${params.genome_version}"
+    
+    input:
+    path fasta
+    path gtf
+    
+    output:
+    path "hisat2_index", emit: index_dir
+    path "hisat2_index.prepared", emit: status_file
+    
+    when:
+    !params.run_build_hisat2_index
+    
+    script:
+    def local_genome_paths = getGenomePaths(params.genome_version)
+    def hisat2_index_path = local_genome_paths.hisat2_index.toString()
+    """
+    # 检查本地HISAT2索引是否存在
+    if [ ! -d "${hisat2_index_path}" ]; then
+        echo "错误: 本地HISAT2索引不存在: ${hisat2_index_path}"
+        echo "请运行 --run_build_hisat2_index true 构建索引"
+        exit 1
+    fi
+    
+    ln -s \$(realpath "${hisat2_index_path}") hisat2_index
+    
+    echo "本地HISAT2索引准备完成: ${params.genome_version}" > hisat2_index.prepared
+    """
+}
+
 // 统一的质控process - 支持工具选择
 process run_quality_control {
     tag "质控: ${params.qc_tool} - ${sample_id}"
@@ -268,7 +333,8 @@ process run_quality_control {
 process run_alignment {
     tag "比对: ${params.align_tool} - ${sample_id}"
     
-    publishDir "${params.data}/results/bam/${sample_id}", mode: 'copy', pattern: "*.{bam,bai,star.log}"
+    publishDir "${params.data}/results/bam/${sample_id}", mode: 'copy', pattern: "*.{bam,bai}"
+    publishDir "${params.data}/results/bam/${sample_id}", mode: 'copy', pattern: "*.{star.log,hisat2.log}"
     publishDir "${params.data}/logs", mode: 'copy', pattern: "*.done"
     
     input:
@@ -332,6 +398,55 @@ process run_alignment {
             micromamba run -n align_env samtools index ${sample_id}.bam
             
             touch ${sample_id}.star.done
+            """
+        } else {
+            error "无效的FASTQ文件配置: sample_id=${sample_id}, read1=${read1?.name}, read2=${read2?.name}, single=${read_single?.name}"
+        }
+    } else if (params.align_tool == "hisat2") {
+        // HISAT2 比对逻辑
+        // 重新组织reads参数
+        def read1 = reads.find { it.name.contains('_1.') || it.name.contains('_R1.') || it.name.endsWith('_1.fastq.gz') || it.name.contains('1.trimmed') }
+        def read2 = reads.find { it.name.contains('_2.') || it.name.contains('_R2.') || it.name.endsWith('_2.fastq.gz') || it.name.contains('2.trimmed') }
+        def read_single = reads.find { it.name.contains('.single.') }
+        
+        if (read_single && read_single.name != "NO_FILE") {
+            // 单端测序
+            """
+            micromamba run -n align_env hisat2 \\
+                -p ${task.cpus} \\
+                -x ${index_dir}/genome \\
+                -U ${read_single} \\
+                --summary-file ${sample_id}.hisat2.log \\
+                -S ${sample_id}.sam
+            
+            # 转换为BAM格式并排序
+            micromamba run -n align_env samtools sort -@ ${task.cpus} -o ${sample_id}.bam ${sample_id}.sam
+            micromamba run -n align_env samtools index ${sample_id}.bam
+            
+            # 清理临时文件
+            rm ${sample_id}.sam
+            
+            touch ${sample_id}.hisat2.done
+            """
+        } else if (read1 && read1.name != "NO_FILE" && read2 && read2.name != "NO_FILE") {
+            // 双端测序
+            """
+            micromamba run -n align_env hisat2 \\
+                -p ${task.cpus} \\
+                -x ${index_dir}/genome \\
+                -1 ${read1} \\
+                -2 ${read2} \\
+                --summary-file ${sample_id}.hisat2.log \\
+                -S ${sample_id}.sam
+            
+            # 转换为BAM格式并排序
+            micromamba run -n align_env samtools sort -@ ${task.cpus} -o ${sample_id}.bam ${sample_id}.sam
+            micromamba run -n align_env samtools index ${sample_id}.bam
+            
+            # 清理临时文件
+            rm ${sample_id}.sam
+            
+            touch ${sample_id}.hisat2.done
             """
         } else {
             error "无效的FASTQ文件配置: sample_id=${sample_id}, read1=${read1?.name}, read2=${read2?.name}, single=${read_single?.name}"
@@ -428,14 +543,29 @@ workflow {
         prepare_local_genome.out.genome_gtf
     )
     
-    // --- 3. 准备STAR索引 (when条件自动处理) ---
-    build_star_index(fasta_ch, gtf_ch)      // when: params.run_build_star_index
-    link_star_index(fasta_ch, gtf_ch)       // when: !params.run_build_star_index
-    
-    // 混合两个索引process的输出
-    star_index_ch = build_star_index.out.index_dir.mix(
-        link_star_index.out.index_dir
-    )
+    // --- 3. 准备比对索引 (根据align_tool动态选择) ---
+    if (params.align_tool == "star") {
+        // STAR索引处理
+        build_star_index(fasta_ch, gtf_ch)      // when: params.run_build_star_index
+        link_star_index(fasta_ch, gtf_ch)       // when: !params.run_build_star_index
+        
+        // 混合STAR索引process的输出
+        index_ch = build_star_index.out.index_dir.mix(
+            link_star_index.out.index_dir
+        )
+    } else if (params.align_tool == "hisat2") {
+        // HISAT2索引处理  
+        build_hisat2_index(fasta_ch, gtf_ch)    // when: params.run_build_hisat2_index
+        link_hisat2_index(fasta_ch, gtf_ch)     // when: !params.run_build_hisat2_index
+        
+        // 混合HISAT2索引process的输出
+        index_ch = build_hisat2_index.out.index_dir.mix(
+            link_hisat2_index.out.index_dir
+        )
+    } else {
+        // 如果align_tool为none，创建空channel
+        index_ch = Channel.empty()
+    }
     
     // --- 4. 质控处理 (when条件自动处理) ---
     // 解决Channel消费冲突：需要先fork channel再使用
@@ -450,7 +580,7 @@ workflow {
     // --- 5. 序列比对 (when条件自动处理) ---
     align_results_ch = run_alignment(
         processed_reads_ch,
-        star_index_ch
+        index_ch
     )  // when: params.align_tool != "none"
     
     // --- 6. 基因定量 (when条件自动处理) ---

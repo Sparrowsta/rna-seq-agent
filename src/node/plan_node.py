@@ -71,13 +71,14 @@ def _build_planning_prompt(state: AgentState, initial_requirements: dict, replan
 
     task_section = """
 
-**6个独立串行组设计**:
+**7个独立并行组设计**:
 1. 数据检测组: ["analyze_fastq_data"] - FASTQ数据分析和样本配对检测
 2. 系统检测组: ["assess_system_readiness"] - 系统资源和环境准备度评估  
 3. QC工具组: ["check_fastp_availability"] - 检测fastp工具可用性
-4. 比对工具组: ["check_star_availability"] - 检测STAR工具可用性
-5. 定量工具组: ["check_featurecounts_availability"] - 检测featureCounts工具可用性
-6. 基因组配置组: ["verify_genome_setup"] - 基因组设置和文件完整性验证
+4. STAR比对组: ["check_star_availability"] - 检测STAR工具可用性
+5. HISAT2比对组: ["check_hisat2_availability"] - 检测HISAT2工具可用性
+6. 定量工具组: ["check_featurecounts_availability"] - 检测featureCounts工具可用性
+7. 基因组配置组: ["verify_genome_setup"] - 基因组设置和文件完整性验证
 
 请返回JSON格式:
 - plan: [[组1任务列表], [组2任务列表], ...]
@@ -112,13 +113,14 @@ async def plan_node(state: AgentState) -> Dict[str, Any]:
             group_descriptions = structured_response.group_descriptions or []
             execution_strategy = structured_response.execution_strategy or "parallel"
                 
-            # 如果没有分组信息，使用默认6组分组
+            # 如果没有分组信息，使用默认7组分组
             if not task_groups:
                 task_groups = [
                     ["analyze_fastq_data"],
                     ["assess_system_readiness"],
                     ["check_fastp_availability"],
                     ["check_star_availability"],
+                    ["check_hisat2_availability"],
                     ["check_featurecounts_availability"],
                     ["verify_genome_setup"]
                 ]
@@ -126,7 +128,8 @@ async def plan_node(state: AgentState) -> Dict[str, Any]:
                     "数据检测组",
                     "系统检测组", 
                     "QC工具组",
-                    "比对工具组",
+                    "STAR比对组",
+                    "HISAT2比对组",
                     "定量工具组",
                     "基因组配置组"
                 ]
@@ -135,9 +138,21 @@ async def plan_node(state: AgentState) -> Dict[str, Any]:
             task_groups = [
                 ["analyze_fastq_data"],
                 ["assess_system_readiness"],
+                ["check_fastp_availability"],
+                ["check_star_availability"],
+                ["check_hisat2_availability"],
+                ["check_featurecounts_availability"],
                 ["verify_genome_setup"]
             ]
-            group_descriptions = ["数据检测组", "系统检测组", "基因组配置组"]
+            group_descriptions = [
+                "数据检测组", 
+                "系统检测组", 
+                "QC工具组",
+                "STAR比对组",
+                "HISAT2比对组", 
+                "定量工具组",
+                "基因组配置组"
+            ]
             execution_strategy = "parallel"
         
         if not task_groups:

@@ -809,6 +809,12 @@ def check_star_availability() -> dict:
     pass
 
 
+@tool_detection("HISAT2", "align_env", ["hisat2", "--version"])
+def check_hisat2_availability() -> dict:
+    """检测HISAT2工具可用性 - 使用装饰器"""
+    pass
+
+
 @tool_detection("featureCounts", "quant_env", ["featureCounts", "-v"])
 def check_featurecounts_availability() -> dict:
     """检测featureCounts工具可用性 - 使用装饰器"""

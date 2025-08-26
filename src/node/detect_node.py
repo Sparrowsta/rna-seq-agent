@@ -9,6 +9,7 @@ from ..tools import (
     scan_genome_files,
     check_fastp_availability,
     check_star_availability,
+    check_hisat2_availability,
     check_featurecounts_availability
 )
 from ..core import get_shared_llm
@@ -25,6 +26,7 @@ async def _execute_task_group(group_tasks: List[str], group_description: str) ->
         "verify_genome_setup": lambda: scan_genome_files(mode="detect"),
         "check_fastp_availability": check_fastp_availability,
         "check_star_availability": check_star_availability,
+        "check_hisat2_availability": check_hisat2_availability,
         "check_featurecounts_availability": check_featurecounts_availability
     }
     
@@ -92,6 +94,11 @@ def create_detection_agent():
             description="检测STAR比对工具的可用性。在micromamba环境中测试STAR命令是否可执行。"
         ),
         Tool(
+            name="check_hisat2_availability", 
+            func=check_hisat2_availability,
+            description="检测HISAT2比对工具的可用性。在micromamba环境中测试hisat2命令是否可执行。"
+        ),
+        Tool(
             name="check_featurecounts_availability",
             func=check_featurecounts_availability,
             description="检测featureCounts定量工具的可用性。在micromamba环境中测试featureCounts工具是否可执行。"
@@ -118,6 +125,7 @@ def create_detection_agent():
 - verify_genome_setup: 验证基因组配置
 - check_fastp_availability: 检测fastp工具
 - check_star_availability: 检测STAR工具
+- check_hisat2_availability: 检测HISAT2工具
 - check_featurecounts_availability: 检测featureCounts工具
 
 请按照计划列表执行检测，并返回JSON格式的结果。"""
