@@ -4,20 +4,156 @@ import asyncio
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from ..state import AgentState
 
-async def generate_runtime_config(nextflow_config: Dict[str, Any]) -> Dict[str, Any]:
+async def generate_nextflow_config(resource_config: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """生成动态的nextflow.config文件，包含资源配置"""
+    try:
+        config_dir = Path("/config")
+        config_dir.mkdir(exist_ok=True)
+        
+        # 基础配置模板
+        config_content = """// 动态生成的Nextflow配置文件
+// 基于LLM智能资源分配
+
+// 进程资源配置
+process {
+    // 默认配置
+    cpus = 1
+    memory = '2 GB'
+    
+    // 错误处理
+    errorStrategy = { task.exitStatus in [143,137,104,134,139] ? 'retry' : 'finish' }
+    maxRetries = 3
+    maxErrors = '-1'
+    
+"""
+
+        # 添加LLM智能分配的资源配置
+        if resource_config:
+            config_content += "    // LLM智能资源分配\n"
+            for process_name, config in resource_config.items():
+                cpus = config.get('cpus', 1)
+                memory = config.get('memory', '2 GB')
+                reasoning = config.get('reasoning', '默认配置')
+                
+                config_content += f"""    withName: '{process_name}' {{
+        cpus = {cpus}
+        memory = '{memory}'
+        // {reasoning}
+    }}
+    
+"""
+        else:
+            # 使用默认的硬编码配置
+            config_content += """    // 默认资源配置（LLM未生成资源分配）
+    withName: 'prepare_star_index' {
+        cpus = 8
+        memory = '32 GB'
+        // 索引构建CPU密集
+    }
+    
+    withName: 'run_quality_control' {
+        cpus = 8
+        memory = '16 GB'
+        // 质控处理
+    }
+    
+    withName: 'run_alignment' {
+        cpus = 8
+        memory = '32 GB'
+        // 序列比对
+    }
+    
+    withName: 'run_quantification' {
+        cpus = 8
+        memory = '16 GB'
+        // 基因定量
+    }
+    
+    withName: 'download_genome_fasta' {
+        cpus = 2
+        memory = '4 GB'
+        // FASTA下载
+    }
+    
+    withName: 'download_genome_gtf' {
+        cpus = 2
+        memory = '4 GB'
+        // GTF下载
+    }
+    
+"""
+
+        # 添加执行器和报告配置
+        config_content += """}
+
+// 执行配置
+executor {
+    name = 'local'
+}
+
+// 报告配置
+report {
+    enabled = true
+    file = 'results/nextflow/execution_report.html'
+    overwrite = true
+}
+
+timeline {
+    enabled = true
+    file = 'results/nextflow/execution_timeline.html'
+    overwrite = true
+}
+
+trace {
+    enabled = true
+    file = 'results/nextflow/execution_trace.txt'
+    overwrite = true
+    fields = 'task_id,hash,native_id,process,tag,name,status,exit,module,container,cpus,time,disk,memory,attempt,submit,start,complete,duration,realtime,queue,rss,vmem,peak_rss,peak_vmem,rchar,wchar,syscr,syscw,read_bytes,write_bytes'
+}
+"""
+
+        # 写入配置文件
+        config_file = config_dir / "nextflow.config"
+        with open(config_file, 'w', encoding='utf-8') as f:
+            f.write(config_content)
+        
+        # 计算配置统计
+        total_processes = len(resource_config) if resource_config else 6
+        total_cpus = sum(config.get('cpus', 1) for config in resource_config.values()) if resource_config else 'default'
+        
+        print(f"✅ Nextflow配置文件已生成: {config_file}")
+        print(f"📊 资源配置: {total_processes}个进程，总CPU分配: {total_cpus}")
+        
+        return {
+            "success": True, 
+            "config_file": str(config_file),
+            "process_count": total_processes,
+            "total_cpus": total_cpus
+        }
+        
+    except Exception as e:
+        print(f"❌ Nextflow配置生成失败: {e}")
+        return {"success": False, "error": str(e)}
+
+async def generate_runtime_config(nextflow_config: Dict[str, Any], resource_config: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
     """生成运行时配置文件"""
     try:
         config_dir = Path("/config")
         config_dir.mkdir(exist_ok=True)
         
+        # 明确处理resource_config的None情况
+        if resource_config is None:
+            resource_config = {}
+        
         # 创建运行时配置
         runtime_config = {
             "timestamp": datetime.now().isoformat(),
             "analysis_id": f"rna_seq_{int(time.time())}",
-            "nextflow_params": nextflow_config
+            "nextflow_params": nextflow_config,
+            "resource_config": resource_config
         }
         
         # 保存配置文件
@@ -108,6 +244,9 @@ async def execute_nextflow_pipeline(command: str) -> Dict[str, Any]:
             # 实时读取输出
             output_lines = []
             ssl_error_detected = False
+            
+            # 类型断言确保stdout不为None
+            assert process.stdout is not None, "stdout should not be None when PIPE is specified"
             
             while True:
                 line = await process.stdout.readline()
@@ -212,20 +351,41 @@ async def execute_node(state: AgentState) -> Dict[str, Any]:
     
     # 获取配置
     nextflow_config = state.nextflow_config or {}
+    resource_config = state.resource_config or {}
+    
     print(f"📊 **分析配置:**")
     for key, value in nextflow_config.items():
         print(f"   {key}: {value}")
+        
+    if resource_config:
+        print(f"🖥️ **资源配置:**")
+        for process, config in resource_config.items():
+            print(f"   {process}: {config.get('cpus')}核, {config.get('memory')}")
     
-    # 生成运行时配置文件
-    print(f"\n📝 **生成运行时配置...**")
-    config_result = await generate_runtime_config(nextflow_config)
+    # 生成动态的nextflow.config文件
+    print(f"\n⚙️ **生成Nextflow配置文件...**")
+    config_generation_result = await generate_nextflow_config(resource_config)
     
-    if not config_result["success"]:
+    if not config_generation_result["success"]:
         return {
             "nextflow_command": "",
             "execution_status": "failed",
-            "execution_output": f"配置生成失败: {config_result['error']}",
-            "execution_result": {"success": False, "error": config_result["error"]},
+            "execution_output": f"Nextflow配置生成失败: {config_generation_result['error']}",
+            "execution_result": {"success": False, "error": config_generation_result["error"]},
+            "response": "分析执行失败：Nextflow配置文件生成错误",
+            "status": "failed"
+        }
+    
+    # 生成运行时配置文件
+    print(f"\n📝 **生成运行时配置...**")
+    runtime_result = await generate_runtime_config(nextflow_config, resource_config)
+    
+    if not runtime_result["success"]:
+        return {
+            "nextflow_command": "",
+            "execution_status": "failed",
+            "execution_output": f"配置生成失败: {runtime_result['error']}",
+            "execution_result": {"success": False, "error": runtime_result["error"]},
             "response": "分析执行失败：配置生成错误",
             "status": "failed"
         }
@@ -246,12 +406,18 @@ async def execute_node(state: AgentState) -> Dict[str, Any]:
     
     # 生成响应消息
     if execution_result["success"]:
+        # 资源配置摘要
+        resource_summary = ""
+        if resource_config:
+            total_cpus = sum(config.get('cpus', 1) for config in resource_config.values())
+            resource_summary = f"\n   - 资源分配: {len(resource_config)}个进程，总CPU {total_cpus}核"
+        
         response_msg = f"""🎉 **RNA-seq分析执行成功！**
 
 📋 **执行摘要:**
    - 基因组版本: {nextflow_config.get('genome_version', 'unknown')}
    - 分析工具链: {nextflow_config.get('qc_tool', 'unknown')}-{nextflow_config.get('align_tool', 'unknown')}-{nextflow_config.get('quant_tool', 'unknown')}
-   - 执行时长: {execution_result.get('duration', 'unknown')}
+   - 执行时长: {execution_result.get('duration', 'unknown')}{resource_summary}
    - 输出目录: data/results/
 
 💡 **下一步:** 查看 data/results/ 目录中的分析结果"""

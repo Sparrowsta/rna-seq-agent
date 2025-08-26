@@ -31,6 +31,7 @@ class AgentState(BaseModel):
     
     # === Prepare配置字段 ===
     nextflow_config: Dict[str, Any] = Field(default={}, description="Nextflow配置参数")
+    resource_config: Dict[str, Dict[str, Any]] = Field(default={}, description="各进程的CPU和内存资源配置")
     config_reasoning: str = Field(default="", description="配置决策理由")
     
     # === UserConfirm确认字段 ===
@@ -71,6 +72,7 @@ class DetectResponse(BaseModel):
 class PrepareResponse(BaseModel):
     """Prepare节点的精简响应格式"""
     nextflow_config: Dict[str, Any] = Field(default={}, description="生成的Nextflow配置参数")
+    resource_config: Dict[str, Dict[str, Any]] = Field(default={}, description="各进程的CPU和内存资源配置")
     config_reasoning: str = Field(default="", description="配置决策理由")
 
 class AnalysisResponse(BaseModel):

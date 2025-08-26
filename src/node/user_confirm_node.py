@@ -9,6 +9,7 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
     
     # 展示当前配置摘要
     nextflow_config = state.nextflow_config or {}
+    resource_config = state.resource_config or {}
     config_reasoning = state.config_reasoning or "系统自动生成配置"
     
     print(f"\n📋 **配置摘要:**")
@@ -48,6 +49,30 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
                 print(f"   ⚙️ {key}: {value}")
     else:
         print(f"   ⚠️ 无配置信息")
+    
+    # 展示资源配置
+    if resource_config:
+        print(f"\n🖥️ **资源配置:**")
+        for process_name, config in resource_config.items():
+            cpus = config.get('cpus', 'N/A')
+            memory = config.get('memory', 'N/A')
+            reasoning = config.get('reasoning', '')
+            
+            # 格式化进程名称显示
+            display_name = {
+                'prepare_star_index': '🏗️ 索引构建',
+                'run_alignment': '🎯 序列比对', 
+                'run_quality_control': '🧹 质控处理',
+                'run_quantification': '📊 基因定量',
+                'download_genome_fasta': '⬇️ FASTA下载',
+                'download_genome_gtf': '⬇️ GTF下载'
+            }.get(process_name, f'⚙️ {process_name}')
+            
+            print(f"   {display_name}: {cpus}核, {memory}")
+            if reasoning:
+                print(f"      💭 {reasoning}")
+    else:
+        print(f"\n🖥️ **资源配置:** 使用默认设置")
     
     print(f"\n💭 **配置理由:**")
     print(f"   {config_reasoning}")
@@ -127,6 +152,7 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
     return {
         # 从prepare_node继承并传递
         "nextflow_config": nextflow_config,
+        "resource_config": resource_config,
         "config_reasoning": config_reasoning,
         
         # 当前节点输出

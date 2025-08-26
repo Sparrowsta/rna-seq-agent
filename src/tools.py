@@ -16,7 +16,7 @@ import time
 import subprocess
 from pathlib import Path
 from functools import wraps
-from typing import Dict, List, Any, Union, Callable
+from typing import Dict, List, Any, Union, Callable, Optional
 
 
 # ==================== 装饰器和辅助系统 ====================
@@ -650,7 +650,7 @@ def scan_fastq_files(mode: str = "normal", depth: str = "basic") -> Union[str, d
             return error_msg
 
 
-def scan_genome_files(mode: str = "normal", genome_id: str = None) -> Union[str, dict]:
+def scan_genome_files(mode: str = "normal", genome_id: Optional[str] = None) -> Union[str, dict]:
     """统一基因组文件扫描工具 - 支持双模式输出
     
     Args:
