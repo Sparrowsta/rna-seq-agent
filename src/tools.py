@@ -158,8 +158,7 @@ def get_system_info() -> Dict[str, Any]:
         return {
             "detection_status": "success",
             "cpu": {
-                "physical_cores": cpu_count,
-                "logical_cores": logical_count,
+                "total_cpus": cpu_count,  # 使用total_cpus匹配Prepare节点提示词
                 "frequency_mhz": cpu_freq.current if cpu_freq else None
             },
             "memory": {
@@ -537,8 +536,7 @@ def _format_system_report(system_info: dict) -> str:
     load_info = system_info.get("load", {})
     
     result += "🔧 **CPU资源:**\n"
-    result += f"   - 物理核心: {cpu_info.get('physical_cores', 0)} 个\n"
-    result += f"   - 逻辑核心: {cpu_info.get('logical_cores', 0)} 个\n"
+    result += f"   - 物理核心: {cpu_info.get('total_cpus', 0)} 个\n"
     if cpu_info.get('frequency_mhz'):
         result += f"   - 基础频率: {cpu_info['frequency_mhz']:.0f} MHz\n"
     
@@ -562,7 +560,7 @@ def _format_system_report(system_info: dict) -> str:
     # 添加资源评估建议
     result += "\n💡 **资源评估:**\n"
     total_gb = memory_info.get('total_gb', 0)
-    cpu_cores = cpu_info.get('physical_cores', 0)
+    cpu_cores = cpu_info.get('total_cpus', 0)
     
     if total_gb >= 16:
         result += "   - 内存充足，支持大型基因组分析\n"

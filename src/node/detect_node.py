@@ -1,8 +1,6 @@
 from typing import Dict, Any, List
 import asyncio
-from ..state import AgentState, DetectResponse
-from langgraph.prebuilt import create_react_agent
-from langchain.tools import Tool
+from ..state import AgentState
 from ..tools import (
     scan_fastq_files,
     scan_system_resources,
@@ -12,14 +10,17 @@ from ..tools import (
     check_hisat2_availability,
     check_featurecounts_availability
 )
-from ..core import get_shared_llm
 
 
 async def _execute_task_group(group_tasks: List[str], group_description: str) -> Dict[str, Any]:
-    """执行单个任务组中的所有任务（组内串行执行）"""
+    """执行单个任务组中的所有任务（组内串行执行）
+    
+    采用硬编码任务映射策略，确保执行稳定性和可预测性。
+    每个检测任务都有明确的实现，避免复杂的动态调度。
+    """
     print(f"🔄 开始执行{group_description}: {group_tasks}")
     
-    # 任务名称到函数的映射
+    # 硬编码任务映射 - 每个任务对应明确的检测函数
     task_mapping = {
         "analyze_fastq_data": lambda: scan_fastq_files(mode="detect", depth="detailed"),
         "assess_system_readiness": lambda: scan_system_resources(mode="detect"),
@@ -62,85 +63,8 @@ async def _execute_task_group(group_tasks: List[str], group_description: str) ->
     }
 
 
-def create_detection_agent():
-    """创建检测执行Agent（保留用于向后兼容）"""
-    llm = get_shared_llm()
-    
-    # 直接定义检测工具列表
-    tools = [
-        Tool(
-            name="analyze_fastq_data",
-            func=lambda query="": scan_fastq_files(mode="detect", depth="detailed"),
-            description="扫描和分析FASTQ文件。收集项目中所有FASTQ文件的信息，包括文件大小、样本配对关系、测序类型等。"
-        ),
-        Tool(
-            name="assess_system_readiness", 
-            func=lambda query="": scan_system_resources(mode="detect"),
-            description="检测系统硬件资源。评估CPU核心数、内存容量、磁盘空间、系统负载等硬件信息。"
-        ),
-        Tool(
-            name="verify_genome_setup",
-            func=lambda query="": scan_genome_files(mode="detect"), 
-            description="验证基因组文件配置。检查已配置基因组的FASTA文件、GTF文件、STAR索引文件的存在性和完整性。"
-        ),
-        Tool(
-            name="check_fastp_availability",
-            func=check_fastp_availability,
-            description="检测fastp质控工具的可用性。在micromamba环境中测试fastp命令是否可执行。"
-        ),
-        Tool(
-            name="check_star_availability", 
-            func=check_star_availability,
-            description="检测STAR比对工具的可用性。在micromamba环境中测试STAR命令是否可执行。"
-        ),
-        Tool(
-            name="check_hisat2_availability", 
-            func=check_hisat2_availability,
-            description="检测HISAT2比对工具的可用性。在micromamba环境中测试hisat2命令是否可执行。"
-        ),
-        Tool(
-            name="check_featurecounts_availability",
-            func=check_featurecounts_availability,
-            description="检测featureCounts定量工具的可用性。在micromamba环境中测试featureCounts工具是否可执行。"
-        )
-    ]
-    
-    system_prompt = """你是检测执行专家。你的任务是根据计划列表，智能执行检测任务并收集结果。
-
-执行原则：
-1. 按计划列表中的任务名称，依次调用对应的检测工具
-2. 对于每个任务，只调用一次相应的工具
-3. 如果检测失败，记录错误但继续执行其他任务
-4. 收集所有检测结果，整合成统一的数据结构
-
-返回格式示例：
-{
-  "query_results": {"检测结果按任务整理": "工具已优化输出格式"},
-  "query_summary": "检测完成：基因组hg19可用，工具就绪，发现6个FASTQ文件"
-}
-
-可用的检测工具：
-- analyze_fastq_data: 分析FASTQ文件
-- assess_system_readiness: 检测系统资源
-- verify_genome_setup: 验证基因组配置
-- check_fastp_availability: 检测fastp工具
-- check_star_availability: 检测STAR工具
-- check_hisat2_availability: 检测HISAT2工具
-- check_featurecounts_availability: 检测featureCounts工具
-
-请按照计划列表执行检测，并返回JSON格式的结果。"""
-    
-    agent = create_react_agent(
-        model=llm,
-        tools=tools,
-        prompt=system_prompt,
-        response_format=DetectResponse
-    )
-    return agent
-
-
 async def detect_node(state: AgentState) -> Dict[str, Any]:
-    """Detect节点 - 并行执行任务组检测"""
+    """Detect节点 - 直接并行执行任务组检测（硬编码策略，确保稳定性）"""
     
     # 获取任务组信息（plan现在直接是List[List[str]]格式）
     task_groups = getattr(state, 'plan', [])

@@ -43,8 +43,17 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
                 download_status = "是" if value else "否"
                 print(f"   ⬇️ 下载基因组: {download_status}")
             elif key == "run_build_star_index":
-                build_status = "是" if value else "否"
-                print(f"   🏗️ 构建索引: {build_status}")
+                # 只有当比对工具是STAR时才显示STAR索引构建状态
+                align_tool = nextflow_config.get("align_tool", "").lower()
+                if align_tool == "star":
+                    build_status = "是" if value else "否"
+                    print(f"   🏗️ 构建STAR索引: {build_status}")
+            elif key == "run_build_hisat2_index":
+                # 只有当比对工具是HISAT2时才显示HISAT2索引构建状态  
+                align_tool = nextflow_config.get("align_tool", "").lower()
+                if align_tool == "hisat2":
+                    build_status = "是" if value else "否"
+                    print(f"   🏗️ 构建HISAT2索引: {build_status}")
             else:
                 print(f"   ⚙️ {key}: {value}")
     else:
@@ -60,7 +69,8 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
             
             # 格式化进程名称显示
             display_name = {
-                'prepare_star_index': '🏗️ 索引构建',
+                'prepare_star_index': '🏗️ STAR索引构建',
+                'prepare_hisat2_index': '🏗️ HISAT2索引构建',
                 'run_alignment': '🎯 序列比对', 
                 'run_quality_control': '🧹 质控处理',
                 'run_quantification': '📊 基因定量',

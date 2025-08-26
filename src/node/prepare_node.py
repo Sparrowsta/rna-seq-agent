@@ -130,9 +130,9 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
 
 **资源分配策略：**
 1. **系统资源评估** - 从system_resources获取：
-   - total_cpus: 总CPU核心数
-   - total_memory_gb: 总内存（GB）
-   - disk_space_gb: 磁盘空间（GB）
+   - CPU核心数：从cpu.cores获取（物理核心数）
+   - total_memory_gb: 总内存（GB，从memory.total_gb获取）
+   - disk_space_gb: 磁盘空间（GB，从disk.total_gb获取）
 
 2. **样本规模分析** - 从fastq_analysis获取：
    - total_files_found: FASTQ文件总数
@@ -143,7 +143,7 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
    - **CPU分配原则**: 不超过total_cpus的80%，预留20%给系统
    - **内存分配原则**: 基于文件大小和进程类型智能调整
    - **进程优先级**: prepare_star_index > run_alignment > run_quality_control > run_quantification
-   - **工具基本要求**: 如果使用“star”工具，则内存分配至少要32GB
+   - **工具基本要求**: 如果使用"star"工具，则内存分配至少要32GB
 4. **具体分配策略：**
    ```
    # STAR工具资源需求（高性能）
@@ -167,8 +167,8 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
 
 6. **文件大小适配：**
    - 大文件(>2GB): 内存需求 × 1.5倍
-   - 小文件(<500MB): 内存需求 × 0.8倍
-   - 样本数量>5个: CPU需求 × 1.2倍（并行处理优势）
+   - 小文件(<500MB): 内存需求 × 0.8倍  
+   - 样本数量>5个: CPU需求 × 1.2倍（但不能超过total_cpus）
 
 **resource_config输出格式：**
 必须生成字典格式，包含每个进程的资源配置：
