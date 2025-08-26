@@ -417,7 +417,7 @@ async def map_analysis_to_agent_state(analysis_response: AnalysisResponse, state
         "messages": state.messages,
         "input": state.input,
         "response": analysis_response.analysis_summary,
-        "status": "analysis_complete",
+        "status": "user_communication",
         "analysis_summary": analysis_response.analysis_summary,
         "analysis_insights": analysis_response.analysis_insights,
         "result_files": analysis_response.result_files,

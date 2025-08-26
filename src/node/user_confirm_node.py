@@ -159,7 +159,7 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
         "confirmation_message": confirmation_message,
         "user_decision": user_decision,
         "response": decision_msg,
-        "status": "confirm",
+        "status": user_decision,
         
         # 重新规划时设置replan需求，保持初始user_requirements不变
         "user_requirements": getattr(state, 'user_requirements', {}),  # 保持初始需求

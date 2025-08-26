@@ -436,5 +436,5 @@ async def execute_node(state: AgentState) -> Dict[str, Any]:
         "execution_output": execution_result.get("output", ""),
         "execution_result": execution_result,
         "response": response_msg,
-        "status": "execute"
-    }
+        "status": "analysis"  
+        }

@@ -186,7 +186,7 @@ async def plan_node(state: AgentState) -> Dict[str, Any]:
         "group_descriptions": group_descriptions,
         "execution_strategy": execution_strategy,
         "response": response_message,
-        "status": "plan",
+        "status": "detect",
         "user_requirements": initial_requirements,  # 保持初始需求
         "replan_requirements": replan_requirements  # 传递重新规划需求
     }
