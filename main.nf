@@ -282,7 +282,7 @@ process run_quality_control {
     publishDir "${params.data}/logs", mode: 'copy', pattern: "*.done"
     
     input:
-    tuple val(sample_id), path(read1), path(read2), path(read_single)
+    tuple val(sample_id), path(read1), path(read2)
     
     output:
     tuple val(sample_id), path("${sample_id}_*trimmed.fastq.gz"), emit: qc_reads, optional: true
@@ -295,19 +295,7 @@ process run_quality_control {
     script:
     // 根据工具选择直接执行相应逻辑
     if (params.qc_tool == "fastp") {
-        if (read_single && read_single.name != "NO_FILE") {
-            // 单端测序
-            """
-            micromamba run -n qc_env fastp \\
-                -i ${read_single} \\
-                -o ${sample_id}.single.trimmed.fastq.gz \\
-                --html ${sample_id}.fastp.html \\
-                --json ${sample_id}.fastp.json \\
-                --thread ${task.cpus}
-            
-            touch ${sample_id}.fastp.done
-            """
-        } else if (read1 && read1.name != "NO_FILE" && read2 && read2.name != "NO_FILE") {
+        if (read1 && read1.name != "NO_FILE" && read2 && read2.name != "NO_FILE") {
             // 双端测序
             """
             micromamba run -n qc_env fastp \\
@@ -321,8 +309,20 @@ process run_quality_control {
             
             touch ${sample_id}.fastp.done
             """
+        } else if (read1 && read1.name != "NO_FILE") {
+            // 单端测序 (read2为NO_FILE或null)
+            """
+            micromamba run -n qc_env fastp \\
+                -i ${read1} \\
+                -o ${sample_id}.single.trimmed.fastq.gz \\
+                --html ${sample_id}.fastp.html \\
+                --json ${sample_id}.fastp.json \\
+                --thread ${task.cpus}
+            
+            touch ${sample_id}.fastp.done
+            """
         } else {
-            error "无效的FASTQ文件配置: sample_id=${sample_id}, read1=${read1?.name}, read2=${read2?.name}, single=${read_single?.name}"
+            error "无效的FASTQ文件配置: sample_id=${sample_id}, read1=${read1?.name}, read2=${read2?.name}"
         }
     } else {
         error "不支持的质控工具: ${params.qc_tool}"
@@ -400,7 +400,7 @@ process run_alignment {
             touch ${sample_id}.star.done
             """
         } else {
-            error "无效的FASTQ文件配置: sample_id=${sample_id}, read1=${read1?.name}, read2=${read2?.name}, single=${read_single?.name}"
+            error "无效的FASTQ文件配置: sample_id=${sample_id}, reads=${reads*.name}"
         }
     } else if (params.align_tool == "hisat2") {
         // HISAT2 比对逻辑
@@ -449,7 +449,7 @@ process run_alignment {
             touch ${sample_id}.hisat2.done
             """
         } else {
-            error "无效的FASTQ文件配置: sample_id=${sample_id}, read1=${read1?.name}, read2=${read2?.name}, single=${read_single?.name}"
+            error "无效的FASTQ文件配置: sample_id=${sample_id}, reads=${reads*.name}"
         }
     } else {
         error "不支持的比对工具: ${params.align_tool}"
@@ -524,10 +524,9 @@ workflow {
         .map { group ->
             def sample_id = group.sample_id
             def read1 = group.read1 ? file(group.read1) : file("NO_FILE")
-            def read2 = group.read2 ? file(group.read2) : file("NO_FILE") 
-            def single = (!group.read2 && group.read1) ? file(group.read1) : file("NO_FILE")
+            def read2 = group.read2 ? file(group.read2) : file("NO_FILE")
             
-            return [sample_id, read1, read2, single]
+            return [sample_id, read1, read2]
         }
 
     // --- 2. 准备基因组数据 (when条件自动处理) ---

@@ -62,7 +62,7 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
 **配置决策优先级：**
 1. **用户指定工具绝对优先** - 如用户明确指定align_tool，必须使用用户选择，不得自动覆盖
 2. **重新规划需求绝对优先** - 如存在重新规划需求，优先采用
-3. **初始需求作为基础** - 初始需求作为基础配置参考
+3. **初始需求作为基础** - 初始需求作为基础配置参考，优先于系统推荐
 4. **智能工具选择** - 仅在用户未指定工具时，基于系统资源自动选择
 5. **技术可行性适配** - 确保配置在技术上可行
 6. **系统智能推荐** - 仅在用户未指定的配置项使用检测推荐值
@@ -101,25 +101,49 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
 - **用户未指定且内存<32GB，HISAT2可用** → align_tool: "hisat2"，设置对应索引构建参数
 - **重要**：用户指定的工具选择具有绝对优先级，不受内存限制影响，但需在reasoning中说明潜在风险
 
-**FASTQ配对分析：**
+**FASTQ配对分析和样本筛选：**
 从fastq_analysis.file_paths分析文件名模式并使用完整路径：
 - 双端：sample_1.fastq.gz + sample_2.fastq.gz  
 - 双端：sample_R1.fastq.gz + sample_R2.fastq.gz
 - 单端：sample.fastq.gz
+
+**样本筛选规则（重要）：**
+根据用户需求智能筛选合适的样本：
+- 用户指定"单端测序样本N个" → 只选择N个单端样本，忽略所有双端样本
+- 用户指定"双端测序样本N个" → 只选择N个双端样本，忽略所有单端样本  
+- 用户指定"使用所有样本" → 使用所有检测到的样本
+- 用户未明确指定 → 使用所有检测到的样本
+- 用户指定特定的样本 → 使用用户所指定的样本
+
+**样本优先级排序：**
+- 单端样本按文件名字母排序
+- 双端样本按样本名字母排序
 - **重要：必须使用file_paths中的完整路径，如"fastq/SRR17469061_1.fastq.gz"**
 
 **sample_groups格式要求（重要）：**
 必须生成数组格式，每个元素包含sample_id、read1、read2字段，使用完整文件路径：
+
+**双端数据示例：**
 [
   {{"sample_id": "SRR17469061", "read1": "fastq/SRR17469061_1.fastq.gz", "read2": "fastq/SRR17469061_2.fastq.gz"}},
   {{"sample_id": "SRR17469059", "read1": "fastq/SRR17469059_1.fastq.gz", "read2": "fastq/SRR17469059_2.fastq.gz"}}
 ]
-注意：不是字典格式，是数组格式
+
+**单端数据示例：**
+[
+  {{"sample_id": "SRR30476759", "read1": "fastq/SRR30476759.fastq", "read2": null}},
+  {{"sample_id": "SRR30476760", "read1": "fastq/SRR30476760.fastq", "read2": null}}
+]
+
+**关键规则：**
+- 双端数据：read1和read2都有文件路径
+- 单端数据：read1有文件路径，read2为null
+- 注意：不是字典格式，是数组格式
 
 **必需配置字段：**
 - genome_version, species: 基因组相关（优先使用用户指定值）
 - qc_tool, align_tool, quant_tool: 工具链（小写，智能选择或用户指定）
-- paired_end: 是否包含双端数据
+- paired_end: 基于实际选择的样本类型决定（如果选择的样本中包含双端数据则为true，全为单端则为false）
 - sample_groups: 详细样本配对信息
 - run_build_star_index: STAR索引构建控制
 - run_build_hisat2_index: HISAT2索引构建控制  
@@ -142,16 +166,16 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
 3. **智能资源分配规则：**
    - **CPU分配原则**: 不超过total_cpus的80%，预留20%给系统
    - **内存分配原则**: 基于文件大小和进程类型智能调整
-   - **进程优先级**: prepare_star_index > run_alignment > run_quality_control > run_quantification
+   - **进程优先级**: build_star_index > run_alignment > run_quality_control > run_quantification
    - **工具基本要求**: 如果使用"star"工具，则内存分配至少要32GB
 4. **具体分配策略：**
    ```
    # STAR工具资源需求（高性能）
-   prepare_star_index: max(总CPU*0.6, 4核), 至少32GB内存(STAR工具要求)
+   build_star_index: max(总CPU*0.6, 4核), 至少32GB内存(STAR工具要求)
    run_alignment(STAR): max(总CPU*0.5, 4核), 至少32GB内存(STAR工具要求)
    
    # HISAT2工具资源需求（内存友好）
-   prepare_hisat2_index: max(总CPU*0.4, 2核), max(总内存*0.25, 8GB)
+   build_hisat2_index: max(总CPU*0.4, 2核), max(总内存*0.25, 8GB)
    run_alignment(HISAT2): max(总CPU*0.4, 2核), max(总内存*0.25, 8GB)
    
    # 通用进程资源需求
@@ -161,8 +185,8 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
    ```
 
 5. **工具特化内存要求：**
-   - **STAR工具**: prepare_star_index和run_alignment进程强制最少32GB内存
-   - **HISAT2工具**: prepare_hisat2_index和run_alignment进程需要8-16GB内存
+   - **STAR工具**: build_star_index和run_alignment进程强制最少32GB内存
+   - **HISAT2工具**: build_hisat2_index和run_alignment进程需要8-16GB内存
    - **智能切换**: 系统内存<32GB时，自动选择HISAT2并调整资源配置
 
 6. **文件大小适配：**
@@ -176,24 +200,28 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
 **STAR工具的资源配置示例（系统内存充足）：**
 ```json
 {{
-  "prepare_star_index": {{"cpus": 8, "memory": "32 GB", "reasoning": "STAR索引构建，系统内存充足32GB+"}},
+  "build_star_index": {{"cpus": 8, "memory": "32 GB", "reasoning": "STAR索引构建，系统内存充足32GB+"}},
+  "link_star_index": {{"cpus": 1, "memory": "2 GB", "reasoning": "STAR索引链接，轻量级IO操作"}},
   "run_alignment": {{"cpus": 6, "memory": "32 GB", "reasoning": "STAR比对，高性能模式"}}, 
   "run_quality_control": {{"cpus": 4, "memory": "12 GB", "reasoning": "质控处理中等资源需求"}},
   "run_quantification": {{"cpus": 3, "memory": "8 GB", "reasoning": "定量分析轻量级处理"}},
   "download_genome_fasta": {{"cpus": 2, "memory": "4 GB", "reasoning": "IO密集型下载任务"}},
-  "download_genome_gtf": {{"cpus": 2, "memory": "4 GB", "reasoning": "IO密集型下载任务"}}
+  "download_genome_gtf": {{"cpus": 2, "memory": "4 GB", "reasoning": "IO密集型下载任务"}},
+  "prepare_local_genome": {{"cpus": 1, "memory": "2 GB", "reasoning": "本地基因组准备，IO操作"}}
 }}
 ```
 
 **HISAT2工具的资源配置示例（系统内存不足）：**
 ```json
 {{
-  "prepare_hisat2_index": {{"cpus": 4, "memory": "8 GB", "reasoning": "HISAT2索引构建，内存友好模式"}},
+  "build_hisat2_index": {{"cpus": 4, "memory": "8 GB", "reasoning": "HISAT2索引构建，内存友好模式"}},
+  "link_hisat2_index": {{"cpus": 1, "memory": "2 GB", "reasoning": "HISAT2索引链接，轻量级IO操作"}},
   "run_alignment": {{"cpus": 4, "memory": "8 GB", "reasoning": "HISAT2比对，适配低内存环境"}}, 
   "run_quality_control": {{"cpus": 4, "memory": "12 GB", "reasoning": "质控处理中等资源需求"}},
   "run_quantification": {{"cpus": 3, "memory": "8 GB", "reasoning": "定量分析轻量级处理"}},
   "download_genome_fasta": {{"cpus": 2, "memory": "4 GB", "reasoning": "IO密集型下载任务"}},
-  "download_genome_gtf": {{"cpus": 2, "memory": "4 GB", "reasoning": "IO密集型下载任务"}}
+  "download_genome_gtf": {{"cpus": 2, "memory": "4 GB", "reasoning": "IO密集型下载任务"}},
+  "prepare_local_genome": {{"cpus": 1, "memory": "2 GB", "reasoning": "本地基因组准备，IO操作"}}
 }}
 ```
 

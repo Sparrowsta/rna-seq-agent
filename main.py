@@ -28,20 +28,7 @@ def load_environment():
     else:
         print(f"⚠️ 基因组配置文件不存在: {genomes_file}")
     
-    # 检查Nextflow配置（如果有）
-    nextflow_config = Path("/config/nextflow.config")
-    if nextflow_config.exists():
-        print(f"✅ Nextflow配置文件存在: {nextflow_config}")
-    else:
-        print(f"💡 Nextflow配置文件不存在: {nextflow_config} (可选)")
-    
-    # 验证环境变量（Docker --env-file 注入）
-    if not os.environ.get("DEEPSEEK_API_KEY"):
-        print("❌ 错误: 未找到DEEPSEEK_API_KEY环境变量")
-        print("请确保config/.env文件存在且包含: DEEPSEEK_API_KEY=your-api-key")
-        sys.exit(1)
-    else:
-        print("✅ 环境变量配置正确")
+   
 
 
 def create_deepseek_llm():

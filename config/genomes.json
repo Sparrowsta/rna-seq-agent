@@ -54,13 +54,5 @@
     "gtf_path": "genomes/zebrafish/danRer11/danRer11.ncbiRefSeq.gtf",
     "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/danRer11/bigZips/danRer11.fa.gz",
     "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/danRer11/bigZips/genes/danRer11.ncbiRefSeq.gtf.gz"
-  },
-  "hg19_test": {
-    "species": "human",
-    "version": "hg19_test",
-    "fasta_path": "genomes/human/hg19_test/hg19_partial.fa",
-    "gtf_path": "genomes/human/hg19_test/hg19_partial.gtf",
-    "fasta_url": "",
-    "gtf_url": ""
   }
 }

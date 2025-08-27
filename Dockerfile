@@ -70,9 +70,8 @@ COPY main.nf /
 COPY main.py /
 COPY src/ /src/
 
-# 12. 复制静态配置文件到镜像（不包含.env）
+# 12. 复制静态配置文件到镜像
 COPY config/genomes.json /config/genomes.json
-COPY config/nextflow.config /config/nextflow.config
 
 # data目录和.env文件将通过volume映射和环境变量传入
 

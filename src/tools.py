@@ -967,105 +967,135 @@ def get_project_overview(query: str = "") -> str:
 
 
 def list_analysis_history(query: str = "") -> str:
-    """历史分析管理 - 浏览和管理已完成的分析"""
+    """历史分析管理 - 基于新的归档文件夹系统"""
     try:
         result = "📈 **分析历史记录**\n\n"
         
-        results_dir = Path("data/results")
-        if not results_dir.exists():
+        # 只检查新的reports归档文件夹
+        reports_dir = Path("reports")
+        if not reports_dir.exists():
             return "📭 暂无分析历史记录\n\n💡 完成首次分析后，历史记录将显示在这里"
         
-        # 扫描结果目录
-        analysis_dirs = []
-        for item in results_dir.iterdir():
-            if item.is_dir() and not item.name.startswith('.'):
-                analysis_dirs.append(item)
+        # 扫描时间戳格式的归档文件夹
+        archive_folders = []
+        for item in reports_dir.iterdir():
+            if item.is_dir() and not item.name.startswith('.') and item.name != "latest":
+                # 检查是否是时间戳格式 (YYYYMMDD_HHMMSS)
+                if len(item.name) == 15 and item.name[8] == '_':
+                    try:
+                        timestamp = datetime.strptime(item.name, "%Y%m%d_%H%M%S")
+                        archive_folders.append({
+                            "path": item,
+                            "timestamp": timestamp,
+                            "name": item.name
+                        })
+                    except ValueError:
+                        continue
         
-        if not analysis_dirs:
-            return "📭 results目录存在但无分析记录\n\n💡 运行分析后结果将保存在data/results/目录"
+        if not archive_folders:
+            return "📭 reports目录存在但无归档记录\n\n💡 运行分析后结果将自动归档到reports/时间戳/目录"
         
-        # 按修改时间排序（最新在前）
-        analysis_dirs.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+        # 按时间排序（最新在前）
+        archive_folders.sort(key=lambda x: x["timestamp"], reverse=True)
         
-        result += f"📂 **发现 {len(analysis_dirs)} 个分析记录:**\n\n"
+        result += f"📂 **发现 {len(archive_folders)} 个归档分析:**\n\n"
         
-        for i, analysis_dir in enumerate(analysis_dirs):
-            if i >= 10:  # 只显示前10个最新的分析
+        for i, archive in enumerate(archive_folders):
+            if i >= 15:  # 显示前15个最新的分析
                 break
+            
+            archive_path = archive["path"]
+            timestamp_str = archive["timestamp"].strftime("%Y-%m-%d %H:%M:%S")
+            
+            result += f"📋 **{archive['name']}**\n"
+            result += f"   - 分析时间: {timestamp_str}\n"
+            
+            # 检查归档文件内容
+            files_info = []
+            file_sizes = {}
+            
+            json_report = archive_path / "analysis_report.json"
+            md_report = archive_path / "analysis_summary.md" 
+            runtime_config = archive_path / "runtime_config.json"
+            exec_log = archive_path / "execution_log.txt"
+            
+            if json_report.exists():
+                files_info.append("JSON报告")
+                file_sizes["json"] = json_report.stat().st_size / 1024  # KB
+            
+            if md_report.exists():
+                files_info.append("Markdown报告")
+                file_sizes["md"] = md_report.stat().st_size / 1024
                 
-            dir_name = analysis_dir.name
-            modification_time = analysis_dir.stat().st_mtime
+            if runtime_config.exists():
+                files_info.append("配置文件")
+                file_sizes["config"] = runtime_config.stat().st_size / 1024
+                
+            if exec_log.exists():
+                files_info.append("执行日志")
+                file_sizes["log"] = exec_log.stat().st_size / 1024
             
-            # 转换时间戳为可读格式
-            mod_time_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(modification_time))
+            if files_info:
+                result += f"   - 归档内容: {', '.join(files_info)}\n"
             
-            result += f"📁 **{dir_name}**\n"
-            result += f"   - 分析时间: {mod_time_str}\n"
-            
-            # 分析目录内容
-            subdirs = []
-            files = []
-            total_size = 0
-            
+            # 尝试从runtime_config.json读取配置信息
             try:
-                for item in analysis_dir.iterdir():
-                    if item.is_dir():
-                        subdirs.append(item.name)
-                    else:
-                        files.append(item.name)
-                        try:
-                            total_size += item.stat().st_size
-                        except:
-                            pass
-                
-                total_size_mb = total_size / 1024 / 1024
-                result += f"   - 结果大小: {total_size_mb:.1f} MB\n"
-                
-                # 识别分析类型
-                analysis_types = []
-                if any("fastp" in subdir.lower() for subdir in subdirs):
-                    analysis_types.append("质控")
-                if any("star" in subdir.lower() or "hisat" in subdir.lower() for subdir in subdirs):
-                    analysis_types.append("比对")
-                if any("bam" in subdir.lower() for subdir in subdirs):
-                    analysis_types.append("比对结果")
-                if any("counts" in f.lower() or "feature" in f.lower() for f in files):
-                    analysis_types.append("定量")
-                if any("summary" in subdir.lower() for subdir in subdirs):
-                    analysis_types.append("报告")
-                
-                if analysis_types:
-                    result += f"   - 分析步骤: {', '.join(analysis_types)}\n"
-                else:
-                    result += "   - 分析步骤: 未知或部分完成\n"
-                
-                # 检查关键结果文件
-                key_files = []
-                for f in files:
-                    if f.endswith(('.html', '.json', '.md')):
-                        key_files.append(f)
-                
-                if key_files:
-                    result += f"   - 关键文件: {', '.join(key_files[:3])}\n"
-                    if len(key_files) > 3:
-                        result += f"     (还有{len(key_files)-3}个文件...)\n"
-                
-                # 评估分析完整性
-                if "summary" in subdirs or any("report" in f.lower() for f in files):
-                    result += "   - 状态: ✅ 分析完整\n"
-                elif len(subdirs) >= 2:  # 至少有2个处理步骤
-                    result += "   - 状态: ⚠️ 分析部分完成\n"
-                else:
-                    result += "   - 状态: ❌ 分析可能未完成\n"
-                    
-            except Exception as e:
-                result += f"   - 状态: ❌ 目录访问错误: {str(e)}\n"
+                if runtime_config.exists():
+                    with open(runtime_config, 'r', encoding='utf-8') as f:
+                        config_data = json.load(f)
+                        
+                    tools_used = []
+                    nextflow_params = config_data.get("nextflow_params", {})
+                    if nextflow_params.get("qc_tool"):
+                        tools_used.append(f"质控({nextflow_params['qc_tool']})")
+                    if nextflow_params.get("align_tool"):
+                        tools_used.append(f"比对({nextflow_params['align_tool']})")
+                    if nextflow_params.get("quant_tool"):
+                        tools_used.append(f"定量({nextflow_params['quant_tool']})")
+                    if nextflow_params.get("genome_version"):
+                        result += f"   - 参考基因组: {nextflow_params['genome_version']}\n"
+                        
+                    if tools_used:
+                        result += f"   - 分析工具: {', '.join(tools_used)}\n"
+                        
+            except (json.JSONDecodeError, FileNotFoundError, KeyError):
+                pass
             
-            result += "\n"
+            # 计算归档文件夹总大小
+            try:
+                total_size = sum(f.stat().st_size for f in archive_path.rglob("*") if f.is_file())
+                size_kb = total_size / 1024
+                if size_kb > 1024:
+                    result += f"   - 归档大小: {size_kb / 1024:.1f} MB\n"
+                else:
+                    result += f"   - 归档大小: {size_kb:.1f} KB\n"
+            except:
+                result += "   - 归档大小: 计算失败\n"
+            
+            # 分析完整性状态
+            if json_report.exists() and md_report.exists() and runtime_config.exists():
+                result += "   - 状态: ✅ 归档完整\n"
+            elif json_report.exists() or md_report.exists():
+                result += "   - 状态: ⚠️ 归档部分完整\n"
+            else:
+                result += "   - 状态: ❌ 归档不完整\n"
+            
+            result += f"   - 归档路径: `reports/{archive['name']}/`\n\n"
         
-        # 添加统计信息
-        if len(analysis_dirs) > 10:
-            result += f"⏭️ 只显示了最新的10个分析，共有{len(analysis_dirs)}个历史记录\n\n"
+        # 显示统计和使用提示
+        if len(archive_folders) > 15:
+            result += f"⏭️ 只显示了最新的15个分析，共有{len(archive_folders)}个归档记录\n\n"
+        
+        result += "💡 **使用说明:**\n"
+        result += "- 每次分析完成后会自动创建归档文件夹\n"
+        result += "- 最新分析可通过 `reports/latest/` 访问\n" 
+        result += "- 归档包含: 配置、JSON报告、Markdown报告、执行日志\n"
+        result += "- 输入 '/plan' 开始新的分析\n"
+        
+        return result.strip()
+        
+    except Exception as e:
+        return f"获取分析历史时出错: {str(e)}"
         
         # 分析成功配置提取
         result += "🔄 **可复用配置:**\n"
