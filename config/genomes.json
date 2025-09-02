@@ -54,5 +54,13 @@
     "gtf_path": "genomes/zebrafish/danRer11/danRer11.ncbiRefSeq.gtf",
     "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/danRer11/bigZips/danRer11.fa.gz",
     "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/danRer11/bigZips/genes/danRer11.ncbiRefSeq.gtf.gz"
+  },
+  "dm6": {
+    "species": "drosophila",
+    "version": "dm6",
+    "fasta_path": "genomes/drosophila/dm6/dm6.fa",
+    "gtf_path": "genomes/drosophila/dm6/dm6.gtf",
+    "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/dm6/bigZips/dm6.fa.gz",
+    "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/dm6/bigZips/genes/dm6.ncbiRefSeq.gtf.gz"
   }
 }

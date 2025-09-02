@@ -13,7 +13,7 @@ params.genome_version = "hg38"              // 基因组版本，所有路径从
 
 // === 数据输入控制 ===
 params.local_fastq_files = ""               // 本地FASTQ文件路径列表
-params.sample_groups = ""                   // Agent分析的样本配对信息(JSON字符串)
+params.sample_groups = []                    // Agent分析的样本配对信息（数组）
 
 // === 基因组和索引控制 ===  
 params.run_download_genome = false          // 是否下载基因组
@@ -285,7 +285,8 @@ process run_quality_control {
     tuple val(sample_id), path(read1), path(read2)
     
     output:
-    tuple val(sample_id), path("${sample_id}_*trimmed.fastq.gz"), emit: qc_reads, optional: true
+    // 统一匹配单端与双端修剪后的文件：既匹配 _1/_2 也匹配 .single
+    tuple val(sample_id), path("${sample_id}*trimmed.fastq.gz"), emit: qc_reads, optional: true
     path "${sample_id}.${params.qc_tool}.*", emit: qc_reports, optional: true
     path "${sample_id}.${params.qc_tool}.done", emit: status_file
     
@@ -516,8 +517,8 @@ process run_quantification {
 
 workflow {
     // --- 1. 数据输入 ---
-    // 解析Agent提供的样本分组信息
-    def sample_groups = new groovy.json.JsonSlurper().parseText(params.sample_groups)
+    // 直接使用 params.sample_groups（数组，通过 params-file 传入）
+    def sample_groups = params.sample_groups ?: []
     
     // 创建样本Channel，使用Agent的配对分析结果
     fastq_samples_ch = Channel.from(sample_groups)
@@ -551,7 +552,7 @@ workflow {
         // 混合STAR索引process的输出
         index_ch = build_star_index.out.index_dir.mix(
             link_star_index.out.index_dir
-        )
+        ).first()  // 将索引目录作为 value channel 复用到每个样本
     } else if (params.align_tool == "hisat2") {
         // HISAT2索引处理  
         build_hisat2_index(fasta_ch, gtf_ch)    // when: params.run_build_hisat2_index
@@ -560,7 +561,7 @@ workflow {
         // 混合HISAT2索引process的输出
         index_ch = build_hisat2_index.out.index_dir.mix(
             link_hisat2_index.out.index_dir
-        )
+        ).first()  // 同理，将索引目录作为 value channel
     } else {
         // 如果align_tool为none，创建空channel
         index_ch = Channel.empty()

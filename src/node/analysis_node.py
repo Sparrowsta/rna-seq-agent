@@ -6,7 +6,7 @@ import pandas as pd
 
 from ..core import get_shared_llm
 from ..state import AgentState, AnalysisResponse
-from ..prompts import ANALYSIS_NODE_PROMPT
+from ..prompts import ANALYSIS_NODE_PROMPT, ANALYSIS_USER_PROMPT
 from langgraph.prebuilt import create_react_agent
 
 def create_analysis_agent():
@@ -395,19 +395,22 @@ def add_quality_assessment(df: pd.DataFrame) -> pd.DataFrame:
 
 
 
-def save_analysis_report(analysis_response: AnalysisResponse, data_dir: str = ".") -> Dict[str, str]:
+def save_analysis_report(analysis_response: AnalysisResponse, data_dir: str = ".", report_ts: str = "") -> Dict[str, str]:
     """保存分析报告到基于时间戳的归档文件夹"""
     import datetime
     import shutil
     
     reports_path = Path(data_dir) / "reports"
     reports_path.mkdir(exist_ok=True)
-    
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    # 创建时间戳文件夹
+
+    # 优先使用 execute_node 提供的时间戳目录，若不存在则按当前时间创建
+    if report_ts:
+        timestamp = report_ts
+    else:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
     archive_folder = reports_path / timestamp
-    archive_folder.mkdir(exist_ok=True)
+    archive_folder.mkdir(parents=True, exist_ok=True)
     
     saved_files = {}
     
@@ -451,8 +454,8 @@ def save_analysis_report(analysis_response: AnalysisResponse, data_dir: str = ".
                     f.write(f"- {step}\n")
         saved_files["markdown"] = str(md_file.relative_to(Path(data_dir)))
         
-        # 3. 复制runtime_config.json到归档文件夹
-        runtime_config_source = Path(data_dir) / "config" / "runtime_config.json"
+        # 3. 归档 runtime_config.json（从 reports/<ts>/ 复制到归档）
+        runtime_config_source = Path(data_dir) / "reports" / timestamp / "runtime_config.json"
         if runtime_config_source.exists():
             runtime_config_dest = archive_folder / "runtime_config.json"
             shutil.copy2(runtime_config_source, runtime_config_dest)
@@ -556,7 +559,7 @@ async def analysis_node(state: AgentState) -> Dict[str, Any]:
     
     try:
         quality_df = build_sample_quality_dataframe(data_dir)
-        print(f"✅ 构建了包含 {len(quality_df)} 个样本的质量分析表格")
+        print(f"✅ 构建了包含 {len(quality_df)} 个文件的质量分析表格")
         
         # 2. 生成完整的聚合分析
         comprehensive_summary = generate_comprehensive_summary(quality_df)
@@ -601,37 +604,12 @@ async def analysis_node(state: AgentState) -> Dict[str, Any]:
     # 5. 让LLM基于表格化数据生成专业分析
     agent_executor = create_analysis_agent()
     
-    analysis_prompt = f"""你是RNA-seq数据分析专家。请基于以下样本级别的质量分析数据生成专业的分析总结报告。
-
-## 分析配置
-{json.dumps(analysis_context["tools_used"], ensure_ascii=False, indent=2)}
-
-## 样本质量分析数据
-{json.dumps(analysis_context, ensure_ascii=False, indent=2)}
-
-请生成专业的RNA-seq分析报告，包含：
-
-1. **analysis_summary**: 基于样本级别数据的总结(3-4句话，突出关键发现)
-   - 总体样本数量和质量状态分布
-   - 关键质量指标的表现（比对率、分配率等）
-   - 是否发现异常样本及其特征
-
-2. **analysis_insights**: 基于样本数据的专业洞察(每条包含具体数据)
-   - 例如："✅ 3个样本中有2个达到PASS标准，平均比对率为85.2%"
-   - 例如："⚠️ 样本SRR123456的比对率仅为15.3%，可能存在样本质量问题"
-   - 例如："📊 所有样本的基因分配率均超过60%，定量结果可靠"
-
-3. **result_files**: 重要结果文件路径
-4. **quality_metrics**: 样本质量分析的结构化数据
-5. **next_steps**: 基于样本质量评估的具体建议
-
-要求：
-- 使用中文
-- 重点关注样本级别的质量差异
-- 明确指出质量异常的样本
-- 提供针对性的改进建议
-- 输出JSON格式
-"""
+    # 采用简单的信息拼接方式构造用户提示
+    analysis_prompt = (
+        f"{ANALYSIS_USER_PROMPT}\n\n"
+        f"## 分析配置\n{json.dumps(analysis_context.get('tools_used', {}), ensure_ascii=False, indent=2)}\n\n"
+        f"## 样本质量分析数据\n{json.dumps(analysis_context, ensure_ascii=False, indent=2)}\n"
+    )
     
     try:
         # LLM基于表格化数据生成分析
@@ -667,7 +645,8 @@ async def analysis_node(state: AgentState) -> Dict[str, Any]:
         )
     
     # 6. 保存分析报告到文件
-    saved_files = save_analysis_report(analysis_response)
+    report_ts = getattr(state, 'report_ts', '')
+    saved_files = save_analysis_report(analysis_response, data_dir, report_ts)
     print(f"✅ 分析报告已保存: {saved_files}")
     
     return await map_analysis_to_agent_state(analysis_response, state)

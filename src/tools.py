@@ -14,6 +14,7 @@ import glob
 import re
 import time
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from functools import wraps
 from typing import Dict, List, Any, Union, Callable, Optional
@@ -1240,9 +1241,9 @@ def add_genome_config(user_input: str = "") -> str:
         if not (gtf_url.startswith('http://') or gtf_url.startswith('https://')):
             return f"GTF URL格式无效：{gtf_url}"
         
-        # 生成本地路径
-        fasta_path = f"data/genomes/{species}/{version}/{version}.fa"
-        gtf_path = f"data/genomes/{species}/{version}/{version}.gtf"
+        # 生成本地路径（相对容器工作目录 /data，不要以 data/ 前缀开头）
+        fasta_path = f"genomes/{species}/{version}/{version}.fa"
+        gtf_path = f"genomes/{species}/{version}/{version}.gtf"
         
         # 构建新的基因组配置
         new_genome_config = {

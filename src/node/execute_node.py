@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from ..state import AgentState
 
-async def generate_nextflow_config(resource_config: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+async def generate_nextflow_config(resource_config: Dict[str, Dict[str, Any]], report_dir: Optional[str] = None) -> Dict[str, Any]:
     """生成动态的nextflow.config文件，包含资源配置"""
     try:
         config_dir = Path("/config")
@@ -30,14 +30,14 @@ process {
     
 """
 
-        # 添加LLM智能分配的资源配置
+        # 添加LLM智能分配的资源配置（仅使用 prepare 提供的进程名；无默认 withName 片段）
         if resource_config:
             config_content += "    // LLM智能资源分配\n"
             for process_name, config in resource_config.items():
                 cpus = config.get('cpus', 1)
                 memory = config.get('memory', '2 GB')
                 reasoning = config.get('reasoning', '默认配置')
-                
+
                 config_content += f"""    withName: '{process_name}' {{
         cpus = {cpus}
         memory = '{memory}'
@@ -45,74 +45,39 @@ process {
     }}
     
 """
-        else:
-            # 使用默认的硬编码配置
-            config_content += """    // 默认资源配置（LLM未生成资源分配）
-    withName: 'prepare_star_index' {
-        cpus = 8
-        memory = '32 GB'
-        // 索引构建CPU密集
-    }
-    
-    withName: 'run_quality_control' {
-        cpus = 8
-        memory = '16 GB'
-        // 质控处理
-    }
-    
-    withName: 'run_alignment' {
-        cpus = 8
-        memory = '32 GB'
-        // 序列比对
-    }
-    
-    withName: 'run_quantification' {
-        cpus = 8
-        memory = '16 GB'
-        // 基因定量
-    }
-    
-    withName: 'download_genome_fasta' {
-        cpus = 2
-        memory = '4 GB'
-        // FASTA下载
-    }
-    
-    withName: 'download_genome_gtf' {
-        cpus = 2
-        memory = '4 GB'
-        // GTF下载
-    }
-    
-"""
 
-        # 添加执行器和报告配置
-        config_content += """}
+        # 添加执行器和报告配置（报告目录指向 reports/<ts>/nextflow/ 或默认 results/nextflow/）
+        nf_reports_dir = Path(report_dir) / "nextflow" if report_dir else Path("results/nextflow")
+        report_path = nf_reports_dir / "execution_report.html"
+        timeline_path = nf_reports_dir / "execution_timeline.html"
+        trace_path = nf_reports_dir / "execution_trace.txt"
+
+        config_content += f"""}}
 
 // 执行配置
-executor {
+executor {{
     name = 'local'
-}
+}}
 
 // 报告配置
-report {
+report {{
     enabled = true
-    file = 'results/nextflow/execution_report.html'
+    file = '{report_path.as_posix()}'
     overwrite = true
-}
+}}
 
-timeline {
+timeline {{
     enabled = true
-    file = 'results/nextflow/execution_timeline.html'
+    file = '{timeline_path.as_posix()}'
     overwrite = true
-}
+}}
 
-trace {
+trace {{
     enabled = true
-    file = 'results/nextflow/execution_trace.txt'
+    file = '{trace_path.as_posix()}'
     overwrite = true
     fields = 'task_id,hash,native_id,process,tag,name,status,exit,module,container,cpus,time,disk,memory,attempt,submit,start,complete,duration,realtime,queue,rss,vmem,peak_rss,peak_vmem,rchar,wchar,syscr,syscw,read_bytes,write_bytes'
-}
+}}
 """
 
         # 写入配置文件
@@ -120,9 +85,9 @@ trace {
         with open(config_file, 'w', encoding='utf-8') as f:
             f.write(config_content)
         
-        # 计算配置统计
-        total_processes = len(resource_config) if resource_config else 6
-        total_cpus = sum(config.get('cpus', 1) for config in resource_config.values()) if resource_config else 'default'
+        # 计算配置统计（无默认 withName，空则为 0）
+        total_processes = len(resource_config) if resource_config else 0
+        total_cpus = sum(cfg.get('cpus', 1) for cfg in resource_config.values()) if resource_config else 0
         
         print(f"✅ Nextflow配置文件已生成: {config_file}")
         print(f"📊 资源配置: {total_processes}个进程，总CPU分配: {total_cpus}")
@@ -138,75 +103,50 @@ trace {
         print(f"❌ Nextflow配置生成失败: {e}")
         return {"success": False, "error": str(e)}
 
-async def generate_runtime_config(nextflow_config: Dict[str, Any], resource_config: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
+async def generate_runtime_config(nextflow_config: Dict[str, Any], resource_config: Optional[Dict[str, Dict[str, Any]]] = None, report_dir: Optional[str] = None) -> Dict[str, Any]:
     """生成运行时配置文件"""
     try:
-        config_dir = Path("/config")
-        config_dir.mkdir(exist_ok=True)
+        base_dir = Path(report_dir) if report_dir else Path("reports")
+        base_dir.mkdir(parents=True, exist_ok=True)
         
         # 明确处理resource_config的None情况
         if resource_config is None:
             resource_config = {}
         
-        # 创建运行时配置
+        # 创建运行时配置（以 Nextflow params-file 直读的扁平键为准）
+        flat_params: Dict[str, Any] = dict(nextflow_config or {})
         runtime_config = {
-            "timestamp": datetime.now().isoformat(),
-            "analysis_id": f"rna_seq_{int(time.time())}",
-            "nextflow_params": nextflow_config,
-            "resource_config": resource_config
+            **flat_params,
+            "__meta": {
+                "timestamp": datetime.now().isoformat(),
+                "analysis_id": f"rna_seq_{int(time.time())}",
+            },
+            # 保留资源配置供归档与追溯（Nextflow 会忽略该未知参数）
+            "resource_config": resource_config,
         }
         
         # 保存配置文件
-        config_file = config_dir / "runtime_config.json"
+        config_file = base_dir / "runtime_config.json"
         with open(config_file, 'w', encoding='utf-8') as f:
             json.dump(runtime_config, f, indent=2, ensure_ascii=False)
         
         print(f"✅ 配置文件已保存: {config_file}")
+        print(f"📦 传递给Nextflow的参数: {list(flat_params.keys())}")
         return {"success": True, "config_file": str(config_file)}
         
     except Exception as e:
         print(f"❌ 配置生成失败: {e}")
         return {"success": False, "error": str(e)}
 
-def build_nextflow_command(nextflow_config: Dict[str, Any]) -> str:
-    """构建Nextflow命令"""
-    # 基础命令 - 从data目录执行根目录的main.nf
-    cmd_parts = ["nextflow", "run", "/main.nf"]
-    
-    # 明确指定配置文件路径
-    cmd_parts.extend(["-c", "/config/nextflow.config"])
-    
-    # 添加参数
-    if nextflow_config.get("genome_version"):
-        cmd_parts.extend(["--genome_version", nextflow_config["genome_version"]])
-    
-    if nextflow_config.get("qc_tool"):
-        cmd_parts.extend(["--qc_tool", nextflow_config["qc_tool"]])
-    
-    if nextflow_config.get("align_tool"):
-        cmd_parts.extend(["--align_tool", nextflow_config["align_tool"]])
-    
-    if nextflow_config.get("quant_tool"):
-        cmd_parts.extend(["--quant_tool", nextflow_config["quant_tool"]])
-    
-    # 样本配对信息 - Agent分析的结果，包含完整的文件路径信息
-    sample_groups = nextflow_config.get("sample_groups", [])
-    if sample_groups:
-        import json
-        # 将样本配对信息转换为JSON字符串传递给Nextflow
-        sample_groups_json = json.dumps(sample_groups, separators=(',', ':'))
-        cmd_parts.extend(["--sample_groups", f"'{sample_groups_json}'"])
-    
-    # 明确传递下载和构建参数（无论true还是false）
-    cmd_parts.extend(["--run_download_genome", str(nextflow_config.get("run_download_genome", False)).lower()])
-    cmd_parts.extend(["--run_build_star_index", str(nextflow_config.get("run_build_star_index", False)).lower()])
-    cmd_parts.extend(["--run_build_hisat2_index", str(nextflow_config.get("run_build_hisat2_index", False)).lower()])
-    
-    # 工作目录设置 - 使用相对路径
-    cmd_parts.extend(["-work-dir", "work"])
-    # 生成清理选项(可选)
-    cmd_parts.append("-resume")  # 支持断点续传
-    
+def build_nextflow_command(nextflow_config: Dict[str, Any], params_file_path: str) -> str:
+    """构建Nextflow命令（使用 params-file 传递参数）"""
+    cmd_parts = [
+        "nextflow", "run", "/main.nf",
+        "-c", "/config/nextflow.config",
+        "-params-file", params_file_path,
+        "-work-dir", "work",
+        "-resume",
+    ]
     return " ".join(cmd_parts)
 
 async def execute_nextflow_pipeline(command: str) -> Dict[str, Any]:
@@ -363,9 +303,18 @@ async def execute_node(state: AgentState) -> Dict[str, Any]:
         for process, config in resource_config.items():
             print(f"   {process}: {config.get('cpus')}核, {config.get('memory')}")
     
-    # 生成动态的nextflow.config文件
+    # 生成报告时间戳与目录
+    report_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    report_dir = Path("reports") / report_ts
+    report_dir.mkdir(parents=True, exist_ok=True)
+    # 确保 Nextflow 报告子目录存在，避免部分环境下不自动创建
+    nf_reports_dir = report_dir / "nextflow"
+    nf_reports_dir.mkdir(parents=True, exist_ok=True)
+    print(f"📁 报告目录: {report_dir}")
+
+    # 生成动态的nextflow.config文件（报告目录传入以定向 Nextflow 报告输出）
     print(f"\n⚙️ **生成Nextflow配置文件...**")
-    config_generation_result = await generate_nextflow_config(resource_config)
+    config_generation_result = await generate_nextflow_config(resource_config, report_dir=str(report_dir))
     
     if not config_generation_result["success"]:
         return {
@@ -377,9 +326,9 @@ async def execute_node(state: AgentState) -> Dict[str, Any]:
             "status": "failed"
         }
     
-    # 生成运行时配置文件
+    # 生成运行时配置文件（写入报告目录）
     print(f"\n📝 **生成运行时配置...**")
-    runtime_result = await generate_runtime_config(nextflow_config, resource_config)
+    runtime_result = await generate_runtime_config(nextflow_config, resource_config, report_dir=str(report_dir))
     
     if not runtime_result["success"]:
         return {
@@ -391,9 +340,10 @@ async def execute_node(state: AgentState) -> Dict[str, Any]:
             "status": "failed"
         }
     
-    # 构建Nextflow命令
+    # 构建Nextflow命令（使用报告目录中的 params-file）
     print(f"\n🔧 **构建Nextflow命令...**")
-    nextflow_command = build_nextflow_command(nextflow_config)
+    params_file = str(report_dir / "runtime_config.json")
+    nextflow_command = build_nextflow_command(nextflow_config, params_file_path=params_file)
     print(f"📋 命令: {nextflow_command}")
     
     # 执行Nextflow流水线
@@ -435,6 +385,8 @@ async def execute_node(state: AgentState) -> Dict[str, Any]:
         "execution_status": "completed" if execution_result["success"] else "failed",
         "execution_output": execution_result.get("output", ""),
         "execution_result": execution_result,
+        "report_dir": str(report_dir),
+        "report_ts": report_ts,
         "response": response_msg,
         "status": "analysis"  
         }

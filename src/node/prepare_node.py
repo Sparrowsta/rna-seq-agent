@@ -78,21 +78,20 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
         
         result = await agent_executor.ainvoke(messages_input)
         structured_response = result.get("structured_response")
-        
-        # 检查LLM响应并提取结果
+
+        # 检查LLM响应并提取结果（严格遵循 PrepareResponse 的字段：nextflow_config/resource_config/config_reasoning）
         if structured_response:
-            user_friendly_report = structured_response.user_friendly_report or ""
             reasoning = structured_response.config_reasoning or "基于用户需求和检测数据的智能分析"
-            
-            # 注意：PrepareResponse现在使用workflow字段而不是nextflow_config
-            workflow_config = structured_response.workflow or {}
-            
+
+            nextflow_cfg = structured_response.nextflow_config or {}
+            resource_params = structured_response.resource_config or {}
+
             print(f"✅ 配置生成完成，严格遵循用户需求")
-            
+
             # 合并配置参数（新配置优先）
             final_config = current_config.copy()
-            final_config.update(workflow_config)
-            
+            final_config.update(nextflow_cfg)
+
             # 构建需求满足情况说明
             user_satisfaction_note = ""
             if initial_requirements or replan_requirements:
@@ -102,12 +101,12 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
                 if replan_requirements:
                     satisfaction_parts.append(f"重新规划需求: {replan_requirements} (已优先应用)")
                 user_satisfaction_note = f"\n\n🎯 **用户需求满足情况：**\n" + "\n".join(satisfaction_parts)
-            
+
             return {
                 "nextflow_config": final_config,
-                "resource_config": {},  # 现在资源配置包含在workflow中
+                "resource_config": resource_params,  # 显式传递资源配置，供 execute_node 生成 nextflow.config
                 "config_reasoning": reasoning,
-                "response": f"智能配置分析完成{user_satisfaction_note}\n\n💡 {reasoning}\n\n{user_friendly_report}",
+                "response": f"智能配置分析完成{user_satisfaction_note}\n\n💡 {reasoning}",
                 "status": "confirm"
             }
         else:
