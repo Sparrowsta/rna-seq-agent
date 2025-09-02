@@ -6,6 +6,7 @@ RNA-seq智能分析助手工具模块
 - 合并decorators.py中的代码，统一管理所有工具函数
 - 按功能模块重新组织，让辅助函数和主要函数组织在一起
 - 保持双模式工具架构不变
+- 使用配置系统替代硬编码路径
 """
 
 import os
@@ -18,6 +19,9 @@ from datetime import datetime
 from pathlib import Path
 from functools import wraps
 from typing import Dict, List, Any, Union, Callable, Optional
+
+# 导入配置系统
+from .config import get_tools_config
 
 
 # ==================== 装饰器和辅助系统 ====================
@@ -196,7 +200,9 @@ def get_system_info() -> Dict[str, Any]:
 
 def _scan_fastq_files() -> Dict[str, Any]:
     """纯FASTQ文件扫描 - 排除中间文件目录"""
-    project_root = Path(".")
+    # 获取配置
+    config = get_tools_config()
+    project_root = config.project_root
     fastq_extensions = ["*.fastq", "*.fastq.gz", "*.fq", "*.fq.gz"]
     
     # 定义要排除的目录（中间文件和缓存目录）
@@ -391,7 +397,8 @@ def _format_fastq_report(raw_data: dict, depth: str = "basic") -> str:
 
 def _load_genome_config() -> Dict[str, Any]:
     """纯基因组配置加载 - 只检查文件存在性，不做状态判断"""
-    genomes_file = Path("/config/genomes.json")
+    config = get_tools_config()
+    genomes_file = config.genomes_config_path
     
     if not genomes_file.exists():
         return {"detection_status": "no_config_file"}
@@ -440,7 +447,8 @@ def _load_genome_config() -> Dict[str, Any]:
             
             # 检查STAR索引目录
             if fasta_path and Path(fasta_path).exists():
-                star_index_dir = Path(fasta_path).parent / "star_index"
+                config = get_tools_config()
+                star_index_dir = config.get_star_index_dir(Path(fasta_path))
                 if star_index_dir.exists():
                     index_files = list(star_index_dir.iterdir())
                     star_index_info = {
@@ -454,7 +462,8 @@ def _load_genome_config() -> Dict[str, Any]:
             # 检查HISAT2索引目录
             hisat2_index_info = None
             if fasta_path and Path(fasta_path).exists():
-                hisat2_index_dir = Path(fasta_path).parent / "hisat2_index"
+                config = get_tools_config()
+                hisat2_index_dir = config.get_hisat2_index_dir(Path(fasta_path))
                 if hisat2_index_dir.exists():
                     # 检查HISAT2索引特征文件（.ht2格式）
                     ht2_files = list(hisat2_index_dir.glob("*.ht2"))
@@ -859,7 +868,8 @@ def get_project_overview(query: str = "") -> str:
         result += "📊 **数据状态:**\n"
         
         # 扫描FASTQ文件
-        project_root = Path(".")
+        config = get_tools_config()
+        project_root = config.project_root
         fastq_extensions = ["*.fastq", "*.fastq.gz", "*.fq", "*.fq.gz"]
         all_fastq_files = []
         for ext in fastq_extensions:
@@ -909,7 +919,8 @@ def get_project_overview(query: str = "") -> str:
         
         # 2. 基因组状态
         result += "\n🧬 **基因组状态:**\n"
-        genomes_file = Path("/config/genomes.json")
+        config = get_tools_config()
+        genomes_file = config.genomes_config_path
         ready_genomes = 0
         total_genomes = 0
         
@@ -929,7 +940,8 @@ def get_project_overview(query: str = "") -> str:
         
         # 3. 历史分析
         result += "\n📈 **历史分析:**\n"
-        results_dir = Path("data/results")
+        config = get_tools_config()
+        results_dir = config.results_dir
         analysis_count = 0
         latest_analysis = "无"
         
@@ -1001,7 +1013,8 @@ def list_analysis_history(query: str = "") -> str:
         result = "📈 **分析历史记录**\n\n"
         
         # 只检查新的reports归档文件夹
-        reports_dir = Path("reports")
+        config = get_tools_config()
+        reports_dir = config.reports_dir
         if not reports_dir.exists():
             return "📭 暂无分析历史记录\n\n💡 完成首次分析后，历史记录将显示在这里"
         
@@ -1256,7 +1269,8 @@ def add_genome_config(user_input: str = "") -> str:
         }
         
         # 读取现有配置
-        genomes_file = Path("/config/genomes.json")
+        config = get_tools_config()
+        genomes_file = config.genomes_config_path
         if genomes_file.exists():
             with open(genomes_file, 'r', encoding='utf-8') as f:
                 genomes_data = json.load(f)
@@ -1280,7 +1294,8 @@ def add_genome_config(user_input: str = "") -> str:
         genomes_data[genome_id] = new_genome_config
         
         # 保存配置
-        os.makedirs("/config", exist_ok=True)
+        config = get_tools_config()
+        config.path_manager.ensure_directory(config.settings.config_dir)
         with open(genomes_file, 'w', encoding='utf-8') as f:
             json.dump(genomes_data, f, indent=2, ensure_ascii=False)
         

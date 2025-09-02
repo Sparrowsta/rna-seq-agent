@@ -1,7 +1,7 @@
 from langgraph.graph import END
 from .state import AgentState
 
-async def route_from_user_communication(state: AgentState) -> str:
+def route_from_user_communication(state: AgentState) -> str:
     """User Communication节点后的路由决策"""
     routing_decision = state.routing_decision
     
@@ -18,7 +18,7 @@ async def route_from_user_communication(state: AgentState) -> str:
         print(f"⚠️ 未知路由决策: {routing_decision}，默认结束会话")
         return "end"
 
-async def should_continue(state: AgentState) -> str:
+def should_continue(state: AgentState) -> str:
     """决定是否继续执行"""
     plan = state.plan
     # plan现在是List[List[str]]格式，检查是否有任务组
@@ -27,7 +27,7 @@ async def should_continue(state: AgentState) -> str:
     else:
         return "prepare"
 
-async def route_after_confirm(state: AgentState) -> str:
+def route_after_confirm(state: AgentState) -> str:
     """用户确认后的路由决策"""
     user_decision = state.user_decision.lower() if state.user_decision else ""
     
@@ -51,7 +51,7 @@ async def route_after_confirm(state: AgentState) -> str:
         print(f"⚠️ [ROUTE] 未识别的决策 '{user_decision}'，默认取消")
         return "cancel"
 
-async def route_after_analysis(state: AgentState) -> str:
+def route_after_analysis(state: AgentState) -> str:
     """Analysis节点分析完毕后的路由决策"""
     print("✅ [ROUTE] 分析总结完成，返回用户交互")
     return "user_communication"

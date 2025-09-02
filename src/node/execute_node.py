@@ -6,12 +6,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 from ..state import AgentState
+from ..config import get_tools_config
 
 async def generate_nextflow_config(resource_config: Dict[str, Dict[str, Any]], report_dir: Optional[str] = None) -> Dict[str, Any]:
     """生成动态的nextflow.config文件，包含资源配置"""
     try:
-        config_dir = Path("/config")
-        config_dir.mkdir(exist_ok=True)
+        config = get_tools_config()
+        config_dir = config.settings.config_dir
+        config.path_manager.ensure_directory(config_dir)
         
         # 基础配置模板
         config_content = """// 动态生成的Nextflow配置文件
@@ -46,8 +48,12 @@ process {
     
 """
 
-        # 添加执行器和报告配置（报告目录指向 reports/<ts>/nextflow/ 或默认 results/nextflow/）
-        nf_reports_dir = Path(report_dir) / "nextflow" if report_dir else Path("results/nextflow")
+        # 添加执行器和报告配置
+        config = get_tools_config()
+        if report_dir:
+            nf_reports_dir = Path(report_dir) / "nextflow"
+        else:
+            nf_reports_dir = config.results_dir / "nextflow"
         report_path = nf_reports_dir / "execution_report.html"
         timeline_path = nf_reports_dir / "execution_timeline.html"
         trace_path = nf_reports_dir / "execution_trace.txt"
@@ -106,8 +112,12 @@ trace {{
 async def generate_runtime_config(nextflow_config: Dict[str, Any], resource_config: Optional[Dict[str, Dict[str, Any]]] = None, report_dir: Optional[str] = None) -> Dict[str, Any]:
     """生成运行时配置文件"""
     try:
-        base_dir = Path(report_dir) if report_dir else Path("reports")
-        base_dir.mkdir(parents=True, exist_ok=True)
+        config = get_tools_config()
+        if report_dir:
+            base_dir = Path(report_dir)
+        else:
+            base_dir = config.reports_dir
+        config.path_manager.ensure_directory(base_dir)
         
         # 明确处理resource_config的None情况
         if resource_config is None:
@@ -140,9 +150,10 @@ async def generate_runtime_config(nextflow_config: Dict[str, Any], resource_conf
 
 def build_nextflow_command(nextflow_config: Dict[str, Any], params_file_path: str) -> str:
     """构建Nextflow命令（使用 params-file 传递参数）"""
+    config = get_tools_config()
     cmd_parts = [
         "nextflow", "run", "/main.nf",
-        "-c", "/config/nextflow.config",
+        "-c", str(config.settings.nextflow_config_path),
         "-params-file", params_file_path,
         "-work-dir", "work",
         "-resume",
@@ -305,8 +316,9 @@ async def execute_node(state: AgentState) -> Dict[str, Any]:
     
     # 生成报告时间戳与目录
     report_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-    report_dir = Path("reports") / report_ts
-    report_dir.mkdir(parents=True, exist_ok=True)
+    config = get_tools_config()
+    report_dir = config.reports_dir / report_ts
+    config.path_manager.ensure_directory(report_dir)
     # 确保 Nextflow 报告子目录存在，避免部分环境下不自动创建
     nf_reports_dir = report_dir / "nextflow"
     nf_reports_dir.mkdir(parents=True, exist_ok=True)

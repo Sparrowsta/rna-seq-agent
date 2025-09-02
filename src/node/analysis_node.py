@@ -7,6 +7,7 @@ import pandas as pd
 from ..core import get_shared_llm
 from ..state import AgentState, AnalysisResponse
 from ..prompts import ANALYSIS_NODE_PROMPT, ANALYSIS_USER_PROMPT
+from ..config import get_tools_config
 from langgraph.prebuilt import create_react_agent
 
 def create_analysis_agent():
@@ -217,12 +218,13 @@ def extract_sample_featurecounts_metrics(summary_file: Path) -> Dict[str, Dict[s
 
 def build_sample_quality_dataframe(data_dir: str = ".") -> pd.DataFrame:
     """构建样本质量分析的pandas DataFrame"""
+    config = get_tools_config()
     
     # 收集所有样本的指标
     all_sample_metrics = []
     
     # 1. 提取fastp指标
-    fastp_dir = Path(data_dir) / "results" / "fastp"
+    fastp_dir = config.results_dir / "fastp"
     fastp_metrics = {}
     if fastp_dir.exists():
         for sample_dir in fastp_dir.iterdir():
@@ -231,7 +233,7 @@ def build_sample_quality_dataframe(data_dir: str = ".") -> pd.DataFrame:
                 fastp_metrics[metrics['sample_id']] = metrics
     
     # 2. 提取STAR指标
-    star_dir = Path(data_dir) / "results" / "bam"
+    star_dir = config.results_dir / "bam"
     star_metrics = {}
     if star_dir.exists():
         for sample_dir in star_dir.iterdir():
@@ -240,7 +242,7 @@ def build_sample_quality_dataframe(data_dir: str = ".") -> pd.DataFrame:
                 star_metrics[metrics['sample_id']] = metrics
     
     # 3. 提取featureCounts指标
-    featurecounts_file = Path(data_dir) / "results" / "featurecounts" / "all_samples.counts.txt.summary"
+    featurecounts_file = config.results_dir / "featurecounts" / "all_samples.counts.txt.summary"
     featurecounts_metrics = extract_sample_featurecounts_metrics(featurecounts_file)
     
     # 4. 合并所有样本的指标
@@ -400,7 +402,8 @@ def save_analysis_report(analysis_response: AnalysisResponse, data_dir: str = ".
     import datetime
     import shutil
     
-    reports_path = Path(data_dir) / "reports"
+    config = get_tools_config()
+    reports_path = config.reports_dir
     reports_path.mkdir(exist_ok=True)
 
     # 优先使用 execute_node 提供的时间戳目录，若不存在则按当前时间创建
@@ -426,7 +429,7 @@ def save_analysis_report(analysis_response: AnalysisResponse, data_dir: str = ".
                 "quality_metrics": analysis_response.quality_metrics,
                 "next_steps": analysis_response.next_steps
             }, f, ensure_ascii=False, indent=2)
-        saved_files["json"] = str(json_file.relative_to(Path(data_dir)))
+        saved_files["json"] = str(json_file.relative_to(config.project_root))
         
         # 2. 保存Markdown格式的可读报告
         md_file = archive_folder / "analysis_summary.md"
@@ -452,21 +455,21 @@ def save_analysis_report(analysis_response: AnalysisResponse, data_dir: str = ".
                 f.write(f"## 下一步建议\n\n")
                 for step in analysis_response.next_steps:
                     f.write(f"- {step}\n")
-        saved_files["markdown"] = str(md_file.relative_to(Path(data_dir)))
+        saved_files["markdown"] = str(md_file.relative_to(config.project_root))
         
         # 3. 归档 runtime_config.json（从 reports/<ts>/ 复制到归档）
-        runtime_config_source = Path(data_dir) / "reports" / timestamp / "runtime_config.json"
+        runtime_config_source = config.reports_dir / timestamp / "runtime_config.json"
         if runtime_config_source.exists():
             runtime_config_dest = archive_folder / "runtime_config.json"
             shutil.copy2(runtime_config_source, runtime_config_dest)
-            saved_files["runtime_config"] = str(runtime_config_dest.relative_to(Path(data_dir)))
+            saved_files["runtime_config"] = str(runtime_config_dest.relative_to(config.project_root))
         
         # 4. 创建指向最新归档文件夹的符号链接
         latest_link = reports_path / "latest"
         if latest_link.is_symlink() or latest_link.exists():
             latest_link.unlink()
         latest_link.symlink_to(archive_folder.name)
-        saved_files["latest_folder"] = str(latest_link.relative_to(Path(data_dir)))
+        saved_files["latest_folder"] = str(latest_link.relative_to(config.project_root))
         
         # 5. 创建执行日志文件占位符(供后续使用)
         log_file = archive_folder / "execution_log.txt"
@@ -475,7 +478,7 @@ def save_analysis_report(analysis_response: AnalysisResponse, data_dir: str = ".
             f.write(f"生成时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"分析ID: {timestamp}\n\n")
             f.write("详细的执行日志将在后续版本中添加。\n")
-        saved_files["execution_log"] = str(log_file.relative_to(Path(data_dir)))
+        saved_files["execution_log"] = str(log_file.relative_to(config.project_root))
         
     except Exception as e:
         print(f"保存分析报告时出错: {e}")
@@ -485,13 +488,14 @@ def save_analysis_report(analysis_response: AnalysisResponse, data_dir: str = ".
 
 def scan_result_files(data_dir: str = ".") -> Dict[str, Any]:
     """扫描并统计结果文件"""
+    config = get_tools_config()
     file_stats = {
         "total_files": 0,
         "file_categories": {},
         "key_files": {}
     }
     
-    results_path = Path(data_dir) / "results"
+    results_path = config.results_dir
     if not results_path.exists():
         return file_stats
     
@@ -514,7 +518,7 @@ def scan_result_files(data_dir: str = ".") -> Dict[str, Any]:
         file_stats["file_categories"][category] = len(category_files)
         if category_files:
             # 记录第一个文件作为代表
-            file_stats["key_files"][category] = str(category_files[0].relative_to(Path(data_dir)))
+            file_stats["key_files"][category] = str(category_files[0].relative_to(config.project_root))
     
     return file_stats
 
@@ -555,7 +559,8 @@ async def analysis_node(state: AgentState) -> Dict[str, Any]:
     nextflow_config = getattr(state, 'nextflow_config', {})
     
     # 1. 构建样本质量分析DataFrame
-    data_dir = "."  # Docker容器内当前目录就是/data
+    config = get_tools_config()
+    data_dir = str(config.project_root)  # 使用配置系统的项目根目录
     
     try:
         quality_df = build_sample_quality_dataframe(data_dir)
