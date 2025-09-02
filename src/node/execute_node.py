@@ -5,95 +5,73 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
+from jinja2 import Environment, FileSystemLoader, Template
 from ..state import AgentState
 from ..config import get_tools_config
 
+def _get_nextflow_template() -> Template:
+    """获取 Nextflow 配置模板"""
+    config = get_tools_config()
+    templates_dir = config.settings.project_root / "src" / "templates"
+    
+    # 确保模板目录和文件存在
+    templates_dir.mkdir(parents=True, exist_ok=True)
+    template_file = templates_dir / "nextflow_config.j2"
+    
+    if not template_file.exists():
+        raise FileNotFoundError(f"模板文件不存在: {template_file}")
+    
+    env = Environment(loader=FileSystemLoader(templates_dir))
+    return env.get_template("nextflow_config.j2")
+
 async def generate_nextflow_config(resource_config: Dict[str, Dict[str, Any]], report_dir: Optional[str] = None) -> Dict[str, Any]:
-    """生成动态的nextflow.config文件，包含资源配置"""
+    """生成动态的nextflow.config文件，使用Jinja2模板并存放在时间戳目录中"""
     try:
         config = get_tools_config()
-        config_dir = config.settings.config_dir
+        
+        # 使用报告目录作为配置文件存放位置
+        if report_dir:
+            config_dir = Path(report_dir)
+        else:
+            # 默认使用reports目录下的时间戳目录
+            report_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            config_dir = config.reports_dir / report_ts
+        
         config.path_manager.ensure_directory(config_dir)
         
-        # 基础配置模板
-        config_content = """// 动态生成的Nextflow配置文件
-// 基于LLM智能资源分配
-
-// 进程资源配置
-process {
-    // 默认配置
-    cpus = 1
-    memory = '2 GB'
-    
-    // 错误处理
-    errorStrategy = { task.exitStatus in [143,137,104,134,139] ? 'retry' : 'finish' }
-    maxRetries = 3
-    maxErrors = '-1'
-    
-"""
-
-        # 添加LLM智能分配的资源配置（仅使用 prepare 提供的进程名；无默认 withName 片段）
-        if resource_config:
-            config_content += "    // LLM智能资源分配\n"
-            for process_name, config in resource_config.items():
-                cpus = config.get('cpus', 1)
-                memory = config.get('memory', '2 GB')
-                reasoning = config.get('reasoning', '默认配置')
-
-                config_content += f"""    withName: '{process_name}' {{
-        cpus = {cpus}
-        memory = '{memory}'
-        // {reasoning}
-    }}
-    
-"""
-
-        # 添加执行器和报告配置
-        config = get_tools_config()
-        if report_dir:
-            nf_reports_dir = Path(report_dir) / "nextflow"
-        else:
-            nf_reports_dir = config.results_dir / "nextflow"
+        # 设置 Nextflow 报告路径（在配置目录下创建 nextflow 子目录）
+        nf_reports_dir = config_dir / "nextflow"
+        nf_reports_dir.mkdir(parents=True, exist_ok=True)
         report_path = nf_reports_dir / "execution_report.html"
         timeline_path = nf_reports_dir / "execution_timeline.html"
         trace_path = nf_reports_dir / "execution_trace.txt"
-
-        config_content += f"""}}
-
-// 执行配置
-executor {{
-    name = 'local'
-}}
-
-// 报告配置
-report {{
-    enabled = true
-    file = '{report_path.as_posix()}'
-    overwrite = true
-}}
-
-timeline {{
-    enabled = true
-    file = '{timeline_path.as_posix()}'
-    overwrite = true
-}}
-
-trace {{
-    enabled = true
-    file = '{trace_path.as_posix()}'
-    overwrite = true
-    fields = 'task_id,hash,native_id,process,tag,name,status,exit,module,container,cpus,time,disk,memory,attempt,submit,start,complete,duration,realtime,queue,rss,vmem,peak_rss,peak_vmem,rchar,wchar,syscr,syscw,read_bytes,write_bytes'
-}}
-"""
-
+        
+        # 准备模板变量
+        template_vars = {
+            "resource_config": resource_config or {},
+            "report_file": report_path.as_posix(),
+            "timeline_file": timeline_path.as_posix(),
+            "trace_file": trace_path.as_posix(),
+            # 可选的自定义参数
+            "default_cpus": 1,
+            "default_memory": "2 GB",
+            "max_retries": 3,
+            "max_errors": "-1",
+            "executor_name": "local"
+        }
+        
+        # 生成配置内容
+        template = _get_nextflow_template()
+        config_content = template.render(**template_vars)
+        
         # 写入配置文件
         config_file = config_dir / "nextflow.config"
         with open(config_file, 'w', encoding='utf-8') as f:
             f.write(config_content)
         
-        # 计算配置统计（无默认 withName，空则为 0）
-        total_processes = len(resource_config) if resource_config else 0
-        total_cpus = sum(cfg.get('cpus', 1) for cfg in resource_config.values()) if resource_config else 0
+        # 计算配置统计
+        total_processes = len(resource_config) if resource_config else 0  
+        total_cpus = sum(cfg.get('cpus', 1) for cfg in (resource_config.values() if resource_config else []))
         
         print(f"✅ Nextflow配置文件已生成: {config_file}")
         print(f"📊 资源配置: {total_processes}个进程，总CPU分配: {total_cpus}")
@@ -148,12 +126,19 @@ async def generate_runtime_config(nextflow_config: Dict[str, Any], resource_conf
         print(f"❌ 配置生成失败: {e}")
         return {"success": False, "error": str(e)}
 
-def build_nextflow_command(nextflow_config: Dict[str, Any], params_file_path: str) -> str:
-    """构建Nextflow命令（使用 params-file 传递参数）"""
+def build_nextflow_command(params_file_path: str, config_file_path: Optional[str] = None) -> str:
+    """构建Nextflow命令（使用 params-file 传递参数，支持自定义配置文件路径）"""
     config = get_tools_config()
+    
+    # 优先使用传入的配置文件路径，否则使用默认路径
+    if config_file_path:
+        nextflow_config = config_file_path
+    else:
+        nextflow_config = str(config.settings.nextflow_config_path)
+    
     cmd_parts = [
         "nextflow", "run", "/main.nf",
-        "-c", str(config.settings.nextflow_config_path),
+        "-c", nextflow_config,
         "-params-file", params_file_path,
         "-work-dir", "work",
         "-resume",
@@ -352,11 +337,14 @@ async def execute_node(state: AgentState) -> Dict[str, Any]:
             "status": "failed"
         }
     
-    # 构建Nextflow命令（使用报告目录中的 params-file）
+    # 构建Nextflow命令（使用报告目录中的配置文件和参数文件）
     print(f"\n🔧 **构建Nextflow命令...**")
     params_file = str(report_dir / "runtime_config.json")
-    nextflow_command = build_nextflow_command(nextflow_config, params_file_path=params_file)
+    config_file = config_generation_result.get("config_file")  # 获取生成的配置文件路径
+    nextflow_command = build_nextflow_command(params_file, config_file_path=config_file)
     print(f"📋 命令: {nextflow_command}")
+    print(f"📄 配置文件: {config_file}")
+    print(f"📦 参数文件: {params_file}")
     
     # 执行Nextflow流水线
     print(f"\n⚡ **执行Nextflow流水线...**")

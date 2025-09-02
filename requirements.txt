@@ -13,3 +13,4 @@ langchain-google-genai
 rich
 langchain-deepseek
 psutil
+jinja2>=3.1.0

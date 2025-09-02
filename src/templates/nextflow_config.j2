@@ -1,0 +1,52 @@
+{# Nextflow 配置文件模板 #}
+// 动态生成的Nextflow配置文件
+// 基于LLM智能资源分配
+
+// 进程资源配置
+process {
+    // 默认配置
+    cpus = {{ default_cpus | default(1) }}
+    memory = '{{ default_memory | default("2 GB") }}'
+    
+    // 错误处理
+    errorStrategy = { task.exitStatus in [143,137,104,134,139] ? 'retry' : 'finish' }
+    maxRetries = {{ max_retries | default(3) }}
+    maxErrors = '{{ max_errors | default("-1") }}'
+    
+{% if resource_config %}
+    // LLM智能资源分配
+{% for process_name, config in resource_config.items() %}
+    withName: '{{ process_name }}' {
+        cpus = {{ config.cpus | default(1) }}
+        memory = '{{ config.memory | default("2 GB") }}'
+        // {{ config.reasoning | default("默认配置") }}
+    }
+    
+{% endfor %}
+{% endif %}
+}
+
+// 执行配置
+executor {
+    name = '{{ executor_name | default("local") }}'
+}
+
+// 报告配置
+report {
+    enabled = {{ report_enabled | default("true") | lower }}
+    file = '{{ report_file }}'
+    overwrite = {{ report_overwrite | default("true") | lower }}
+}
+
+timeline {
+    enabled = {{ timeline_enabled | default("true") | lower }}
+    file = '{{ timeline_file }}'
+    overwrite = {{ timeline_overwrite | default("true") | lower }}
+}
+
+trace {
+    enabled = {{ trace_enabled | default("true") | lower }}
+    file = '{{ trace_file }}'
+    overwrite = {{ trace_overwrite | default("true") | lower }}
+    fields = '{{ trace_fields | default("task_id,hash,native_id,process,tag,name,status,exit,module,container,cpus,time,disk,memory,attempt,submit,start,complete,duration,realtime,queue,rss,vmem,peak_rss,peak_vmem,rchar,wchar,syscr,syscw,read_bytes,write_bytes") }}'
+}
