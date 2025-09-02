@@ -450,6 +450,24 @@ def _load_genome_config() -> Dict[str, Any]:
                 else:
                     star_index_info = {"exists": False, "path": str(star_index_dir)}
             
+            # 检查HISAT2索引目录
+            hisat2_index_info = None
+            if fasta_path and Path(fasta_path).exists():
+                hisat2_index_dir = Path(fasta_path).parent / "hisat2_index"
+                if hisat2_index_dir.exists():
+                    # 检查HISAT2索引特征文件（.ht2格式）
+                    ht2_files = list(hisat2_index_dir.glob("*.ht2"))
+                    if ht2_files:
+                        hisat2_index_info = {
+                            "exists": True,
+                            "path": str(hisat2_index_dir),
+                            "file_count": len(ht2_files)
+                        }
+                    else:
+                        hisat2_index_info = {"exists": False, "path": str(hisat2_index_dir)}
+                else:
+                    hisat2_index_info = {"exists": False, "path": str(hisat2_index_dir)}
+            
             genome_files[genome_id] = {
                 "species": info.get('species', ''),
                 "version": info.get('version', ''),
@@ -457,7 +475,8 @@ def _load_genome_config() -> Dict[str, Any]:
                 "gtf_url": info.get('gtf_url', ''),
                 "fasta_file": fasta_info,
                 "gtf_file": gtf_info,
-                "star_index": star_index_info
+                "star_index": star_index_info,
+                "hisat2_index": hisat2_index_info
             }
         
         return {
@@ -516,6 +535,14 @@ def _format_genome_report(genome_data: dict) -> str:
             result += f"   - STAR索引: ✅ {file_count}个文件\n"
         else:
             result += f"   - STAR索引: ❌ 未构建\n"
+        
+        # 显示HISAT2索引状态
+        hisat2_index_info = info.get('hisat2_index', {}) or {}
+        if hisat2_index_info.get('exists'):
+            file_count = hisat2_index_info.get('file_count', 0)
+            result += f"   - HISAT2索引: ✅ {file_count}个.ht2文件\n"
+        else:
+            result += f"   - HISAT2索引: ❌ 未构建\n"
         
         result += "\n"
     
@@ -704,7 +731,8 @@ def scan_genome_files(mode: str = "normal", genome_id: Optional[str] = None) -> 
                     "name": name,
                     "species": info.get("species"),
                     "complete": is_complete,
-                    "has_star_index": (info.get("star_index") or {}).get("exists", False)
+                    "has_star_index": (info.get("star_index") or {}).get("exists", False),
+                    "has_hisat2_index": (info.get("hisat2_index") or {}).get("exists", False)
                 })
             
             simplified_config = {

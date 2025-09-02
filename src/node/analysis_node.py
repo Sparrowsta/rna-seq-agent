@@ -6,6 +6,7 @@ import pandas as pd
 
 from ..core import get_shared_llm
 from ..state import AgentState, AnalysisResponse
+from ..prompts import ANALYSIS_NODE_PROMPT
 from langgraph.prebuilt import create_react_agent
 
 def create_analysis_agent():
@@ -16,11 +17,10 @@ def create_analysis_agent():
     agent = create_react_agent(
         model=llm,
         tools=[],  # 空工具列表，纯推理
-        prompt="你是RNA-seq数据分析专家。请基于具体的技术指标生成专业的分析总结报告。",
+        prompt=ANALYSIS_NODE_PROMPT,  # 使用集中管理的prompt
         response_format=AnalysisResponse
     )
     return agent
-
 
 def extract_sample_fastp_metrics(sample_dir: Path) -> Dict[str, Any]:
     """提取单个样本的fastp指标"""
