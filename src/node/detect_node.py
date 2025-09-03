@@ -5,10 +5,7 @@ from ..tools import (
     scan_fastq_files,
     scan_system_resources,
     scan_genome_files,
-    check_fastp_availability,
-    check_star_availability,
-    check_hisat2_availability,
-    check_featurecounts_availability
+    check_tool_availability
 )
 
 
@@ -22,13 +19,13 @@ async def _execute_task_group(group_tasks: List[str], group_description: str) ->
     
     # 硬编码任务映射 - 每个任务对应明确的检测函数
     task_mapping = {
-        "analyze_fastq_data": lambda: scan_fastq_files(mode="detect", depth="detailed"),
-        "assess_system_readiness": lambda: scan_system_resources(mode="detect"),
-        "verify_genome_setup": lambda: scan_genome_files(mode="detect"),
-        "check_fastp_availability": check_fastp_availability,
-        "check_star_availability": check_star_availability,
-        "check_hisat2_availability": check_hisat2_availability,
-        "check_featurecounts_availability": check_featurecounts_availability
+        "analyze_fastq_data": lambda: scan_fastq_files(),
+        "assess_system_readiness": lambda: scan_system_resources(),
+        "verify_genome_setup": lambda: scan_genome_files(),
+        "check_fastp_availability": lambda: check_tool_availability("fastp"),
+        "check_star_availability": lambda: check_tool_availability("star"),
+        "check_hisat2_availability": lambda: check_tool_availability("hisat2"),
+        "check_featurecounts_availability": lambda: check_tool_availability("featurecounts")
     }
     
     group_results = {}

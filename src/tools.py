@@ -1,131 +1,129 @@
 """
 RNA-seq智能分析助手工具模块
-提供FASTQ文件查询、基因组管理、用户意图收集等核心功能
+提供数据收集功能，返回结构化数据供LLM智能处理和展示
 
-重构说明:
-- 合并decorators.py中的代码，统一管理所有工具函数
-- 按功能模块重新组织，让辅助函数和主要函数组织在一起
-- 保持双模式工具架构不变
-- 使用配置系统替代硬编码路径
+重构原则:
+- 工具专注纯数据收集，不做格式化
+- 使用官方 @tool 装饰器
+- 移除双模式逻辑，交由LLM决定展示方式
+- 简化代码结构，提高维护性
 """
 
-import os
 import json
-import glob
 import re
 import time
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from functools import wraps
-from typing import Dict, List, Any, Union, Callable, Optional
+from typing import Dict, List, Any, Optional
+
+# 使用官方工具装饰器
+from langchain_core.tools import tool
 
 # 导入配置系统
 from .config import get_tools_config
 
 
-# ==================== 装饰器和辅助系统 ====================
+# ==================== 工具函数 (使用 @tool 装饰器) ====================
 
-def pure_detection(error_prefix: str = "检测"):
-    """纯检测装饰器 - 统一检测工具的返回格式和错误处理
+@tool
+def scan_fastq_files() -> Dict[str, Any]:
+    """扫描项目中的FASTQ测序文件，返回文件列表、样本信息和基本统计数据"""
+    config = get_tools_config()
+    project_root = config.project_root
+    fastq_extensions = ["*.fastq", "*.fastq.gz", "*.fq", "*.fq.gz"]
     
-    Args:
-        error_prefix: 错误消息前缀
+    # 定义要排除的目录（中间文件和缓存目录）
+    exclude_directories = {
+        "work", "tmp", "temp", "results", "output", 
+        ".nextflow", "logs", "cache", "__pycache__"
+    }
     
-    Returns:
-        标准化的检测结果: {"result": str, "query_results": dict, "config_updates": {}}
-    """
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            try:
-                result = func(*args, **kwargs)
-                
-                # 如果函数返回的已经是标准格式
-                if isinstance(result, dict) and "query_results" in result:
-                    return result
-                
-                # 如果函数返回的是查询数据，自动包装
-                if isinstance(result, dict):
-                    return {
-                        "result": f"✅ {error_prefix}完成",
-                        "query_results": result,
-                        "config_updates": {}  # 检测不生成配置
-                    }
-                
-                return {
-                    "result": str(result),
-                    "query_results": {},
-                    "config_updates": {}
-                }
-                
-            except Exception as e:
-                return {
-                    "result": f"❌ {error_prefix}时出错: {str(e)}",
-                    "query_results": {"status": "error", "error": str(e)},
-                    "config_updates": {}
-                }
-        return wrapper
-    return decorator
-
-
-def tool_detection(tool_name: str, environment: str, version_cmd: List[str]):
-    """纯工具检测装饰器 - 只收集版本信息，不做可用性判断
+    # 扫描所有FASTQ文件
+    all_fastq_files = []
+    for ext in fastq_extensions:
+        for file_path in project_root.rglob(ext):
+            if any(excluded in file_path.parts for excluded in exclude_directories):
+                continue
+            all_fastq_files.append(file_path)
     
-    Args:
-        tool_name: 工具名称
-        environment: micromamba环境名
-        version_cmd: 版本检测命令列表
-    """
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            detection_data = {
-                "tool_name": tool_name,
-                "environment": environment,
-                "command": version_cmd
-            }
+    # 收集文件信息
+    file_list = []
+    for file_path in all_fastq_files:
+        if not file_path.exists() or not file_path.is_file():
+            continue
             
-            try:
-                # 执行版本检测命令
-                cmd = ['micromamba', 'run', '-n', environment] + version_cmd
-                conda_result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-                
-                detection_data.update({
-                    "command_executed": True,
-                    "return_code": conda_result.returncode,
-                    "stdout": conda_result.stdout,
-                    "stderr": conda_result.stderr
-                })
-                    
-            except subprocess.TimeoutExpired:
-                detection_data.update({
-                    "command_executed": False,
-                    "error": "timeout",
-                    "timeout_seconds": 15
-                })
-            except FileNotFoundError:
-                detection_data.update({
-                    "command_executed": False,
-                    "error": "micromamba_not_found"
-                })
-            except Exception as e:
-                detection_data.update({
-                    "command_executed": False,
-                    "error": str(e)
-                })
+        try:
+            file_size = file_path.stat().st_size
             
-            return {
-                "result": f"🔧 {tool_name}检测完成",
-                "query_results": detection_data,
-                "config_updates": {}
+            # 提取样本信息
+            filename = file_path.name
+            if "_1." in filename or "_R1" in filename:
+                sample_name = filename.split("_1.")[0].split("_R1")[0]
+                read_type = "R1"
+            elif "_2." in filename or "_R2" in filename:
+                sample_name = filename.split("_2.")[0].split("_R2")[0]
+                read_type = "R2"
+            else:
+                sample_name = filename.split(".")[0]
+                read_type = "single"
+            
+            file_info = {
+                "filename": filename,
+                "full_path": str(file_path),
+                "directory": str(file_path.parent),
+                "size_bytes": file_size,
+                "size_mb": round(file_size / 1024 / 1024, 2),
+                "extension": file_path.suffix,
+                "sample_name": sample_name,
+                "read_type": read_type
             }
-        return wrapper
-    return decorator
+            file_list.append(file_info)
+        except Exception:
+            continue
+    
+    # 按文件名排序
+    file_list.sort(key=lambda x: x["filename"])
+    
+    # 样本统计
+    samples = {}
+    for file_info in file_list:
+        sample_name = file_info["sample_name"]
+        read_type = file_info["read_type"]
+        
+        if sample_name not in samples:
+            samples[sample_name] = {"R1": None, "R2": None, "single": None}
+        
+        samples[sample_name][read_type] = file_info
+    
+    # 确定测序类型
+    paired_count = sum(1 for s in samples.values() if s["R1"] and s["R2"])
+    single_count = sum(1 for s in samples.values() if s["single"])
+    
+    if paired_count > 0 and single_count == 0:
+        sequencing_type = "paired_end"
+    elif single_count > 0 and paired_count == 0:
+        sequencing_type = "single_end"
+    else:
+        sequencing_type = "mixed"
+    
+    return {
+        "detection_status": "success",
+        "total_files": len(file_list),
+        "total_samples": len(samples),
+        "sequencing_type": sequencing_type,
+        "paired_samples": paired_count,
+        "single_samples": single_count,
+        "total_size_mb": sum(f["size_mb"] for f in file_list),
+        "files": file_list,
+        "samples": samples,
+        "scan_timestamp": time.time()
+    }
 
 
-def get_system_info() -> Dict[str, Any]:
-    """获取系统硬件信息"""
+@tool
+def scan_system_resources() -> Dict[str, Any]:
+    """检测系统硬件资源，返回CPU、内存、磁盘和负载信息"""
     try:
         import psutil
         
@@ -163,7 +161,8 @@ def get_system_info() -> Dict[str, Any]:
         return {
             "detection_status": "success",
             "cpu": {
-                "total_cpus": cpu_count,  # 使用total_cpus匹配Prepare节点提示词
+                "physical_cores": cpu_count,
+                "logical_cores": logical_count,
                 "frequency_mhz": cpu_freq.current if cpu_freq else None
             },
             "memory": {
@@ -180,7 +179,8 @@ def get_system_info() -> Dict[str, Any]:
                 "total_bytes": disk.total,
                 "free_bytes": disk.free
             },
-            "load": load_info
+            "load": load_info,
+            "timestamp": time.time()
         }
         
     except ImportError:
@@ -196,999 +196,254 @@ def get_system_info() -> Dict[str, Any]:
         }
 
 
-# ==================== FASTQ文件处理模块 ====================
-
-def _scan_fastq_files() -> Dict[str, Any]:
-    """纯FASTQ文件扫描 - 排除中间文件目录"""
-    # 获取配置
-    config = get_tools_config()
-    project_root = config.project_root
-    fastq_extensions = ["*.fastq", "*.fastq.gz", "*.fq", "*.fq.gz"]
+@tool
+def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
+    """扫描可用的参考基因组配置，返回基因组列表和文件状态
     
-    # 定义要排除的目录（中间文件和缓存目录）
-    exclude_directories = {
-        "work", "tmp", "temp", "results", "output", 
-        ".nextflow", "logs", "cache", "__pycache__"
-    }
-    
-    # 扫描所有FASTQ文件，但排除特定目录
-    all_fastq_files = []
-    for ext in fastq_extensions:
-        for file_path in project_root.rglob(ext):
-            # 检查文件路径是否包含排除的目录
-            if any(excluded in file_path.parts for excluded in exclude_directories):
-                continue
-            all_fastq_files.append(file_path)
-    
-    # 收集每个文件的原始信息
-    file_list = []
-    for file_path in all_fastq_files:
-        # 检查文件是否真实存在且可访问
-        if not file_path.exists() or not file_path.is_file():
-            continue
-            
-        try:
-            file_size = file_path.stat().st_size
-            file_info = {
-                "filename": file_path.name,
-                "full_path": str(file_path),
-                "directory": str(file_path.parent),
-                "size_bytes": file_size,
-                "size_mb": round(file_size / 1024 / 1024, 2),
-                "extension": file_path.suffix
-            }
-            file_list.append(file_info)
-        except Exception:
-            # 跳过无法访问的文件
-            continue
-    
-    # 按文件名排序
-    file_list.sort(key=lambda x: x["filename"])
-    
-    return {
-        "detection_status": "success",
-        "total_files_found": len(file_list),
-        "fastq_files": file_list,
-        "scan_timestamp": time.time()
-    }
-
-
-def _extract_sample_names(file_list: list) -> list:
-    """从文件列表提取样本名称列表"""
-    sample_names = set()
-    for file_info in file_list:
-        filename = file_info.get("filename", "")
-        sample_name, _ = _extract_sample_name_and_type(filename)
-        sample_names.add(sample_name)
-    return list(sample_names)
-
-
-def _extract_sample_name_and_type(filename: str) -> tuple:
-    """提取样本名称和读取类型"""
-    if "_1." in filename or "_R1" in filename:
-        sample_name = filename.split("_1.")[0].split("_R1")[0]
-        read_type = "R1"
-    elif "_2." in filename or "_R2" in filename:
-        sample_name = filename.split("_2.")[0].split("_R2")[0]
-        read_type = "R2"
-    else:
-        sample_name = filename.split(".")[0]
-        read_type = "single"
-    
-    return sample_name, read_type
-
-
-def _analyze_sample_pairing(raw_data: dict) -> dict:
-    """分析样本配对关系（用于detailed模式）"""
-    # 这里可以添加更复杂的配对分析逻辑
-    # 目前返回原始数据，后续可以扩展
-    return raw_data
-
-
-def _format_fastq_report(raw_data: dict, depth: str = "basic") -> str:
-    """格式化FASTQ数据为用户友好的报告"""
-    file_count = raw_data.get("total_files_found", 0)
-    file_list = raw_data.get("fastq_files", [])
-    
-    if file_count == 0:
-        return "在项目目录中未找到任何FASTQ文件"
-    
-    # 计算基本统计
-    total_size_mb = sum(f["size_mb"] for f in file_list)
-    
-    # 按目录分组
-    samples_by_dir = {}
-    for file_info in file_list:
-        directory = file_info["directory"]
-        filename = file_info["filename"]
-        
-        if directory not in samples_by_dir:
-            samples_by_dir[directory] = {}
-        
-        # 提取样本名称和读取类型
-        sample_name, read_type = _extract_sample_name_and_type(filename)
-        
-        if sample_name not in samples_by_dir[directory]:
-            samples_by_dir[directory][sample_name] = {"R1": None, "R2": None, "single": None}
-        
-        samples_by_dir[directory][sample_name][read_type] = {
-            "filename": filename,
-            "size_mb": file_info["size_mb"],
-            "full_path": file_info["full_path"]
-        }
-    
-    # 统计样本数量和类型
-    total_samples = sum(len(samples) for samples in samples_by_dir.values())
-    paired_count = sum(
-        1 for samples in samples_by_dir.values()
-        for files in samples.values()
-        if files['R1'] and files['R2']
-    )
-    single_count = sum(
-        1 for samples in samples_by_dir.values()
-        for files in samples.values()
-        if files['single']
-    )
-    
-    # 生成报告
-    result = f"📊 **FASTQ数据概览**\n\n"
-    result += f"📈 **统计信息:**\n"
-    result += f"   - 样本数量: {total_samples} 个\n"
-    result += f"   - 数据大小: {total_size_mb:.1f} MB\n"
-    result += f"   - 分布目录: {len(samples_by_dir)} 个\n"
-    
-    if paired_count > 0 and single_count == 0:
-        result += f"   - 测序类型: 双端测序 (Paired-end)\n"
-        sequencing_type = "双端测序"
-    elif single_count > 0 and paired_count == 0:
-        result += f"   - 测序类型: 单端测序 (Single-end)\n"
-        sequencing_type = "单端测序"
-    else:
-        result += f"   - 测序类型: 混合类型 ({paired_count}双端 + {single_count}单端)\n"
-        sequencing_type = "混合类型"
-    
-    # 估算读数和分析建议
-    estimated_reads = total_size_mb * 4  # 粗略估算
-    result += f"   - 预估读数: ~{estimated_reads:.0f}M reads\n"
-    
-    # 智能分析建议
-    result += f"\n💡 **分析建议:**\n"
-    if total_samples >= 3:
-        result += f"   - 样本数量充足，适合差异表达分析\n"
-    elif total_samples == 2:
-        result += f"   - 最小比较组，可进行基础差异分析\n"
-    else:
-        result += f"   - 单样本，适合表达谱分析或质控\n"
-    
-    if sequencing_type == "双端测序":
-        result += f"   - 双端数据质量较高，推荐标准流程\n"
-    
-    if estimated_reads >= 100:
-        result += f"   - 测序深度充足，支持深度分析\n"
-    elif estimated_reads >= 40:
-        result += f"   - 测序深度适中，满足基础分析\n"
-    else:
-        result += f"   - 测序深度较低，注意质量控制\n"
-    
-    if depth == "detailed":
-        # 详细样本信息
-        result += f"\n📁 **详细样本信息:**\n"
-        for directory, samples in samples_by_dir.items():
-            result += f"\n📂 {directory}:\n"
-            for sample_name, files in samples.items():
-                if files["R1"] and files["R2"]:
-                    total_sample_size = files['R1']['size_mb'] + files['R2']['size_mb']
-                    result += f"   ✅ {sample_name}: 双端配对 ({total_sample_size:.1f}MB)\n"
-                    result += f"      └─ R1: {files['R1']['filename']} ({files['R1']['size_mb']}MB)\n"
-                    result += f"      └─ R2: {files['R2']['filename']} ({files['R2']['size_mb']}MB)\n"
-                elif files["single"]:
-                    result += f"   📄 {sample_name}: 单端文件 ({files['single']['size_mb']}MB)\n"
-                    result += f"      └─ {files['single']['filename']}\n"
-    
-    # 添加后续步骤建议
-    result += f"\n🚀 **后续步骤:**\n"
-    result += f"   • 运行 '项目概览' 查看完整项目状态\n"
-    result += f"   • 使用 '/plan' 开始配置分析流程\n"
-    
-    return result.strip()
-
-
-# ==================== 基因组文件处理模块 ====================
-
-def _load_genome_config() -> Dict[str, Any]:
-    """纯基因组配置加载 - 只检查文件存在性，不做状态判断"""
+    Args:
+        genome_id: 可选的特定基因组ID，用于重点关注
+    """
     config = get_tools_config()
     genomes_file = config.genomes_config_path
     
     if not genomes_file.exists():
-        return {"detection_status": "no_config_file"}
-    
-    try:
-        with open(genomes_file, 'r', encoding='utf-8') as f:
-            genomes_data = json.load(f)
-        
-        if not genomes_data:
-            return {"detection_status": "empty_config"}
-            
-        # 只检查文件存在性，不做任何分类判断
-        genome_files = {}
-        for genome_id, info in genomes_data.items():
-            fasta_path = info.get('fasta_path', '')
-            gtf_path = info.get('gtf_path', '')
-            
-            # 检查文件信息
-            fasta_info = None
-            gtf_info = None
-            star_index_info = None
-            
-            if fasta_path:
-                fasta_file = Path(fasta_path)
-                if fasta_file.exists():
-                    fasta_info = {
-                        "exists": True,
-                        "path": fasta_path,
-                        "size_bytes": fasta_file.stat().st_size,
-                        "size_mb": round(fasta_file.stat().st_size / 1024**2, 1)
-                    }
-                else:
-                    fasta_info = {"exists": False, "path": fasta_path}
-            
-            if gtf_path:
-                gtf_file = Path(gtf_path)
-                if gtf_file.exists():
-                    gtf_info = {
-                        "exists": True,
-                        "path": gtf_path,
-                        "size_bytes": gtf_file.stat().st_size,
-                        "size_mb": round(gtf_file.stat().st_size / 1024**2, 1)
-                    }
-                else:
-                    gtf_info = {"exists": False, "path": gtf_path}
-            
-            # 检查STAR索引目录
-            if fasta_path and Path(fasta_path).exists():
-                config = get_tools_config()
-                star_index_dir = config.get_star_index_dir(Path(fasta_path))
-                if star_index_dir.exists():
-                    index_files = list(star_index_dir.iterdir())
-                    star_index_info = {
-                        "exists": True,
-                        "path": str(star_index_dir),
-                        "file_count": len(index_files)
-                    }
-                else:
-                    star_index_info = {"exists": False, "path": str(star_index_dir)}
-            
-            # 检查HISAT2索引目录
-            hisat2_index_info = None
-            if fasta_path and Path(fasta_path).exists():
-                config = get_tools_config()
-                hisat2_index_dir = config.get_hisat2_index_dir(Path(fasta_path))
-                if hisat2_index_dir.exists():
-                    # 检查HISAT2索引特征文件（.ht2格式）
-                    ht2_files = list(hisat2_index_dir.glob("*.ht2"))
-                    if ht2_files:
-                        hisat2_index_info = {
-                            "exists": True,
-                            "path": str(hisat2_index_dir),
-                            "file_count": len(ht2_files)
-                        }
-                    else:
-                        hisat2_index_info = {"exists": False, "path": str(hisat2_index_dir)}
-                else:
-                    hisat2_index_info = {"exists": False, "path": str(hisat2_index_dir)}
-            
-            genome_files[genome_id] = {
-                "species": info.get('species', ''),
-                "version": info.get('version', ''),
-                "fasta_url": info.get('fasta_url', ''),
-                "gtf_url": info.get('gtf_url', ''),
-                "fasta_file": fasta_info,
-                "gtf_file": gtf_info,
-                "star_index": star_index_info,
-                "hisat2_index": hisat2_index_info
-            }
-        
-        return {
-            "detection_status": "success",
-            "total_genomes": len(genomes_data),
-            "genome_files": genome_files,
-            "config_path": str(genomes_file)
-        }
-        
-    except Exception as e:
-        return {
-            "detection_status": "error",
-            "error": str(e)
-        }
-
-
-def _format_genome_report(genome_data: dict) -> str:
-    """格式化基因组数据为用户友好的报告"""
-    total_genomes = genome_data.get("total_genomes", 0)
-    genome_files = genome_data.get("genome_files", {})
-    highlighted_genome = genome_data.get("highlighted_genome")
-    
-    if total_genomes == 0:
-        return "未找到基因组配置文件或配置为空"
-    
-    result = f"可用基因组 ({total_genomes} 个):\n\n"
-    
-    for genome_id, info in genome_files.items():
-        species = info.get('species', '未知物种')
-        version = info.get('version', genome_id)
-        
-        # 检查本地文件状态
-        fasta_info = info.get('fasta_file', {})
-        gtf_info = info.get('gtf_file', {})
-        star_index_info = info.get('star_index', {}) or {}
-        
-        fasta_status = "✅ 已下载" if fasta_info.get('exists') else "❌ 未下载"
-        gtf_status = "✅ 已下载" if gtf_info.get('exists') else "❌ 未下载"
-        
-        # 高亮显示特定基因组
-        if highlighted_genome == genome_id:
-            result += f"🎯 **{genome_id} ({species})** [重点关注]\n"
-        else:
-            result += f"🧬 {genome_id} ({species})\n"
-            
-        result += f"   - 版本: {version}\n"
-        result += f"   - FASTA: {fasta_status}\n"
-        result += f"   - GTF: {gtf_status}\n"
-        
-        if fasta_info.get('exists'):
-            size_mb = fasta_info.get('size_mb', 0)
-            result += f"   - FASTA大小: {size_mb} MB\n"
-        
-        if star_index_info.get('exists'):
-            file_count = star_index_info.get('file_count', 0)
-            result += f"   - STAR索引: ✅ {file_count}个文件\n"
-        else:
-            result += f"   - STAR索引: ❌ 未构建\n"
-        
-        # 显示HISAT2索引状态
-        hisat2_index_info = info.get('hisat2_index', {}) or {}
-        if hisat2_index_info.get('exists'):
-            file_count = hisat2_index_info.get('file_count', 0)
-            result += f"   - HISAT2索引: ✅ {file_count}个.ht2文件\n"
-        else:
-            result += f"   - HISAT2索引: ❌ 未构建\n"
-        
-        result += "\n"
-    
-    return result.strip()
-
-
-def _format_system_report(system_info: dict) -> str:
-    """格式化系统信息为用户友好的报告"""
-    if system_info.get("detection_status") == "error":
-        return f"❌ 系统信息检测错误: {system_info.get('error', '')}"
-    
-    result = "💻 **系统硬件资源检测**\n\n"
-    
-    # 显示系统信息
-    cpu_info = system_info.get("cpu", {})
-    memory_info = system_info.get("memory", {})
-    disk_info = system_info.get("disk", {})
-    load_info = system_info.get("load", {})
-    
-    result += "🔧 **CPU资源:**\n"
-    result += f"   - 物理核心: {cpu_info.get('total_cpus', 0)} 个\n"
-    if cpu_info.get('frequency_mhz'):
-        result += f"   - 基础频率: {cpu_info['frequency_mhz']:.0f} MHz\n"
-    
-    result += "\n🧠 **内存资源:**\n"
-    result += f"   - 总内存: {memory_info.get('total_gb', 0):.1f} GB\n"
-    result += f"   - 可用内存: {memory_info.get('available_gb', 0):.1f} GB\n"
-    result += f"   - 内存使用率: {memory_info.get('used_percent', 0):.1f}%\n"
-    
-    result += "\n💾 **磁盘空间:**\n"
-    result += f"   - 总容量: {disk_info.get('total_gb', 0):.1f} GB\n"
-    result += f"   - 可用空间: {disk_info.get('free_gb', 0):.1f} GB\n"
-    result += f"   - 使用率: {disk_info.get('used_percent', 0):.1f}%\n"
-    
-    if "error" not in load_info:
-        result += "\n📊 **系统负载:**\n"
-        result += f"   - 1分钟平均负载: {load_info.get('load_1min', 0):.2f}\n"
-        result += f"   - 5分钟平均负载: {load_info.get('load_5min', 0):.2f}\n"
-        result += f"   - 15分钟平均负载: {load_info.get('load_15min', 0):.2f}\n"
-        result += f"   - 负载比率: {load_info.get('load_ratio', 0):.2f} (相对于CPU核心)\n"
-    
-    # 添加资源评估建议
-    result += "\n💡 **资源评估:**\n"
-    total_gb = memory_info.get('total_gb', 0)
-    cpu_cores = cpu_info.get('total_cpus', 0)
-    
-    if total_gb >= 16:
-        result += "   - 内存充足，支持大型基因组分析\n"
-    elif total_gb >= 8:
-        result += "   - 内存适中，适合中小型数据集\n"
+        result = {"detection_status": "no_config_file"}
     else:
-        result += "   - 内存偏低，建议使用测试数据集\n"
-    
-    if cpu_cores >= 8:
-        result += "   - CPU核心充足，支持并行处理\n"
-    elif cpu_cores >= 4:
-        result += "   - CPU核心适中，满足基本分析需求\n"
-    else:
-        result += "   - CPU核心较少，处理时间可能较长\n"
-    
-    return result.strip()
-
-
-# ==================== 双模式工具（支持Normal和Detect节点） ====================
-
-def scan_fastq_files(mode: str = "normal", depth: str = "basic") -> Union[str, dict]:
-    """统一FASTQ文件扫描工具 - 支持双模式输出
-    
-    Args:
-        mode: "normal" 返回格式化字符串供用户阅读
-              "detect" 返回结构化dict供系统处理
-        depth: "basic" 快速扫描基本信息
-               "detailed" 深度分析配对关系
-    
-    Returns:
-        根据mode返回字符串或字典
-    """
-    try:
-        # 使用共享的底层扫描函数
-        raw_data = _scan_fastq_files()
-        
-        if raw_data.get("detection_status") != "success":
-            error_msg = f"FASTQ文件扫描失败: {raw_data.get('error', '未知错误')}"
-            if mode == "detect":
-                return {
-                    "result": error_msg,
-                    "query_results": raw_data,
-                    "config_updates": {}
-                }
-            else:
-                return error_msg
-        
-        if mode == "detect":
-            # Detect模式：返回结构化数据供系统处理
-            if depth == "detailed":
-                # 为Detect节点增强配对分析
-                enhanced_data = _analyze_sample_pairing(raw_data)
-                simplified_data = {
-                    "detection_status": enhanced_data["detection_status"],
-                    "file_count": enhanced_data["total_files_found"],
-                    "file_paths": [f["full_path"] for f in enhanced_data["fastq_files"]],
-                    "samples": _extract_sample_names(enhanced_data["fastq_files"])
-                }
-            else:
-                simplified_data = {
-                    "detection_status": raw_data["detection_status"],
-                    "file_count": raw_data["total_files_found"],
-                    "file_paths": [f["full_path"] for f in raw_data["fastq_files"]],
-                    "samples": _extract_sample_names(raw_data["fastq_files"])
-                }
-            
-            return {
-                "result": f"✅ 扫描完成，发现{raw_data['total_files_found']}个FASTQ文件",
-                "query_results": simplified_data,
-                "config_updates": {}
-            }
-        else:
-            # Normal模式：返回格式化报告
-            return _format_fastq_report(raw_data, depth)
-            
-    except Exception as e:
-        error_msg = f"FASTQ文件扫描时出错: {str(e)}"
-        if mode == "detect":
-            return {
-                "result": error_msg,
-                "query_results": {"detection_status": "error", "error": str(e)},
-                "config_updates": {}
-            }
-        else:
-            return error_msg
-
-
-def scan_genome_files(mode: str = "normal", genome_id: Optional[str] = None) -> Union[str, dict]:
-    """统一基因组文件扫描工具 - 支持双模式输出
-    
-    Args:
-        mode: "normal" 返回格式化字符串供用户阅读
-              "detect" 返回结构化dict供系统处理
-        genome_id: 特定基因组ID，None表示检查所有
-    
-    Returns:
-        根据mode返回字符串或字典
-    """
-    try:
-        # 使用共享的基因组配置加载函数
-        genome_data = _load_genome_config()
-        
-        if genome_data.get("detection_status") not in ["success"]:
-            error_msg = f"基因组配置检查失败: {genome_data.get('error', '配置文件问题')}"
-            if mode == "detect":
-                return {
-                    "result": error_msg,
-                    "query_results": genome_data,
-                    "config_updates": {}
-                }
-            else:
-                return error_msg
-        
-        # 如果指定了特定基因组，验证存在性并标记
-        if genome_id and genome_data.get("genome_files"):
-            if genome_id not in genome_data["genome_files"]:
-                error_msg = f"未找到基因组配置: {genome_id}"
-                if mode == "detect":
-                    return {
-                        "result": error_msg,
-                        "query_results": {"detection_status": "error", "error": error_msg},
-                        "config_updates": {}
-                    }
-                else:
-                    return error_msg
-            
-            # 保持所有基因组信息，但标记特定基因组
-            genome_data["highlighted_genome"] = genome_id
-        
-        if mode == "detect":
-            # Detect模式：返回结构化数据
-            # 简化genome_data以减少JSON复杂度
-            genomes = genome_data.get("genome_files", {})
-            available_genomes = []
-            for name, info in genomes.items():
-                is_complete = all([
-                    info.get("fasta_file", {}).get("exists", False),
-                    info.get("gtf_file", {}).get("exists", False)
-                ])
-                available_genomes.append({
-                    "name": name,
-                    "species": info.get("species"),
-                    "complete": is_complete,
-                    "has_star_index": (info.get("star_index") or {}).get("exists", False),
-                    "has_hisat2_index": (info.get("hisat2_index") or {}).get("exists", False)
-                })
-            
-            simplified_config = {
-                "detection_status": genome_data["detection_status"],
-                "total_genomes": len(genomes),
-                "available_genomes": available_genomes
-            }
-            
-            return {
-                "result": f"✅ 检测到{len(genomes)}个基因组配置",
-                "query_results": simplified_config,
-                "config_updates": {}
-            }
-        else:
-            # Normal模式：返回格式化报告
-            return _format_genome_report(genome_data)
-            
-    except Exception as e:
-        error_msg = f"基因组文件扫描时出错: {str(e)}"
-        if mode == "detect":
-            return {
-                "result": error_msg,
-                "query_results": {"detection_status": "error", "error": str(e)},
-                "config_updates": {}
-            }
-        else:
-            return error_msg
-
-
-def scan_system_resources(mode: str = "normal") -> Union[str, dict]:
-    """统一系统资源扫描工具 - 支持双模式输出
-    
-    Args:
-        mode: "normal" 返回格式化字符串供用户阅读
-              "detect" 返回结构化dict供系统处理
-    
-    Returns:
-        根据mode返回字符串或字典
-    """
-    try:
-        # 使用共享的系统信息获取函数
-        system_info = get_system_info()
-        
-        if system_info.get("detection_status") == "missing_dependency":
-            error_msg = "❌ 无法检测系统资源 (psutil未安装)\n   请安装: uv add psutil"
-            if mode == "detect":
-                return {
-                    "result": error_msg,
-                    "query_results": system_info,
-                    "config_updates": {}
-                }
-            else:
-                return error_msg
-        
-        if system_info.get("detection_status") == "error":
-            error_msg = f"⚠️ 系统资源检测错误: {system_info.get('error', '')}"
-            if mode == "detect":
-                return {
-                    "result": error_msg,
-                    "query_results": system_info,
-                    "config_updates": {}
-                }
-            else:
-                return error_msg
-        
-        if mode == "detect":
-            # Detect模式：返回结构化数据
-            return {
-                "result": "✅ 系统资源检测完成",
-                "query_results": system_info,
-                "config_updates": {}
-            }
-        else:
-            # Normal模式：返回格式化报告
-            return _format_system_report(system_info)
-            
-    except Exception as e:
-        error_msg = f"系统资源扫描时出错: {str(e)}"
-        if mode == "detect":
-            return {
-                "result": error_msg,
-                "query_results": {"detection_status": "error", "error": str(e)},
-                "config_updates": {}
-            }
-        else:
-            return error_msg
-
-
-# ==================== 生物信息学工具检测 ====================
-
-@tool_detection("fastp", "qc_env", ["fastp", "--version"])
-def check_fastp_availability() -> dict:
-    """检测fastp工具可用性 - 使用装饰器"""
-    pass
-
-
-@tool_detection("STAR", "align_env", ["STAR", "--version"])
-def check_star_availability() -> dict:
-    """检测STAR工具可用性 - 使用装饰器"""
-    pass
-
-
-@tool_detection("HISAT2", "align_env", ["hisat2", "--version"])
-def check_hisat2_availability() -> dict:
-    """检测HISAT2工具可用性 - 使用装饰器"""
-    pass
-
-
-@tool_detection("featureCounts", "quant_env", ["featureCounts", "-v"])
-def check_featurecounts_availability() -> dict:
-    """检测featureCounts工具可用性 - 使用装饰器"""
-    pass
-
-
-# ==================== Normal模式专用工具 ====================
-
-def get_project_overview(query: str = "") -> str:
-    """项目全貌概览 - 整合所有关键信息的智能仪表板"""
-    try:
-        result = "🎯 **项目概览仪表板**\n\n"
-        
-        # 1. 数据状态总览
-        result += "📊 **数据状态:**\n"
-        
-        # 扫描FASTQ文件
-        config = get_tools_config()
-        project_root = config.project_root
-        fastq_extensions = ["*.fastq", "*.fastq.gz", "*.fq", "*.fq.gz"]
-        all_fastq_files = []
-        for ext in fastq_extensions:
-            all_fastq_files.extend(project_root.rglob(ext))
-        
-        # 过滤原始文件
-        excluded_dirs = ["work", "results", "tmp"]
-        processed_indicators = ["trimmed", "fastp", "cutadapt", "filtered", "processed", "qc"]
-        raw_fastq_files = []
-        
-        for file_path in all_fastq_files:
-            if not file_path.exists() or any(excluded_dir in file_path.parts for excluded_dir in excluded_dirs):
-                continue
-            filename_lower = file_path.name.lower()
-            if not any(indicator in filename_lower for indicator in processed_indicators):
-                raw_fastq_files.append(file_path)
-        
-        # 统计样本信息
-        total_samples = 0
-        total_size_mb = 0
-        sequencing_type = "未检测到"
-        
-        if raw_fastq_files:
-            # 简单样本计数和大小统计
-            sample_names = set()
-            for file_path in raw_fastq_files:
-                filename = file_path.name
-                total_size_mb += file_path.stat().st_size / 1024 / 1024
-                
-                if "_1." in filename or "_R1" in filename:
-                    sample_name = filename.split("_1.")[0].split("_R1")[0]
-                    sample_names.add(sample_name)
-                    sequencing_type = "双端测序 (Paired-end)"
-                elif "_2." in filename or "_R2" in filename:
-                    sample_name = filename.split("_2.")[0].split("_R2")[0]
-                    sample_names.add(sample_name)
-                else:
-                    sample_name = filename.split(".")[0]
-                    sample_names.add(sample_name)
-                    sequencing_type = "单端测序 (Single-end)"
-            
-            total_samples = len(sample_names)
-        
-        result += f"   - 样本数量: {total_samples} 个\n"
-        result += f"   - 数据大小: {total_size_mb:.1f} MB\n"
-        result += f"   - 测序类型: {sequencing_type}\n"
-        
-        # 2. 基因组状态
-        result += "\n🧬 **基因组状态:**\n"
-        config = get_tools_config()
-        genomes_file = config.genomes_config_path
-        ready_genomes = 0
-        total_genomes = 0
-        
-        if genomes_file.exists():
+        try:
             with open(genomes_file, 'r', encoding='utf-8') as f:
                 genomes_data = json.load(f)
-            total_genomes = len(genomes_data)
             
-            for genome_id, info in genomes_data.items():
-                fasta_path = info.get('fasta_path', '')
-                gtf_path = info.get('gtf_path', '')
-                if fasta_path and gtf_path and Path(fasta_path).exists() and Path(gtf_path).exists():
-                    ready_genomes += 1
-        
-        result += f"   - 可用基因组: {total_genomes} 个\n"
-        result += f"   - 就绪基因组: {ready_genomes} 个\n"
-        
-        # 3. 历史分析
-        result += "\n📈 **历史分析:**\n"
-        config = get_tools_config()
-        results_dir = config.results_dir
-        analysis_count = 0
-        latest_analysis = "无"
-        
-        if results_dir.exists():
-            analysis_dirs = [d for d in results_dir.iterdir() if d.is_dir() and not d.name.startswith('.')]
-            analysis_count = len(analysis_dirs)
-            
-            if analysis_dirs:
-                # 找最新的分析
-                latest_dir = max(analysis_dirs, key=lambda x: x.stat().st_mtime)
-                latest_analysis = latest_dir.name
-        
-        result += f"   - 历史分析: {analysis_count} 次\n"
-        result += f"   - 最新分析: {latest_analysis}\n"
-        
-        # 4. 项目健康度评估
-        result += "\n💡 **项目评估:**\n"
-        
-        health_score = 0
-        suggestions = []
-        
-        if total_samples > 0:
-            health_score += 40
-        else:
-            suggestions.append("未检测到FASTQ数据文件")
-        
-        if ready_genomes > 0:
-            health_score += 30
-        else:
-            suggestions.append("需要下载基因组参考文件")
-        
-        if total_samples >= 3:
-            health_score += 20
-            suggestions.append("样本数量充足，适合差异表达分析")
-        elif total_samples >= 2:
-            health_score += 10
-            suggestions.append("样本数量较少，考虑增加重复")
-        
-        if sequencing_type == "双端测序 (Paired-end)":
-            health_score += 10
-            suggestions.append("双端测序数据，质量较高")
-        
-        result += f"   - 项目健康度: {health_score}/100\n"
-        
-        if health_score >= 80:
-            result += "   - 状态: ✅ 项目就绪，可开始分析\n"
-        elif health_score >= 60:
-            result += "   - 状态: ⚠️ 基本就绪，建议检查配置\n"
-        else:
-            result += "   - 状态: ❌ 需要完善项目配置\n"
-        
-        # 5. 智能建议
-        if suggestions:
-            result += "\n🚀 **智能建议:**\n"
-            for suggestion in suggestions[:3]:  # 最多显示3个建议
-                result += f"   • {suggestion}\n"
-        
-        result += "\n💡 输入 '/plan' 开始配置分析流程"
-        
-        return result.strip()
-        
-    except Exception as e:
-        return f"生成项目概览时出错: {str(e)}"
-
-
-def list_analysis_history(query: str = "") -> str:
-    """历史分析管理 - 基于新的归档文件夹系统"""
-    try:
-        result = "📈 **分析历史记录**\n\n"
-        
-        # 只检查新的reports归档文件夹
-        config = get_tools_config()
-        reports_dir = config.reports_dir
-        if not reports_dir.exists():
-            return "📭 暂无分析历史记录\n\n💡 完成首次分析后，历史记录将显示在这里"
-        
-        # 扫描时间戳格式的归档文件夹
-        archive_folders = []
-        for item in reports_dir.iterdir():
-            if item.is_dir() and not item.name.startswith('.') and item.name != "latest":
-                # 检查是否是时间戳格式 (YYYYMMDD_HHMMSS)
-                if len(item.name) == 15 and item.name[8] == '_':
-                    try:
-                        timestamp = datetime.strptime(item.name, "%Y%m%d_%H%M%S")
-                        archive_folders.append({
-                            "path": item,
-                            "timestamp": timestamp,
-                            "name": item.name
-                        })
-                    except ValueError:
-                        continue
-        
-        if not archive_folders:
-            return "📭 reports目录存在但无归档记录\n\n💡 运行分析后结果将自动归档到reports/时间戳/目录"
-        
-        # 按时间排序（最新在前）
-        archive_folders.sort(key=lambda x: x["timestamp"], reverse=True)
-        
-        result += f"📂 **发现 {len(archive_folders)} 个归档分析:**\n\n"
-        
-        for i, archive in enumerate(archive_folders):
-            if i >= 15:  # 显示前15个最新的分析
-                break
-            
-            archive_path = archive["path"]
-            timestamp_str = archive["timestamp"].strftime("%Y-%m-%d %H:%M:%S")
-            
-            result += f"📋 **{archive['name']}**\n"
-            result += f"   - 分析时间: {timestamp_str}\n"
-            
-            # 检查归档文件内容
-            files_info = []
-            file_sizes = {}
-            
-            json_report = archive_path / "analysis_report.json"
-            md_report = archive_path / "analysis_summary.md" 
-            runtime_config = archive_path / "runtime_config.json"
-            exec_log = archive_path / "execution_log.txt"
-            
-            if json_report.exists():
-                files_info.append("JSON报告")
-                file_sizes["json"] = json_report.stat().st_size / 1024  # KB
-            
-            if md_report.exists():
-                files_info.append("Markdown报告")
-                file_sizes["md"] = md_report.stat().st_size / 1024
-                
-            if runtime_config.exists():
-                files_info.append("配置文件")
-                file_sizes["config"] = runtime_config.stat().st_size / 1024
-                
-            if exec_log.exists():
-                files_info.append("执行日志")
-                file_sizes["log"] = exec_log.stat().st_size / 1024
-            
-            if files_info:
-                result += f"   - 归档内容: {', '.join(files_info)}\n"
-            
-            # 尝试从runtime_config.json读取配置信息
-            try:
-                if runtime_config.exists():
-                    with open(runtime_config, 'r', encoding='utf-8') as f:
-                        config_data = json.load(f)
-                        
-                    tools_used = []
-                    nextflow_params = config_data.get("nextflow_params", {})
-                    if nextflow_params.get("qc_tool"):
-                        tools_used.append(f"质控({nextflow_params['qc_tool']})")
-                    if nextflow_params.get("align_tool"):
-                        tools_used.append(f"比对({nextflow_params['align_tool']})")
-                    if nextflow_params.get("quant_tool"):
-                        tools_used.append(f"定量({nextflow_params['quant_tool']})")
-                    if nextflow_params.get("genome_version"):
-                        result += f"   - 参考基因组: {nextflow_params['genome_version']}\n"
-                        
-                    if tools_used:
-                        result += f"   - 分析工具: {', '.join(tools_used)}\n"
-                        
-            except (json.JSONDecodeError, FileNotFoundError, KeyError):
-                pass
-            
-            # 计算归档文件夹总大小
-            try:
-                total_size = sum(f.stat().st_size for f in archive_path.rglob("*") if f.is_file())
-                size_kb = total_size / 1024
-                if size_kb > 1024:
-                    result += f"   - 归档大小: {size_kb / 1024:.1f} MB\n"
-                else:
-                    result += f"   - 归档大小: {size_kb:.1f} KB\n"
-            except:
-                result += "   - 归档大小: 计算失败\n"
-            
-            # 分析完整性状态
-            if json_report.exists() and md_report.exists() and runtime_config.exists():
-                result += "   - 状态: ✅ 归档完整\n"
-            elif json_report.exists() or md_report.exists():
-                result += "   - 状态: ⚠️ 归档部分完整\n"
+            if not genomes_data:
+                result = {"detection_status": "empty_config"}
             else:
-                result += "   - 状态: ❌ 归档不完整\n"
-            
-            result += f"   - 归档路径: `reports/{archive['name']}/`\n\n"
-        
-        # 显示统计和使用提示
-        if len(archive_folders) > 15:
-            result += f"⏭️ 只显示了最新的15个分析，共有{len(archive_folders)}个归档记录\n\n"
-        
-        result += "💡 **使用说明:**\n"
-        result += "- 每次分析完成后会自动创建归档文件夹\n"
-        result += "- 最新分析可通过 `reports/latest/` 访问\n" 
-        result += "- 归档包含: 配置、JSON报告、Markdown报告、执行日志\n"
-        result += "- 输入 '/plan' 开始新的分析\n"
-        
-        return result.strip()
-        
-    except Exception as e:
-        return f"获取分析历史时出错: {str(e)}"
-        
-        # 分析成功配置提取
-        result += "🔄 **可复用配置:**\n"
-        successful_configs = []
-        
-        for analysis_dir in analysis_dirs[:5]:  # 检查最新5个分析
-            # 查找配置文件
-            config_files = []
-            for item in analysis_dir.rglob("*config*"):
-                if item.is_file() and item.suffix in ['.json', '.yaml', '.yml']:
-                    config_files.append(item)
-            
-            if config_files:
-                successful_configs.append({
-                    'name': analysis_dir.name,
-                    'time': time.strftime("%m-%d %H:%M", time.localtime(analysis_dir.stat().st_mtime)),
-                    'configs': len(config_files)
-                })
-        
-        if successful_configs:
-            for config in successful_configs:
-                result += f"   • {config['name']} ({config['time']}) - {config['configs']}个配置文件\n"
-            result += "\n💡 这些配置可以在Plan模式中复用\n"
-        else:
-            result += "   • 暂无可识别的配置文件\n"
-        
-        result += "\n🚀 输入 '/plan' 开始新的分析流程"
-        
-        return result.strip()
-        
-    except Exception as e:
-        return f"获取分析历史时出错: {str(e)}"
+                # 检查每个基因组的文件状态
+                genome_status = {}
+                for genome_id_key, info in genomes_data.items():
+                    fasta_path = info.get('fasta_path', '')
+                    gtf_path = info.get('gtf_path', '')
+                    
+                    # 检查文件存在性
+                    fasta_exists = bool(fasta_path and Path(fasta_path).exists())
+                    gtf_exists = bool(gtf_path and Path(gtf_path).exists())
+                    
+                    # 检查索引状态
+                    star_index_exists = False
+                    hisat2_index_exists = False
+                    
+                    if fasta_exists:
+                        # STAR索引检查
+                        star_index_dir = config.get_star_index_dir(Path(fasta_path))
+                        if star_index_dir.exists():
+                            star_index_files = list(star_index_dir.iterdir())
+                            star_index_exists = len(star_index_files) > 0
+                        
+                        # HISAT2索引检查
+                        hisat2_index_dir = config.get_hisat2_index_dir(Path(fasta_path))
+                        if hisat2_index_dir.exists():
+                            ht2_files = list(hisat2_index_dir.glob("*.ht2"))
+                            hisat2_index_exists = len(ht2_files) > 0
+                    
+                    genome_status[genome_id_key] = {
+                        "species": info.get('species', ''),
+                        "version": info.get('version', ''),
+                        "fasta_url": info.get('fasta_url', ''),
+                        "gtf_url": info.get('gtf_url', ''),
+                        "fasta_path": fasta_path,
+                        "gtf_path": gtf_path,
+                        "fasta_exists": fasta_exists,
+                        "gtf_exists": gtf_exists,
+                        "complete": fasta_exists and gtf_exists,
+                        "star_index_exists": star_index_exists,
+                        "hisat2_index_exists": hisat2_index_exists
+                    }
+                
+                result = {
+                    "detection_status": "success",
+                    "total_genomes": len(genomes_data),
+                    "available_genomes": len([g for g in genome_status.values() if g["complete"]]),
+                    "genomes": genome_status,
+                    "config_path": str(genomes_file)
+                }
+        except Exception as e:
+            result = {
+                "detection_status": "error",
+                "error": str(e)
+            }
+    
+    # 如果指定了特定基因组，添加标记
+    if genome_id:
+        result["requested_genome"] = genome_id
+    
+    return result
 
 
-def add_genome_config(user_input: str = "") -> str:
-    """使用LLM智能解析用户输入并添加基因组配置
+@tool
+def get_project_overview() -> Dict[str, Any]:
+    """获取项目整体状态概览，包括数据、基因组、系统资源和分析历史"""
+    return {
+        "fastq_data": scan_fastq_files(),
+        "genome_status": scan_genome_files(),
+        "system_resources": scan_system_resources(),
+        "analysis_history": list_analysis_history(),
+        "overview_timestamp": time.time()
+    }
+
+
+@tool
+def list_analysis_history() -> Dict[str, Any]:
+    """获取历史分析记录，返回分析时间、配置和结果信息"""
+    config = get_tools_config()
+    reports_dir = config.reports_dir
+    
+    if not reports_dir.exists():
+        return {
+            "detection_status": "no_history",
+            "total_analyses": 0,
+            "analyses": []
+        }
+    
+    # 扫描时间戳格式的归档文件夹
+    analyses = []
+    for item in reports_dir.iterdir():
+        if item.is_dir() and not item.name.startswith('.') and item.name != "latest":
+            # 检查是否是时间戳格式 (YYYYMMDD_HHMMSS)
+            if len(item.name) == 15 and item.name[8] == '_':
+                try:
+                    timestamp = datetime.strptime(item.name, "%Y%m%d_%H%M%S")
+                    
+                    # 检查归档内容
+                    analysis_info = {
+                        "timestamp_str": item.name,
+                        "timestamp": timestamp.timestamp(),
+                        "path": str(item),
+                        "files": {}
+                    }
+                    
+                    # 检查各类文件
+                    for file_name in ["analysis_report.json", "analysis_summary.md", 
+                                    "runtime_config.json", "execution_log.txt"]:
+                        file_path = item / file_name
+                        if file_path.exists():
+                            analysis_info["files"][file_name] = {
+                                "exists": True,
+                                "size_bytes": file_path.stat().st_size
+                            }
+                        else:
+                            analysis_info["files"][file_name] = {"exists": False}
+                    
+                    # 尝试读取配置信息
+                    runtime_config = item / "runtime_config.json"
+                    if runtime_config.exists():
+                        try:
+                            with open(runtime_config, 'r', encoding='utf-8') as f:
+                                config_data = json.load(f)
+                            analysis_info["config"] = config_data.get("nextflow_params", {})
+                        except Exception:
+                            analysis_info["config"] = {}
+                    
+                    # 计算总大小
+                    total_size = sum(f.stat().st_size for f in item.rglob("*") if f.is_file())
+                    analysis_info["total_size_bytes"] = total_size
+                    
+                    analyses.append(analysis_info)
+                except ValueError:
+                    continue
+    
+    # 按时间排序（最新在前）
+    analyses.sort(key=lambda x: x["timestamp"], reverse=True)
+    
+    return {
+        "detection_status": "success",
+        "total_analyses": len(analyses),
+        "latest_analysis": analyses[0] if analyses else None,
+        "analyses": analyses
+    }
+
+
+@tool
+def check_tool_availability(tool_name: str) -> Dict[str, Any]:
+    """检测生物信息学工具的可用性
     
     Args:
-        user_input: 用户输入，包含"添加基因组"和URL信息
+        tool_name: 工具名称 (fastp, star, hisat2, featurecounts)
+    """
+    tool_configs = {
+        "fastp": ("qc_env", ["fastp", "--version"]),
+        "star": ("align_env", ["STAR", "--version"]), 
+        "hisat2": ("align_env", ["hisat2", "--version"]),
+        "featurecounts": ("quant_env", ["featureCounts", "-v"])
+    }
     
-    Returns:
-        添加结果的文本描述
+    if tool_name.lower() not in tool_configs:
+        return {
+            "tool_name": tool_name,
+            "error": f"未知工具: {tool_name}",
+            "available_tools": list(tool_configs.keys()),
+            "available": False
+        }
+    
+    env_name, cmd = tool_configs[tool_name.lower()]
+    
+    # 执行工具检测
+    detection_data = {
+        "tool_name": tool_name,
+        "environment": env_name,
+        "command": cmd,
+        "timestamp": time.time()
+    }
+    
+    try:
+        # 执行版本检测命令
+        full_cmd = ['micromamba', 'run', '-n', env_name] + cmd
+        result = subprocess.run(full_cmd, capture_output=True, text=True, timeout=15)
+        
+        detection_data.update({
+            "command_executed": True,
+            "return_code": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "available": result.returncode == 0
+        })
+            
+    except subprocess.TimeoutExpired:
+        detection_data.update({
+            "command_executed": False,
+            "error": "timeout",
+            "timeout_seconds": 15,
+            "available": False
+        })
+    except FileNotFoundError:
+        detection_data.update({
+            "command_executed": False,
+            "error": "micromamba_not_found",
+            "available": False
+        })
+    except Exception as e:
+        detection_data.update({
+            "command_executed": False,
+            "error": str(e),
+            "available": False
+        })
+    
+    return detection_data
+
+
+@tool
+def add_genome_config(user_input: str) -> Dict[str, Any]:
+    """智能解析用户输入并添加基因组配置
+    
+    Args:
+        user_input: 包含基因组信息和URL的用户输入
     """
     try:
-        print(f"🛠️ add_genome_config被调用，用户输入: {user_input}")
-        
         if not user_input.strip():
-            return "请提供基因组信息，包含FASTA和GTF文件的URL"
+            return {
+                "success": False,
+                "error": "请提供基因组信息，包含FASTA和GTF文件的URL"
+            }
         
         # 使用LLM解析用户输入
-        from src.core import get_shared_llm
+        from .core import get_shared_llm
         
         llm = get_shared_llm()
         
@@ -1206,148 +461,99 @@ def add_genome_config(user_input: str = "") -> str:
 1. 从URL中智能识别基因组版本和物种
 2. 常见映射：hg->human, mm->mouse, ce->caenorhabditis_elegans, dm->drosophila, rn->rat
 3. 如果无法确定，根据生物信息学常识合理推断
-4. 只返回有效的JSON，不要其他解释
+4. 只返回有效的JSON，不要其他解释"""
 
-示例：
-输入："添加基因组 https://path/ce11/ce11.fa.gz https://path/ce11/ce11.gtf.gz"
-输出：{"genome_id":"ce11","species":"caenorhabditis_elegans","version":"ce11","fasta_url":"https://path/ce11/ce11.fa.gz","gtf_url":"https://path/ce11/ce11.gtf.gz"}"""
-
-        # 使用简单的invoke方法
+        # 解析用户输入
         response = llm.invoke(f"System: {system_prompt}\n\nHuman: 请解析：{user_input}")
-        parsed_content = response.content.strip()
-        
-        print(f"🤖 LLM解析结果: {parsed_content}")
+        parsed_content = str(response.content).strip()
         
         # 提取JSON内容
         try:
-            # 尝试直接解析
             genome_info = json.loads(parsed_content)
         except json.JSONDecodeError:
-            # 如果失败，尝试提取JSON部分
             json_match = re.search(r'\{.*\}', parsed_content, re.DOTALL)
             if not json_match:
-                return f"LLM解析失败，无法提取有效的JSON格式。原始响应：{parsed_content}"
-            
-            try:
-                genome_info = json.loads(json_match.group())
-            except json.JSONDecodeError as e:
-                return f"JSON解析错误：{str(e)}\n原始响应：{parsed_content}"
+                return {"success": False, "error": f"LLM解析失败：{parsed_content}"}
+            genome_info = json.loads(json_match.group())
         
         # 验证必需字段
         required_fields = ['genome_id', 'species', 'version', 'fasta_url', 'gtf_url']
         missing_fields = [field for field in required_fields if not genome_info.get(field)]
         if missing_fields:
-            return f"LLM解析结果缺少必需字段：{missing_fields}\n解析结果：{genome_info}"
+            return {"success": False, "error": f"缺少字段：{missing_fields}"}
         
-        print(f"✅ 解析成功: {genome_info}")
-        
-        # 执行实际的基因组添加逻辑
+        # 构建配置
         genome_id = genome_info['genome_id']
         species = genome_info['species']
         version = genome_info['version']
-        fasta_url = genome_info['fasta_url']
-        gtf_url = genome_info['gtf_url']
         
-        # 验证URL格式
-        if not (fasta_url.startswith('http://') or fasta_url.startswith('https://')):
-            return f"FASTA URL格式无效：{fasta_url}"
-        if not (gtf_url.startswith('http://') or gtf_url.startswith('https://')):
-            return f"GTF URL格式无效：{gtf_url}"
-        
-        # 生成本地路径（相对容器工作目录 /data，不要以 data/ 前缀开头）
         fasta_path = f"genomes/{species}/{version}/{version}.fa"
         gtf_path = f"genomes/{species}/{version}/{version}.gtf"
         
-        # 构建新的基因组配置
         new_genome_config = {
             "species": species,
             "version": version,
             "fasta_path": fasta_path,
             "gtf_path": gtf_path,
-            "fasta_url": fasta_url,
-            "gtf_url": gtf_url
+            "fasta_url": genome_info['fasta_url'],
+            "gtf_url": genome_info['gtf_url']
         }
         
-        # 读取现有配置
+        # 读取现有配置并添加
         config = get_tools_config()
         genomes_file = config.genomes_config_path
+        
         if genomes_file.exists():
             with open(genomes_file, 'r', encoding='utf-8') as f:
                 genomes_data = json.load(f)
         else:
             genomes_data = {}
         
-        # 检查是否已存在
+        # 检查重复
         if genome_id in genomes_data:
-            existing = genomes_data[genome_id]
-            return f"""基因组 {genome_id} 已存在
-
-现有配置：
-- 物种：{existing.get('species', '未知')}
-- 版本：{existing.get('version', '未知')}
-- FASTA URL：{existing.get('fasta_url', '未设置')}
-- GTF URL：{existing.get('gtf_url', '未设置')}
-
-如需更新，请使用不同的genome_id或先删除现有配置"""
-        
-        # 添加新配置
-        genomes_data[genome_id] = new_genome_config
+            return {
+                "success": False,
+                "error": f"基因组 {genome_id} 已存在",
+                "existing_config": genomes_data[genome_id]
+            }
         
         # 保存配置
-        config = get_tools_config()
+        genomes_data[genome_id] = new_genome_config
         config.path_manager.ensure_directory(config.settings.config_dir)
+        
         with open(genomes_file, 'w', encoding='utf-8') as f:
             json.dump(genomes_data, f, indent=2, ensure_ascii=False)
         
-        print(f"✅ 基因组配置添加成功: {genome_id}")
-        
-        return f"""✅ 成功添加基因组配置：{genome_id}
-
-📋 基因组信息：
-- 基因组ID：{genome_id}
-- 物种：{species}
-- 版本：{version}
-
-📁 本地路径配置：
-- FASTA：{fasta_path}
-- GTF：{gtf_path}
-
-🌐 下载源：
-- FASTA URL：{fasta_url}
-- GTF URL：{gtf_url}
-
-💡 提示：文件将在首次运行分析时自动下载到指定路径"""
+        return {
+            "success": True,
+            "genome_id": genome_id,
+            "config": new_genome_config,
+            "message": f"成功添加基因组配置：{genome_id}"
+        }
         
     except Exception as e:
-        print(f"❌ add_genome_config出错: {str(e)}")
-        return f"智能解析并添加基因组时出错：{str(e)}"
+        return {
+            "success": False,
+            "error": f"添加基因组配置时出错：{str(e)}"
+        }
 
 
-def get_help(query: str = "") -> str:
-    """获取系统帮助信息"""
-    return """
-🎯 RNA-seq智能分析助手 - Normal模式 (项目信息中心)
-
-📊 **核心项目工具:**
-• 项目概览 - 一键查看项目完整状态和健康度
-• 历史分析记录 - 浏览已完成的分析和可复用配置
-
-📋 **详细信息查询:**
-• 查看FASTQ文件 - 详细扫描所有测序数据文件
-• 查看基因组信息 - 显示可用参考基因组状态
-
-🗄️ **基因组管理:**
-• 添加基因组配置 - 智能解析并添加新的参考基因组
-
-🚀 **开始分析:**
-输入 "/plan" 进入计划模式，Plan模式将执行深度数据检测、系统资源评估并制定智能分析方案
-
-💡 **使用建议:**
-1. 首次使用建议运行 "项目概览" 了解项目状态
-2. 如需详细信息，使用具体的查询工具
-3. 项目了解完成后，使用 "/plan" 进入深度分析规划
-
-🔄 **模式分工:**
-- Normal模式: 快速信息查看和项目概览
-- Plan模式: 深度检测、就绪评估和分析方案制定
-""".strip()
+@tool
+def get_help() -> Dict[str, Any]:
+    """获取系统帮助信息和功能说明"""
+    return {
+        "system_name": "RNA-seq智能分析助手",
+        "current_mode": "Normal模式 (项目信息中心)",
+        "core_tools": [
+            "项目概览 - 一键查看项目完整状态和健康度",
+            "历史分析记录 - 浏览已完成的分析和可复用配置",
+            "查看FASTQ文件 - 详细扫描所有测序数据文件",
+            "查看基因组信息 - 显示可用参考基因组状态",
+            "添加基因组配置 - 智能解析并添加新的参考基因组"
+        ],
+        "next_steps": [
+            "首次使用建议运行 '项目概览' 了解项目状态",
+            "输入 '/plan' 进入计划模式进行深度分析规划"
+        ],
+        "mode_description": "Normal模式专注快速信息查看和项目概览，Plan模式负责深度检测和分析方案制定"
+    }
