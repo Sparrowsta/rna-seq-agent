@@ -12,7 +12,7 @@ from ..config import get_tools_config
 def _get_nextflow_template() -> Template:
     """获取 Nextflow 配置模板"""
     config = get_tools_config()
-    templates_dir = config.settings.project_root / "src" / "templates"
+    templates_dir = config.settings.templates_dir  # 使用新的Docker兼容路径
     
     # 确保模板目录和文件存在
     templates_dir.mkdir(parents=True, exist_ok=True)
@@ -146,139 +146,80 @@ def build_nextflow_command(params_file_path: str, config_file_path: Optional[str
     return " ".join(cmd_parts)
 
 async def execute_nextflow_pipeline(command: str) -> Dict[str, Any]:
-    """执行Nextflow流水线，包含SSL错误重试机制"""
+    """执行Nextflow流水线（已优化，移除SSL重试机制）"""
     
-    max_retries = 3
-    ssl_error_keywords = [
-        "ssl routines::unexpected eof while reading",
-        "cannot download nextflow required file", 
-        "make sure you can connect to the internet",
-        "curl: (35) error:0a000126",
-        "downloading nextflow dependencies"
-    ]
+    start_time = time.time()
     
-    for attempt in range(max_retries):
-        start_time = time.time()
+    try:
+        print(f"🔄 执行命令: {command}")
+        print(f"🚀 启动Nextflow执行...")
         
-        if attempt > 0:
-            print(f"🔄 第 {attempt + 1} 次重试 (SSL错误重试)...")
-            # 清理可能的残留进程和锁文件
-            cleanup_cmd = "rm -rf .nextflow* work/.nextflow* || true"
-            await asyncio.create_subprocess_shell(cleanup_cmd)
-            await asyncio.sleep(2)  # 等待清理完成
+        process = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd="."
+        )
         
-        try:
-            print(f"🔄 执行命令: {command}")
-            print(f"🚀 启动Nextflow执行...")
-            
-            process = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                cwd="."
-            )
-            
-            # 实时读取输出
-            output_lines = []
-            ssl_error_detected = False
-            
-            # 类型断言确保stdout不为None
-            assert process.stdout is not None, "stdout should not be None when PIPE is specified"
-            
-            while True:
-                line = await process.stdout.readline()
-                if not line:
-                    break
-                
-                line_text = line.decode('utf-8').strip()
-                output_lines.append(line_text)
-                
-                # 检查SSL错误
-                if any(keyword in line_text.lower() for keyword in ssl_error_keywords):
-                    print(f"⚠️ 检测到SSL网络错误: {line_text}")
-                    ssl_error_detected = True
-                    
-                # 实时显示关键信息
-                if any(keyword in line_text.lower() for keyword in 
-                       ['completed', 'failed', 'error', 'submitted', 'cached']):
-                    print(f"   📋 {line_text}")
-            
-            # 等待进程完成
-            await process.wait()
-            
-            # 计算执行时间
-            duration = time.time() - start_time
-            duration_str = f"{duration:.1f}秒"
-            full_output = "\n".join(output_lines)
-            
-            # 如果检测到SSL错误且还有重试机会
-            if ssl_error_detected and attempt < max_retries - 1:
-                print(f"❌ SSL错误导致执行失败，准备重试...")
-                continue
-            
-            # 如果SSL错误但已到最后一次
-            if ssl_error_detected and attempt == max_retries - 1:
-                print(f"❌ SSL错误，已达最大重试次数 ({max_retries})")
-                return {
-                    "success": False,
-                    "output": full_output,
-                    "duration": duration_str,
-                    "return_code": process.returncode,
-                    "error": f"SSL网络错误，重试 {max_retries} 次后仍然失败",
-                    "mode": "ssl_retry_failed"
-                }
-            
-            # 正常执行结果判断
-            if process.returncode == 0:
-                success_msg = "✅ Nextflow执行成功"
-                if attempt > 0:
-                    success_msg += f" (第 {attempt + 1} 次重试成功)"
-                success_msg += f" (耗时: {duration_str})"
-                print(success_msg)
-                
-                return {
-                    "success": True,
-                    "output": full_output,
-                    "duration": duration_str,
-                    "return_code": process.returncode,
-                    "mode": "success" if attempt == 0 else f"success_after_{attempt+1}_retries"
-                }
-            else:
-                # 非SSL错误，不需要重试
-                print(f"❌ Nextflow执行失败 (返回码: {process.returncode})")
-                return {
-                    "success": False,
-                    "output": full_output,
-                    "duration": duration_str,
-                    "return_code": process.returncode,
-                    "error": f"Nextflow进程失败，返回码: {process.returncode}",
-                    "mode": "failed"
-                }
+        # 实时读取输出
+        output_lines = []
         
-        except Exception as e:
-            duration = time.time() - start_time
-            if attempt < max_retries - 1:
-                print(f"❌ 执行异常，准备重试: {str(e)}")
-                continue
-            else:
-                error_msg = f"执行异常: {str(e)}"
-                print(f"❌ {error_msg}")
-                return {
-                    "success": False,
-                    "output": "",
-                    "duration": f"{duration:.1f}秒",
-                    "error": error_msg,
-                    "mode": "exception"
-                }
+        # 类型断言确保stdout不为None
+        assert process.stdout is not None, "stdout should not be None when PIPE is specified"
+        
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            
+            line_text = line.decode('utf-8').strip()
+            output_lines.append(line_text)
+                
+            # 实时显示关键信息
+            if any(keyword in line_text.lower() for keyword in 
+                   ['completed', 'failed', 'error', 'submitted', 'cached']):
+                print(f"   📋 {line_text}")
+        
+        # 等待进程完成
+        await process.wait()
+        
+        # 计算执行时间
+        duration = time.time() - start_time
+        duration_str = f"{duration:.1f}秒"
+        full_output = "\n".join(output_lines)
+        
+        # 执行结果判断
+        if process.returncode == 0:
+            print(f"✅ Nextflow执行成功 (耗时: {duration_str})")
+            return {
+                "success": True,
+                "output": full_output,
+                "duration": duration_str,
+                "return_code": process.returncode,
+                "mode": "success"
+            }
+        else:
+            print(f"❌ Nextflow执行失败 (返回码: {process.returncode})")
+            return {
+                "success": False,
+                "output": full_output,
+                "duration": duration_str,
+                "return_code": process.returncode,
+                "error": f"Nextflow进程失败，返回码: {process.returncode}",
+                "mode": "failed"
+            }
     
-    # 理论上不会到这里，但保险起见
-    return {
-        "success": False,
-        "output": "所有重试尝试均失败",
-        "duration": "unknown",
-        "error": f"经过 {max_retries} 次重试仍然失败",
-        "mode": "all_retries_failed"
-    }
+    except Exception as e:
+        duration = time.time() - start_time
+        error_msg = f"执行异常: {str(e)}"
+        print(f"❌ {error_msg}")
+        return {
+            "success": False,
+            "output": "",
+            "duration": f"{duration:.1f}秒",
+            "error": error_msg,
+            "mode": "exception"
+        }
 
 async def execute_node(state: AgentState) -> Dict[str, Any]:
     """执行节点 - 构建和执行Nextflow命令"""

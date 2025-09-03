@@ -82,8 +82,8 @@ ENV HOME=/data \
     NXF_HOME=/data/.nextflow \
     NXF_WORK=/data/work \
     NXF_TEMP=/data/tmp \
-    PYTHONPATH=/src
-
+    PYTHONPATH=/src \
+    NXF_OFFLINE=1
 # 14. 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python3 -c "import sys; sys.exit(0)"

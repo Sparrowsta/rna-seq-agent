@@ -70,6 +70,14 @@ class Settings(BaseModel):
         """Nextflow配置文件路径"""
         return self.config_dir / "nextflow.config"
     
+    @property
+    def templates_dir(self) -> Path:
+        """模板文件目录 - Docker环境兼容"""
+        if self.is_container_environment:
+            return Path("/src/templates")  # Docker中的绝对路径
+        else:
+            return self.project_root / "src" / "templates"  # 本地开发路径
+    
     def validate_environment(self) -> tuple[bool, list[str]]:
         """验证环境配置"""
         errors = []
