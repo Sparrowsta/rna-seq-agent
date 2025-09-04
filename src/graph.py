@@ -2,7 +2,6 @@ from langgraph.graph import StateGraph, START, END
 from .state import AgentState
 from .node.normal_node import normal_node
 from .node.user_communication_node import user_communication_node
-from .node.plan_node import plan_node
 from .node.detect_node import detect_node
 from .node.prepare_node import prepare_node
 from .node.user_confirm_node import user_confirm_node
@@ -19,7 +18,6 @@ def create_agent():
     # 添加所有节点
     workflow.add_node("normal", normal_node)
     workflow.add_node("user_communication", user_communication_node)
-    workflow.add_node("plan", plan_node)
     workflow.add_node("detect", detect_node)
     workflow.add_node("prepare", prepare_node)
     workflow.add_node("user_confirm", user_confirm_node)
@@ -36,15 +34,14 @@ def create_agent():
         {
             "end": END,             # 结束流程
             "normal": "normal",     # 进入意图分析
-            "plan": "plan"          # 进入分析流程
+            "detect": "detect"         # 进入检测流程（去除Plan节点）
         }
     )
     
     # Normal节点路由（仅回到user_communication）
     workflow.add_edge("normal", "user_communication")
     
-    # 分析流程: Plan → Detect → Prepare (简化路由)
-    workflow.add_edge("plan", "detect")
+    # 分析流程: 直接 Detect → Prepare
     workflow.add_edge("detect", "prepare")  # Detect完成所有任务后直接进入Prepare
     workflow.add_edge("prepare", "user_confirm")
     
@@ -54,7 +51,7 @@ def create_agent():
         route_after_confirm,
         {
             "execute": "execute",
-            "plan": "plan",  # replan直接回到plan节点重新规划
+            "modify": "prepare",     # 添加修改配置路由
             "cancel": "user_communication",
             "quit": END
         }
@@ -76,5 +73,5 @@ def create_agent():
     app = workflow.compile()
     
     print("🤖 RNA-seq智能分析助手已启动")
-    print("   架构: User Communication → Normal → Plan → Execute → Analysis (简化路由)")
+    print("   架构: User Communication → Normal → Detect → Prepare → Confirm → Execute → Analysis")
     return app

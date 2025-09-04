@@ -89,7 +89,7 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
     
     print(f"\n🔄 **请选择下一步操作:**")
     print(f"   /execute         - 🚀 执行分析")
-    print(f"   /replan [需求]   - 🔄 重新规划")  
+    print(f"   /modify [需求]   - 🔧 修改配置")  
     print(f"   /cancel          - ❌ 取消分析返回普通模式")
     print(f"   /quit            - 🚪 退出程序")
     print(f"{'='*60}")
@@ -102,10 +102,10 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
         # 处理用户输入 - 简化逻辑
         user_choice_lower = user_choice.lower()
         
-        # 定义replan等价命令
-        replan_prefixes = ['/replan', '/重新规划', '/修改']
-        is_replan_command = (user_choice_lower in replan_prefixes or 
-                            any(user_choice_lower.startswith(f"{prefix} ") for prefix in replan_prefixes))
+        # 定义modify等价命令
+        modify_prefixes = ['/modify', '/修改', '/调整']
+        is_modify_command = (user_choice_lower in modify_prefixes or 
+                           any(user_choice_lower.startswith(f"{prefix} ") for prefix in modify_prefixes))
         
         if user_choice_lower in ['/execute', '/执行']:
             user_decision = "execute"
@@ -113,19 +113,19 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
         elif user_choice_lower in ['/quit', '/exit', '/退出', '/bye']:
             user_decision = "quit"
             decision_msg = "🚪 退出程序"
-        elif is_replan_command:
-            user_decision = "replan"
-            decision_msg = "🔄 重新规划配置"
+        elif is_modify_command:
+            user_decision = "modify"
+            decision_msg = "🔧 修改配置"
             
-            # 处理replan等价命令中的新需求 - 优雅的参数提取
-            replan_content = ""
-            for prefix in replan_prefixes:
+            # 处理modify等价命令中的新需求 - 优雅的参数提取
+            modify_content = ""
+            for prefix in modify_prefixes:
                 if user_choice_lower.startswith(prefix):
-                    replan_content = user_choice_lower.replace(prefix, '', 1).strip()
+                    modify_content = user_choice_lower.replace(prefix, '', 1).strip()
                     break
             
-            if replan_content:
-                new_user_requirements = {"raw_input": replan_content}
+            if modify_content:
+                new_user_requirements = {"raw_input": modify_content}
             else:
                 new_user_requirements = {}
         elif user_choice_lower in ['/cancel', '/取消']:
@@ -134,7 +134,7 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
         else:
             # 无效输入，提示用户重新选择
             print(f"❌ 无效输入: {user_choice}")
-            print(f"请选择有效的命令: /execute, /replan, /cancel, /quit")
+            print(f"请选择有效的命令: /execute, /modify, /cancel, /quit")
             # 递归调用自己，重新获取用户输入
             return await user_confirm_node(state)
         
@@ -171,9 +171,9 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
         "response": decision_msg,
         "status": user_decision,
         
-        # 重新规划时设置replan需求，保持初始user_requirements不变
+        # 重新修改时设置modify需求，保持初始user_requirements不变
         "user_requirements": getattr(state, 'user_requirements', {}),  # 保持初始需求
-        "replan_requirements": new_user_requirements if 'new_user_requirements' in locals() else {},  # replan需求
+        "modify_requirements": new_user_requirements if 'new_user_requirements' in locals() else {},  # modify需求
         
         # 保存用户选择用于后续处理
         "messages": [{"role": "user", "content": user_choice}]

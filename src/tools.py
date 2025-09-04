@@ -28,24 +28,39 @@ from .config import get_tools_config
 
 @tool
 def scan_fastq_files() -> Dict[str, Any]:
-    """扫描项目中的FASTQ测序文件，返回文件列表、样本信息和基本统计数据"""
+    """扫描FASTQ文件，优先在数据目录(data/fastq)下查找，兼容容器挂载目录。
+
+    返回：文件列表、样本信息和基本统计数据。
+    """
     config = get_tools_config()
-    project_root = config.project_root
     fastq_extensions = ["*.fastq", "*.fastq.gz", "*.fq", "*.fq.gz"]
-    
+
     # 定义要排除的目录（中间文件和缓存目录）
     exclude_directories = {
-        "work", "tmp", "temp", "results", "output", 
+        "work", "tmp", "temp", "results", "output",
         ".nextflow", "logs", "cache", "__pycache__"
     }
-    
+
+    # 选择搜索根目录：优先 data/fastq，其次 data，最后项目根目录
+    search_roots = []
+    try:
+        if config.fastq_dir.exists():
+            search_roots.append(config.fastq_dir)
+        elif config.settings.data_dir.exists():
+            search_roots.append(config.settings.data_dir)
+        else:
+            search_roots.append(config.project_root)
+    except Exception:
+        search_roots.append(config.project_root)
+
     # 扫描所有FASTQ文件
     all_fastq_files = []
-    for ext in fastq_extensions:
-        for file_path in project_root.rglob(ext):
-            if any(excluded in file_path.parts for excluded in exclude_directories):
-                continue
-            all_fastq_files.append(file_path)
+    for root in search_roots:
+        for ext in fastq_extensions:
+            for file_path in root.rglob(ext):
+                if any(excluded in file_path.parts for excluded in exclude_directories):
+                    continue
+                all_fastq_files.append(file_path)
     
     # 收集文件信息
     file_list = []
@@ -109,6 +124,7 @@ def scan_fastq_files() -> Dict[str, Any]:
     
     return {
         "detection_status": "success",
+        "search_roots": [str(p) for p in search_roots],
         "total_files": len(file_list),
         "total_samples": len(samples),
         "sequencing_type": sequencing_type,
@@ -280,11 +296,12 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
 @tool
 def get_project_overview() -> Dict[str, Any]:
     """获取项目整体状态概览，包括数据、基因组、系统资源和分析历史"""
+    # 使用 BaseTool.invoke 以避免在工具内部相互调用产生弃用警告
     return {
-        "fastq_data": scan_fastq_files(),
-        "genome_status": scan_genome_files(),
-        "system_resources": scan_system_resources(),
-        "analysis_history": list_analysis_history(),
+        "fastq_data": scan_fastq_files.invoke({}),
+        "genome_status": scan_genome_files.invoke({}),
+        "system_resources": scan_system_resources.invoke({}),
+        "analysis_history": list_analysis_history.invoke({}),
         "overview_timestamp": time.time()
     }
 

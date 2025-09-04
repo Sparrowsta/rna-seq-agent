@@ -23,7 +23,7 @@ class AgentState(BaseModel):
     execution_strategy: str = Field(default="parallel", description="执行策略")
     analysis_intent: str = Field(default="", description="分析目标意图")
     user_requirements: Dict[str, Any] = Field(default={}, description="初始用户配置需求(从user_communication来)")
-    replan_requirements: Dict[str, Any] = Field(default={}, description="重新规划配置需求(从user_confirm来)")
+    modify_requirements: Dict[str, Any] = Field(default={}, description="用户修改配置需求(从user_confirm的/modify来)")
     
     # === Detect检测字段 ===
     query_results: Dict[str, Any] = Field(default={}, description="系统检测结果")

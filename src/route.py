@@ -6,8 +6,8 @@ def route_from_user_communication(state: AgentState) -> str:
     routing_decision = state.routing_decision
     
     if routing_decision == "plan":
-        print("🚀 进入Plan分析流程")
-        return "plan"
+        print("🚀 进入检测流程")
+        return "detect"
     elif routing_decision == "normal":
         print("🧠 进入意图分析")
         return "normal"
@@ -19,13 +19,8 @@ def route_from_user_communication(state: AgentState) -> str:
         return "end"
 
 def should_continue(state: AgentState) -> str:
-    """决定是否继续执行"""
-    plan = state.plan
-    # plan现在是List[List[str]]格式，检查是否有任务组
-    if plan and any(group for group in plan):
-        return "detect"
-    else:
-        return "prepare"
+    """决定是否继续执行（保留占位，当前直接进入detect）"""
+    return "detect"
 
 def route_after_confirm(state: AgentState) -> str:
     """用户确认后的路由决策"""
@@ -38,9 +33,10 @@ def route_after_confirm(state: AgentState) -> str:
     if user_decision == "execute":
         print("🚀 [ROUTE] 用户选择执行分析")
         return "execute"
-    elif user_decision in ["modify", "replan"]:
-        print("🔄 [ROUTE] 用户选择重新规划，回到plan节点") 
-        return "plan"
+    elif user_decision == "modify":
+        print("🔧 [ROUTE] 用户选择修改配置")
+        # 返回条件路由的键（modify），由图映射到 prepare 节点
+        return "modify"
     elif user_decision == "cancel":
         print("❌ [ROUTE] 用户选择取消分析")
         return "cancel"
