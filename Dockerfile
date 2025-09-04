@@ -66,7 +66,7 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt && \
 WORKDIR /data
 
 # 11. 复制应用文件到根目录（应用与数据分离）
-COPY main.nf /
+COPY fastp.nf /
 COPY main.py /
 COPY src/ /src/
 

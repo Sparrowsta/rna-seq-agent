@@ -1,9 +1,11 @@
 import json
+from datetime import datetime
 from typing import Dict, Any
 from ..state import AgentState, PrepareResponse
 from ..core import get_shared_llm
 from ..prompts import PREPARE_NODE_PROMPT
 from langgraph.prebuilt import create_react_agent
+from ..config.settings import Settings
 from ..tools import (
     scan_fastq_files,
     scan_system_resources,
@@ -41,15 +43,42 @@ def create_prepare_agent(detection_context: str = ""):
     )
     return agent
 
+def generate_timestamped_results_config(settings: Settings) -> Dict[str, str]:
+    """生成基于时间戳的结果目录配置
+    
+    Args:
+        settings: 应用配置实例
+        
+    Returns:
+        包含时间戳路径配置的字典
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_data_path = str(settings.data_dir)
+    results_dir = f"{base_data_path}/results/{timestamp}"
+    
+    return {
+        "results_dir": results_dir,
+        "results_timestamp": timestamp,
+        "base_data_path": base_data_path
+    }
+
 async def prepare_node(state: AgentState) -> Dict[str, Any]:
     """准备节点 - 优先基于Normal模式传来的用户需求生成配置参数"""
     print(f"⚙️ 开始智能配置分析...")
+    
+    # 初始化设置和生成时间戳配置
+    settings = Settings()
+    timestamp_config = generate_timestamped_results_config(settings)
+    print(f"📁 生成时间戳结果目录: {timestamp_config['results_dir']}")
     
     # 获取所有必要信息
     detection_results = state.query_results or {}
     current_config = state.nextflow_config or {}
     initial_requirements = state.user_requirements or {}
     modify_requirements = state.modify_requirements or {}
+    
+    # 将时间戳配置合并到当前配置中
+    current_config.update(timestamp_config)
     
     if not detection_results:
         return {
@@ -129,7 +158,7 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
 
             return {
                 "nextflow_config": final_config,
-                "resource_config": resource_params,  # 显式传递资源配置，供 execute_node 生成 nextflow.config
+                "resource_config": resource_params,  # 显式传递资源配置
                 "config_reasoning": reasoning,
                 "response": f"智能配置分析完成{user_satisfaction_note}\n\n💡 {reasoning}",
                 "status": "confirm"

@@ -5,9 +5,8 @@ from .node.user_communication_node import user_communication_node
 from .node.detect_node import detect_node
 from .node.prepare_node import prepare_node
 from .node.user_confirm_node import user_confirm_node
-from .node.execute_node import execute_node
-from .node.analysis_node import analysis_node
-from .route import route_from_user_communication, route_after_confirm, route_after_analysis
+from .node.fastp_node import fastp_node
+from .route import route_from_user_communication, route_after_confirm, route_after_fastp
 
 def create_agent():
     """创建LangGraph Agent - User Communication为主的Plan-and-Execute架构"""
@@ -21,8 +20,7 @@ def create_agent():
     workflow.add_node("detect", detect_node)
     workflow.add_node("prepare", prepare_node)
     workflow.add_node("user_confirm", user_confirm_node)
-    workflow.add_node("execute", execute_node)
-    workflow.add_node("analysis", analysis_node)
+    workflow.add_node("fastp", fastp_node)
     
     # 入口点：直接进入User Communication节点
     workflow.add_edge(START, "user_communication")
@@ -50,22 +48,20 @@ def create_agent():
         "user_confirm",
         route_after_confirm,
         {
-            "execute": "execute",
-            "modify": "prepare",     # 添加修改配置路由
+            "fastp": "fastp",                 # 统一执行路由：所有分析任务都通过fastp处理
+            "modify": "prepare",              # 修改配置路由
             "cancel": "user_communication",
             "quit": END
         }
     )
     
-    # 执行后直接进入分析总结
-    workflow.add_edge("execute", "analysis")
-    
-    # 分析总结后回到用户交互
+    # FastP节点完成后：单次执行直接结束；优化执行回到确认
     workflow.add_conditional_edges(
-        "analysis",
-        route_after_analysis,
+        "fastp",
+        route_after_fastp,
         {
-            "user_communication": "user_communication"
+            "user_confirm": "user_confirm",
+            "end": END
         }
     )
     
@@ -73,5 +69,5 @@ def create_agent():
     app = workflow.compile()
     
     print("🤖 RNA-seq智能分析助手已启动")
-    print("   架构: User Communication → Normal → Detect → Prepare → Confirm → Execute → Analysis")
+    print("   架构: User Communication → Normal → Detect → Prepare → Confirm → FastP → (END/Confirm)")
     return app

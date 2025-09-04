@@ -37,19 +37,22 @@ class AgentState(BaseModel):
     # === UserConfirm确认字段 ===
     user_decision: str = Field(default="", description="用户决策: execute/replan/cancel")
     confirmation_message: str = Field(default="", description="确认界面展示信息")
+
+    # === 执行模式（用于路由与展示） ===
+    execution_mode: str = Field(default="single", description="执行模式: single/optimized")
+
+    # === 工具参数（对比展示用） ===
+    # 目前按需支持 fastp；后续可扩展 star/featurecounts 同名字段
+    fastp_default_params: Dict[str, Any] = Field(default={}, description="fastp 默认参数集（展示用）")
+    fastp_optimized_params: Dict[str, Any] = Field(default={}, description="fastp 优化后的参数集（展示用）")
+    fastp_current_params: Dict[str, Any] = Field(default={}, description="fastp 当前运行参数（稳定基线）")
     
-    # === Execute执行字段 ===
-    nextflow_command: str = Field(default="", description="构建的Nextflow命令")
-    execution_status: str = Field(default="", description="执行状态: building/running/completed/failed")
-    execution_output: str = Field(default="", description="执行输出日志")
-    execution_result: Dict[str, Any] = Field(default={}, description="执行结果摘要")
-    
-    # === Analysis分析字段 ===
-    analysis_summary: str = Field(default="", description="分析结果总结")
-    analysis_insights: List[str] = Field(default=[], description="分析洞察和建议")
-    result_files: Dict[str, str] = Field(default={}, description="关键结果文件路径")
-    quality_metrics: Dict[str, Any] = Field(default={}, description="质量评估指标")
-    next_steps: List[str] = Field(default=[], description="后续分析建议")
+    # === 参数版本管理 ===
+    fastp_version: int = Field(default=1, description="fastp 参数版本号")
+    fastp_version_history: List[Dict[str, Any]] = Field(default=[], description="fastp 参数历史版本记录")
+    # 执行期参数对比辅助：用于确认面板内联展示 old -> new
+    fastp_prev_params: Dict[str, Any] = Field(default={}, description="fastp 本次执行前使用的参数")
+    fastp_applied_updates: Dict[str, Any] = Field(default={}, description="fastp 本次执行应用的参数差异（旧->新）")
 
 # ==================== 子状态模型 - 用于特定节点的结构化输出 ====================
 
@@ -57,12 +60,6 @@ class NormalResponse(BaseModel):
     """Normal节点的精简响应格式 - 兼容create_react_agent工具响应"""
     query_response: str = Field(description="工具调用的完整结果")
     user_requirements: Dict[str, Any] = Field(default={}, description="从用户输入中提取的结构化配置需求")
-
-class PlanResponse(BaseModel):
-    """Plan节点的精简响应格式"""
-    plan: List[List[str]] = Field(default=[], description="并行任务组列表，每个组内任务串行执行")
-    group_descriptions: List[str] = Field(default=[], description="每个任务组的功能描述")
-    execution_strategy: str = Field(default="parallel", description="执行策略: parallel/sequential")
 
 class DetectResponse(BaseModel):
     """Detect节点的精简响应格式"""
@@ -75,10 +72,4 @@ class PrepareResponse(BaseModel):
     resource_config: Dict[str, Dict[str, Any]] = Field(default={}, description="各进程的CPU和内存资源配置")
     config_reasoning: str = Field(default="", description="配置决策理由")
 
-class AnalysisResponse(BaseModel):
-    """Analysis节点的精简响应格式"""
-    analysis_summary: str = Field(description="分析结果总结")
-    analysis_insights: List[str] = Field(default=[], description="分析洞察和发现")
-    result_files: Dict[str, str] = Field(default={}, description="关键结果文件路径")
-    quality_metrics: Dict[str, Any] = Field(default={}, description="质量评估指标")
-    next_steps: List[str] = Field(default=[], description="后续分析建议")
+# （分析节点已移除，不再定义 AnalysisResponse）

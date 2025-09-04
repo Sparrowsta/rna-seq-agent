@@ -20,7 +20,7 @@ from typing import Dict, List, Any, Optional
 # 使用官方工具装饰器
 from langchain_core.tools import tool
 
-# 导入配置系统
+# 导入配置模块
 from .config import get_tools_config
 
 
@@ -145,7 +145,6 @@ def scan_system_resources() -> Dict[str, Any]:
         
         # CPU信息
         cpu_count = psutil.cpu_count(logical=False) or 1
-        logical_count = psutil.cpu_count(logical=True) or 1
         cpu_freq = psutil.cpu_freq()
         
         # 内存信息
@@ -164,7 +163,7 @@ def scan_system_resources() -> Dict[str, Any]:
         load_info = {}
         try:
             load_avg = psutil.getloadavg()
-            load_ratio = load_avg[0] / max(logical_count, 1)
+            load_ratio = load_avg[0] / max(cpu_count, 1)
             load_info = {
                 "load_1min": round(load_avg[0], 2),
                 "load_5min": round(load_avg[1], 2),
@@ -178,7 +177,6 @@ def scan_system_resources() -> Dict[str, Any]:
             "detection_status": "success",
             "cpu": {
                 "physical_cores": cpu_count,
-                "logical_cores": logical_count,
                 "frequency_mhz": cpu_freq.current if cpu_freq else None
             },
             "memory": {

@@ -37,7 +37,7 @@ class Settings(BaseModel):
     
     # === API配置 ===
     deepseek_api_key: str = Field(default="", description="DeepSeek API密钥")
-    llm_temperature: float = Field(default=0.1, description="LLM温度参数")
+    llm_temperature: float = Field(default=0.0, description="LLM温度参数（默认0，确保确定性）")
     
     # === 系统配置 ===
     debug_mode: bool = Field(default=False, description="调试模式")

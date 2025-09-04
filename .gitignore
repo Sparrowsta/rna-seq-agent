@@ -60,4 +60,5 @@ datatest/
 config/runtime_config.json
 config/nextflow.config
 
-.claude/index.json
+.claude
+.bmad-core
