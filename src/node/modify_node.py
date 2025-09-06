@@ -240,8 +240,8 @@ FastP参数：
             # 保存修改历史
             "modification_history": modification_history,
             
-            # 更新配置理由（追加修改信息）
-            "config_reasoning": f"{state.config_reasoning}\n[修改] {modify_request.modification_reason}",
+            # 配置理由保持原样（不再在理由中插入修改说明，避免重复展示）
+            "config_reasoning": state.config_reasoning,
             
             # 状态和响应
             "response": f"✅ 已应用配置修改：{modify_request.modification_reason}",

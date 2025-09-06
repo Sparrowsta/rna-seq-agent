@@ -164,16 +164,34 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
             flattened_base_fastp = _flatten(base_fastp_params)
             flattened_effective_fastp = _flatten(effective_fastp_params)
             applied_keys = set((last_applied or {}).keys())
-            modified_keys = [
-                k for k in flattened_effective_fastp.keys()
-                if flattened_base_fastp.get(k) != flattened_effective_fastp.get(k) and k not in applied_keys
-            ]
-            if modified_keys:
+
+            # 优先显示最近一次“用户修改”的键；若没有，则按差异回退
+            user_modified_keys: list[str] = []
+            try:
+                modification_history = getattr(state, 'modification_history', []) or []
+                if modification_history:
+                    last_record = modification_history[-1] or {}
+                    last_fastp_changes = (last_record.get('changes') or {}).get('fastp') or {}
+                    if isinstance(last_fastp_changes, dict):
+                        user_modified_keys = list(last_fastp_changes.keys())
+            except Exception:
+                user_modified_keys = []
+
+            if user_modified_keys:
                 print(f"\n   ✏️ 用户修改（Mods）:")
-                for param_key in sorted(modified_keys):
+                for param_key in sorted(user_modified_keys):
                     print(f"     - {param_key}: {flattened_base_fastp.get(param_key)} -> {flattened_effective_fastp.get(param_key)}")
             else:
-                print(f"\n   ✏️ 用户修改（Mods）: 无")
+                modified_keys = [
+                    k for k in flattened_effective_fastp.keys()
+                    if flattened_base_fastp.get(k) != flattened_effective_fastp.get(k) and k not in applied_keys
+                ]
+                if modified_keys:
+                    print(f"\n   ✏️ 用户修改（Mods）:")
+                    for param_key in sorted(modified_keys):
+                        print(f"     - {param_key}: {flattened_base_fastp.get(param_key)} -> {flattened_effective_fastp.get(param_key)}")
+                else:
+                    print(f"\n   ✏️ 用户修改（Mods）: 无")
 
             # Opt：优化建议（区分已应用/待应用）
             if fastp_opt:
