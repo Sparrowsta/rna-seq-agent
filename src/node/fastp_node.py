@@ -104,9 +104,6 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
         # 获取配置信息
         nextflow_config = state.nextflow_config or {}
         sample_groups = nextflow_config.get("sample_groups", [])
-        qc_tool = nextflow_config.get("qc_tool", "")
-        align_tool = nextflow_config.get("align_tool", "")
-        quant_tool = nextflow_config.get("quant_tool", "")
         
         # 将验证的工作目录路径添加到nextflow_config中
         nextflow_config["validated_work_dir"] = env_validation["work_dir"]
@@ -119,7 +116,7 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
             }
         
         # 不在节点侧计算线程等资源；直接使用 nextflow_config 中的 fastp 相关设置
-        print(f"🧹 进入FastP质控阶段（MVP：不执行下游比对/定量）...")
+        print(f"🧹 进入FastP质控阶段（不执行下游比对/定量）...")
         result = await _execute_qc_only(state, nextflow_config, sample_groups)
         
         # 将环境验证信息添加到结果中
@@ -146,22 +143,26 @@ async def _execute_qc_only(state: AgentState, nextflow_config: Dict[str, Any], s
     # 创建FastP Agent
     agent = FastpAgent()
     
-    # 获取历史优化参数和版本信息（实现参数迭代进化）
-    current_params = getattr(state, 'fastp_current_params', {}) or {}
-    current_version = getattr(state, 'fastp_version', 1)
+    # 获取当前FastP参数（使用简化的单一参数集）
+    current_params = getattr(state, 'fastp_params', {}) or {}
     
-    # 使用新的批次处理方法，传递历史优化参数和版本号
+    # 版本号仅用于历史记录，不再作为主要版本管理机制
+    current_version = len(getattr(state, 'fastp_params_history', [])) + 1
+    
+    # 使用新的批次处理方法
     print("📦 正在使用重构后的批次处理方法…")
-    # 注入已有历史，便于LLM生成有上下文的建议
-    history_to_pass = getattr(state, 'fastp_version_history', []) or []
-    if history_to_pass:
-        print(f"🧠 注入历史上下文: {len(history_to_pass)} 条记录")
+    
+    # 传递历史信息供参考
+    params_history = getattr(state, 'fastp_params_history', []) or []
+    if params_history:
+        print(f"🧠 参考历史记录: {len(params_history)} 次修改")
+    
     batch_result = agent.run_batch(
         sample_groups,
         nextflow_config,
         current_params,
         current_version,
-        version_history=history_to_pass
+        version_history=params_history  # 传递简化的历史记录
     )
     
     if not batch_result.get("samples"):
@@ -171,72 +172,92 @@ async def _execute_qc_only(state: AgentState, nextflow_config: Dict[str, Any], s
             "results": []
         }
     
-    # 提取结果和建议
+    # 提取结果
     summary = batch_result.get("summary", "FastP批次处理完成")
-    current_params = batch_result.get("current_params", {})
+    execution_params = batch_result.get("current_params", {}) or current_params
     optimized_params = batch_result.get("optimized_params", {})
-    # 仅保留与当前参数不同的优化项，避免显示过时/相同值
-    if optimized_params and current_params:
-        optimized_params = {k: v for k, v in optimized_params.items() if current_params.get(k) != v}
-    next_params = batch_result.get("next_params", {})
     reasoning = batch_result.get("reasoning", "")
     success_count = batch_result.get("success_count", 0)
     total_count = batch_result.get("total", len(sample_groups))
     version_files = batch_result.get("version_files", {})
     
-    # 版本管理：创建历史记录条目和更新历史列表
-    next_version = current_version + (1 if optimized_params else 0)
-    version_record = {
-        "version": current_version,
+    # 生成下次运行的参数（基于优化建议）
+    next_run_params = execution_params.copy()
+    if optimized_params:
+        # 如果有优化建议，合并到参数中
+        next_run_params.update(optimized_params)
+        params_updated = True
+    else:
+        params_updated = False
+    
+    # 记录执行历史
+    history_record = {
         "timestamp": __import__('datetime').datetime.now().isoformat(),
-        "params": current_params,
-        "optimized_params": optimized_params,
+        "params_used": execution_params,  # 本次实际使用的参数
+        "optimization_applied": optimized_params if params_updated else {},
         "reasoning": reasoning,
         "execution_result": {
             "success_count": success_count,
             "total_count": total_count,
             "success_rate": success_count / total_count if total_count > 0 else 0
-        },
-        "version_files": version_files
+        }
     }
     
-    # 获取当前历史记录并追加新记录
-    current_history = getattr(state, 'fastp_version_history', []) or []
-    updated_history = current_history + [version_record]
+    # 更新历史记录
+    current_history = getattr(state, 'fastp_params_history', []) or []
+    updated_history = current_history + [history_record]
     
-    # 打印版本信息
-    print(f"✅ 批次处理完成: {success_count}/{total_count} 样本成功 [v{current_version}]")
+    # 打印执行结果
+    print(f"✅ 批次处理完成: {success_count}/{total_count} 样本成功")
     if version_files.get("versioned"):
         print(f"📋 参数文件已保存: {version_files['versioned']}")
     
     if reasoning:
-        print(f"💡 **参数优化理由:**")
+        print(f"💡 **优化分析:**")
         print(f"   {reasoning}")
     
-    if optimized_params:
-        print(f"📊 **参数优化建议 (v{current_version} -> v{next_version}):**")
-        for key, value in optimized_params.items():
-            print(f"   - {key}: {value}")
-    else:
-        print(f"📊 **参数状态**: 稳定，无新优化建议")
-
-    # 不再展示稳定门拦截信息
+    # 根据执行模式决定行为
+    execution_mode = getattr(state, 'execution_mode', 'single')
     
-    return {
-        "status": "qc_completed",
-        "response": summary,
-        # 更新state中的fastp参数（实现迭代进化）
-        "fastp_prev_params": current_params,           # 本次执行前的参数（用于展示 old -> new）
-        "fastp_current_params": next_params,           # 本次执行后（下次使用）的参数
-        "fastp_optimized_params": optimized_params,    # 本次的优化建议（仅差异）
-        "fastp_applied_updates": optimized_params,     # 本次实际应用的差异
-        "fastp_next_params": {},  # 清空next_params，仅显示一次
-        "fastp_version": next_version,  # 更新版本号
-        "fastp_version_history": updated_history,  # 更新完整的历史记录列表
-        "config_reasoning": reasoning,
-        "batch_results": batch_result.get("samples", []),
-        "success_rate": f"{success_count}/{total_count}"
-    }
+    if execution_mode == 'optimized' and params_updated:
+        # 优化模式：直接应用优化参数准备下次运行
+        print(f"\n📊 **参数优化应用:**")
+        for key, value in optimized_params.items():
+            old_val = execution_params.get(key, "未设置")
+            print(f"   - {key}: {old_val} → {value}")
+        print(f"⚡ 优化参数已应用，准备下次迭代")
+        
+        return {
+            "status": "qc_completed",
+            "response": f"{summary}\n✨ 优化参数已应用，可继续执行优化",
+            # 直接更新参数为下次运行准备
+            "fastp_params": next_run_params,
+            "fastp_params_history": updated_history,
+            "fastp_optimized_suggestions": optimized_params,
+            "config_reasoning": reasoning,
+            "batch_results": batch_result.get("samples", []),
+            "success_rate": f"{success_count}/{total_count}"
+        }
+    else:
+        # 单次模式或无优化：保持当前参数
+        if params_updated:
+            print(f"\n📊 **优化建议（供参考）:**")
+            for key, value in optimized_params.items():
+                old_val = execution_params.get(key, "未设置")
+                print(f"   - {key}: {old_val} → {value}")
+            print(f"💡 提示: 使用 /execute_opt 进行优化迭代")
+        else:
+            print(f"📊 **参数状态**: 当前参数运行良好")
+        
+        return {
+            "status": "qc_completed",
+            "response": summary,
+            # 单次模式：保持原参数不变
+            "fastp_params": execution_params,
+            "fastp_params_history": updated_history,
+            "fastp_optimized_suggestions": optimized_params,
+            "config_reasoning": reasoning,
+            "batch_results": batch_result.get("samples", []),
+            "success_rate": f"{success_count}/{total_count}"
+        }
 
-
-# 去除完整流水线执行，暂不实现

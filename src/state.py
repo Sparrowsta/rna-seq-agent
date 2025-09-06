@@ -37,6 +37,9 @@ class AgentState(BaseModel):
     resource_config: Dict[str, Dict[str, Any]] = Field(default={}, description="各进程的CPU和内存资源配置")
     config_reasoning: str = Field(default="", description="配置决策理由")
     
+    # === Modify修改字段 ===
+    modification_history: List[Dict[str, Any]] = Field(default=[], description="配置修改历史记录")
+    
     # === UserConfirm确认字段 ===
     user_decision: str = Field(default="", description="用户决策: execute/replan/cancel")
     confirmation_message: str = Field(default="", description="确认界面展示信息")
@@ -44,18 +47,9 @@ class AgentState(BaseModel):
     # === 执行模式（用于路由与展示） ===
     execution_mode: str = Field(default="single", description="执行模式: single/optimized")
 
-    # === 工具参数（对比展示用） ===
-    # 目前按需支持 fastp；后续可扩展 star/featurecounts 同名字段
-    fastp_default_params: Dict[str, Any] = Field(default={}, description="fastp 默认参数集（展示用）")
-    fastp_optimized_params: Dict[str, Any] = Field(default={}, description="fastp 优化后的参数集（展示用）")
-    fastp_current_params: Dict[str, Any] = Field(default={}, description="fastp 当前运行参数（稳定基线）")
-    
-    # === 参数版本管理 ===
-    fastp_version: int = Field(default=1, description="fastp 参数版本号")
-    fastp_version_history: List[Dict[str, Any]] = Field(default=[], description="fastp 参数历史版本记录")
-    # 执行期参数对比辅助：用于确认面板内联展示 old -> new
-    fastp_prev_params: Dict[str, Any] = Field(default={}, description="fastp 本次执行前使用的参数")
-    fastp_applied_updates: Dict[str, Any] = Field(default={}, description="fastp 本次执行应用的参数差异（旧->新）")
+    # === FastP参数管理（极简版：单一参数集） ===
+    fastp_params: Dict[str, Any] = Field(default={}, description="FastP运行参数（唯一真相源）")
+    fastp_params_history: List[Dict[str, Any]] = Field(default=[], description="FastP参数执行历史")
 
 # ==================== 子状态模型 - 用于特定节点的结构化输出 ====================
 

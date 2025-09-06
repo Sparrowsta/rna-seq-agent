@@ -60,15 +60,15 @@ async def detect_node(state: AgentState) -> Dict[str, Any]:
             errors.append(f"check_{tool}_availability: {e}")
 
     # 读取FASTQ统计，增强可观测性
-    afd = results.get("analyze_fastq_data") or {}
-    fastq_total_samples = afd.get("total_samples")
+    analyze_fastq_data = results.get("analyze_fastq_data") or {}
+    fastq_total_samples = analyze_fastq_data.get("total_samples")
     if fastq_total_samples is None:
-        fastq_total_samples = len((afd.get("samples") or {}))
-    fastq_total_files = afd.get("total_files") or 0
-    search_roots = ",".join(afd.get("search_roots") or [])
+        fastq_total_samples = len((analyze_fastq_data.get("samples") or {}))
+    fastq_total_files = analyze_fastq_data.get("total_files") or 0
+    search_roots = ",".join(analyze_fastq_data.get("search_roots") or [])
 
     if search_roots:
-        sample_names = list((afd.get("samples") or {}).keys())
+        sample_names = list((analyze_fastq_data.get("samples") or {}).keys())
         preview = ", ".join(sample_names[:3]) + ("..." if len(sample_names) > 3 else "")
         print(f"🔍 FASTQ扫描: roots=[{search_roots}] files={fastq_total_files} samples={fastq_total_samples} preview=[{preview}]")
 
@@ -99,4 +99,9 @@ async def detect_node(state: AgentState) -> Dict[str, Any]:
         "results_dir": results_dir,
         "results_timestamp": timestamp,
         "base_data_path": base_data_path,
+        
+        # 为后续节点预设 nextflow_config
+        "nextflow_config": {
+            "results_dir": results_dir
+        }
     }

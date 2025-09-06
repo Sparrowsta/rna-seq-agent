@@ -84,65 +84,111 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
     else:
         print(f"\n🖥️ **资源配置:** 使用默认设置")
 
-    # 展示 fastp 参数对比（如果存在） - 支持迭代优化显示
+    # =============== 三层对比展示 ===============
+    def _flatten(d: Dict[str, Any], parent: str = "", sep: str = ".") -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        if isinstance(d, dict):
+            for k, v in d.items():
+                key = f"{parent}{sep}{k}" if parent else str(k)
+                if isinstance(v, dict):
+                    out.update(_flatten(v, key, sep))
+                else:
+                    out[key] = v
+        return out
+
+    # 1) Base 快照（首次进入确认页时建立基线）
+    base_nextflow_config = getattr(state, 'prepare_defaults_nextflow_config', None) or {}
+    base_resource_config = getattr(state, 'prepare_defaults_resource_config', None) or {}
+    base_fastp_params = getattr(state, 'prepare_defaults_fastp_params', None) or {}
+
+    if not base_nextflow_config:
+        base_nextflow_config = dict(nextflow_config)
+    if not base_resource_config:
+        base_resource_config = dict(resource_config)
+    if not base_fastp_params:
+        base_fastp_params = dict(getattr(state, 'fastp_params', {}) or {})
+
+    # 2) Effective 当前生效值
+    effective_nextflow_config = dict(nextflow_config)
+    effective_resource_config = dict(resource_config)
+    effective_fastp_params = dict(getattr(state, 'fastp_params', {}) or {})
+
+    # 3) Mods（根据 Base 与 Effective 的差异推断，Nextflow/Resource 仅来源于用户修改）
+    ignore_nf_keys = {"results_dir", "results_timestamp", "base_data_path", "validated_work_dir", "sample_groups"}
+    flattened_base_nextflow = {k: v for k, v in _flatten(base_nextflow_config).items() if k.split('.')[0] not in ignore_nf_keys and k not in ignore_nf_keys}
+    flattened_effective_nextflow = {k: v for k, v in _flatten(effective_nextflow_config).items() if k.split('.')[0] not in ignore_nf_keys and k not in ignore_nf_keys}
+    nextflow_modifications = {k: (flattened_base_nextflow.get(k), flattened_effective_nextflow.get(k)) for k in flattened_effective_nextflow.keys() | flattened_base_nextflow.keys() if flattened_base_nextflow.get(k) != flattened_effective_nextflow.get(k)}
+
+    # 资源配置差异（逐进程关注 cpus/memory）
+    resource_modifications: Dict[str, Dict[str, Any]] = {}
+    for process_name_key in set(base_resource_config.keys()) | set(effective_resource_config.keys()):
+        base_process_config = base_resource_config.get(process_name_key, {}) or {}
+        effective_process_config = effective_resource_config.get(process_name_key, {}) or {}
+        process_diff: Dict[str, Any] = {}
+        for key in {"cpus", "memory"}:
+            if base_process_config.get(key) != effective_process_config.get(key):
+                process_diff[key] = (base_process_config.get(key), effective_process_config.get(key))
+        if process_diff:
+            resource_modifications[process_name_key] = process_diff
+
+    # 4) Opt（FastP 优化建议）
+    fastp_history = getattr(state, 'fastp_params_history', []) or []
+    last_applied = fastp_history[-1].get('optimization_applied') if fastp_history else {}
+    fastp_opt = getattr(state, 'fastp_optimized_suggestions', {}) or {}
+
+    # =============== 展示 ===============
+    # Nextflow 配置 Mods 差异
+    if nextflow_modifications:
+        print(f"\n🧭 **配置对比（Nextflow）**")
+        for config_key in sorted(nextflow_modifications.keys()):
+            old_value, new_value = nextflow_modifications[config_key]
+            print(f"   - {config_key}: {old_value} -> {new_value}")
+    # 资源配置 Mods 差异
+    if resource_modifications:
+        print(f"\n🧮 **配置对比（资源）**")
+        for process_name_key, process_diff in resource_modifications.items():
+            for resource_key, (old_value, new_value) in process_diff.items():
+                print(f"   - {process_name_key}.{resource_key}: {old_value} -> {new_value}")
+
+    # FastP 三层对比
     try:
-        fp_prev = getattr(state, 'fastp_prev_params', {}) or {}
-        fp_current = getattr(state, 'fastp_current_params', {}) or {}
-        fp_opt = getattr(state, 'fastp_optimized_params', {}) or {}
-        fp_applied = getattr(state, 'fastp_applied_updates', {}) or {}
-        fp_version = getattr(state, 'fastp_version', 1)
-        fp_history = getattr(state, 'fastp_version_history', []) or []
         qc_tool = (nextflow_config.get('qc_tool') or '').lower()
-        
-        if qc_tool == 'fastp' and (fp_current or fp_opt):
-            print(f"\n🧹 **Fastp 参数管理 [v{fp_version}]:**")
-            
-            # 显示版本历史摘要
-            if fp_history:
-                print(f"   📚 版本历史: {len(fp_history)} 个版本")
-                recent_versions = fp_history[-3:] if len(fp_history) > 3 else fp_history
-                for record in recent_versions:
-                    v = record.get("version", "?")
-                    success_rate = record.get("execution_result", {}).get("success_rate", 0)
-                    param_count = len(record.get("params", {}))
-                    opt_count = len(record.get("optimized_params", {}))
-                    print(f"     v{v}: {param_count}参数 -> {opt_count}优化 (成功率: {success_rate:.1%})")
-            
-            # 仅展示与当前参数不同的优化项（使用本次实际应用的差异，避免被“已应用”导致的空显示）
-            diff_opt = dict(fp_applied)
+        if qc_tool == 'fastp' and effective_fastp_params:
+            print(f"\n🧹 **FastP 参数（三层对比）**")
+            # Effective（当前）
+            print(f"   📋 当前（Effective）:")
+            for param_key in sorted(effective_fastp_params.keys()):
+                print(f"     - {param_key}: {effective_fastp_params[param_key]}")
 
-            if fp_current:
-                print("   • 当前参数 (历史进化结果):")
-                for k in sorted(fp_current.keys()):
-                    v = fp_current[k]
-                    if k in fp_applied:
-                        prev_v = fp_prev.get(k, None)
-                        if prev_v is None:
-                            print(f"     - {k}: {v}")
-                        elif prev_v != v:
-                            print(f"     - {k}: {prev_v} -> {v}")
-                        else:
-                            print(f"     - {k}: {v}")
-                    else:
-                        print(f"     - {k}: {v}")
+            # Mods：与 Base 对比的差异，排除已由优化应用的键
+            flattened_base_fastp = _flatten(base_fastp_params)
+            flattened_effective_fastp = _flatten(effective_fastp_params)
+            applied_keys = set((last_applied or {}).keys())
+            modified_keys = [
+                k for k in flattened_effective_fastp.keys()
+                if flattened_base_fastp.get(k) != flattened_effective_fastp.get(k) and k not in applied_keys
+            ]
+            if modified_keys:
+                print(f"\n   ✏️ 用户修改（Mods）:")
+                for param_key in sorted(modified_keys):
+                    print(f"     - {param_key}: {flattened_base_fastp.get(param_key)} -> {flattened_effective_fastp.get(param_key)}")
             else:
-                print("   • 当前参数: 使用内置默认")
+                print(f"\n   ✏️ 用户修改（Mods）: 无")
 
-            # 仅展示与当前参数不同的优化项（分栏摘要）
-            if diff_opt:
-                print("   • 优化参数 (本次建议):")
-                for k in sorted(diff_opt.keys()):
-                    new_v = diff_opt[k]
-                    old_v = fp_prev.get(k, None)
-                    if old_v is not None and old_v != new_v:
-                        print(f"     - {k}: {old_v} -> {new_v}")
+            # Opt：优化建议（区分已应用/待应用）
+            if fastp_opt:
+                print(f"\n   ⚙️ 优化建议（Opt）:")
+                for param_key in sorted(fastp_opt.keys()):
+                    suggestion_value = fastp_opt[param_key]
+                    flag = "[applied]" if param_key in applied_keys and flattened_effective_fastp.get(param_key) == suggestion_value else "[pending]"
+                    current_value = flattened_effective_fastp.get(param_key)
+                    if flag == "[applied]":
+                        print(f"     - {param_key}: {current_value} (已应用 {suggestion_value}) {flag}")
                     else:
-                        print(f"     - {k}: {new_v}")
+                        print(f"     - {param_key}: {current_value} -> {suggestion_value} {flag}")
             else:
-                print("   • 优化参数: 暂无新建议")
-
+                print(f"\n   ⚙️ 优化建议（Opt）: 无")
     except Exception as _:
-        # 展示失败不影响确认流程
         pass
 
     print(f"\n💭 **配置理由:**")
@@ -244,5 +290,9 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
         "modify_requirements": new_user_requirements if 'new_user_requirements' in locals() else {},  # modify需求
         
         # 保存用户选择用于后续处理
-        "messages": [{"role": "user", "content": user_choice}]
+        "messages": [{"role": "user", "content": user_choice}],
+        # 持久化 Base 快照（便于后续对比）
+        "prepare_defaults_nextflow_config": base_nextflow_config,
+        "prepare_defaults_resource_config": base_resource_config,
+        "prepare_defaults_fastp_params": base_fastp_params
     }

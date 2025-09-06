@@ -6,6 +6,7 @@ from .node.detect_node import detect_node
 from .node.prepare_node import prepare_node
 from .node.user_confirm_node import user_confirm_node
 from .node.fastp_node import fastp_node
+from .node.modify_node import modify_node
 from .route import route_from_user_communication, route_after_confirm, route_after_fastp
 
 def create_agent():
@@ -21,6 +22,7 @@ def create_agent():
     workflow.add_node("prepare", prepare_node)
     workflow.add_node("user_confirm", user_confirm_node)
     workflow.add_node("fastp", fastp_node)
+    workflow.add_node("modify", modify_node)  # 添加modify节点
     
     # 入口点：直接进入User Communication节点
     workflow.add_edge(START, "user_communication")
@@ -49,11 +51,14 @@ def create_agent():
         route_after_confirm,
         {
             "fastp": "fastp",                 # 统一执行路由：所有分析任务都通过fastp处理
-            "modify": "prepare",              # 修改配置路由
+            "modify": "modify",               # 修改配置路由 - 先进入modify节点
             "cancel": "user_communication",
             "quit": END
         }
     )
+    
+    # Modify节点完成后直接返回User Confirm节点
+    workflow.add_edge("modify", "user_confirm")
     
     # FastP节点完成后：单次执行直接结束；优化执行回到确认
     workflow.add_conditional_edges(
@@ -69,5 +74,5 @@ def create_agent():
     app = workflow.compile()
     
     print("🤖 RNA-seq智能分析助手已启动")
-    print("   架构: User Communication → Normal → Detect → Prepare → Confirm → FastP → (END/Confirm)")
+    print("   架构: User Communication → Normal → Detect → Prepare → Confirm → (Modify →) FastP → (END/Confirm)")
     return app

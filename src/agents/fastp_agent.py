@@ -384,12 +384,12 @@ class FastpAgent:
         history = history or []
         recent = history[-3:] if len(history) > 3 else history
         history_compact = []
-        for rec in recent:
+        for history_entry in recent:
             history_compact.append({
-                "version": rec.get("version"),
-                "applied_params": rec.get("params", {}),
-                "suggested": rec.get("optimized_params", {}),
-                "success_rate": rec.get("execution_result", {}).get("success_rate", 0),
+                "version": history_entry.get("version"),
+                "applied_params": history_entry.get("params", {}),
+                "suggested": history_entry.get("optimized_params", {}),
+                "success_rate": history_entry.get("execution_result", {}).get("success_rate", 0),
             })
         history_str = _json.dumps(history_compact, ensure_ascii=False, indent=2)
         
@@ -487,7 +487,7 @@ class FastpAgent:
             }
     
     
-    def _get_base_params_from_nf(self, nf_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    def _get_base_params_from_nf(self, nextflow_config_values: Dict[str, Any]) -> Dict[str, Any]:
         """从 nextflow_config 提取（或默认生成）fastp 全量基础参数模板。
 
         说明：保留项目先前既定默认（如 Q20=20、length_required=15），
@@ -495,65 +495,65 @@ class FastpAgent:
         """
         return {
             # 核心质量/长度过滤（保持现有默认）
-            "qualified_quality_phred": nf_cfg.get("qualified_quality_phred", 20),  # -q
-            "unqualified_percent_limit": nf_cfg.get("unqualified_percent_limit", 40),  # -u
-            "n_base_limit": nf_cfg.get("n_base_limit", 5),  # -n
-            "length_required": nf_cfg.get("length_required", 15),  # -l
-            "adapter_trimming": nf_cfg.get("adapter_trimming", True),
-            "quality_filtering": nf_cfg.get("quality_filtering", True),
-            "length_filtering": nf_cfg.get("length_filtering", True),  # 反向对应 -L
+            "qualified_quality_phred": nextflow_config_values.get("qualified_quality_phred", 20),  # -q
+            "unqualified_percent_limit": nextflow_config_values.get("unqualified_percent_limit", 40),  # -u
+            "n_base_limit": nextflow_config_values.get("n_base_limit", 5),  # -n
+            "length_required": nextflow_config_values.get("length_required", 15),  # -l
+            "adapter_trimming": nextflow_config_values.get("adapter_trimming", True),
+            "quality_filtering": nextflow_config_values.get("quality_filtering", True),
+            "length_filtering": nextflow_config_values.get("length_filtering", True),  # 反向对应 -L
 
             # 输入质量与读取控制
-            "phred64": nf_cfg.get("phred64", False),  # -6/--phred64
-            "reads_to_process": nf_cfg.get("reads_to_process", 0),  # --reads_to_process (0=全部)
-            "fix_mgi_id": nf_cfg.get("fix_mgi_id", False),  # --fix_mgi_id
-            "detect_adapter_for_pe": nf_cfg.get("detect_adapter_for_pe", None),  # --detect_adapter_for_pe（默认None，批量逻辑另行决定）
+            "phred64": nextflow_config_values.get("phred64", False),  # -6/--phred64
+            "reads_to_process": nextflow_config_values.get("reads_to_process", 0),  # --reads_to_process (0=全部)
+            "fix_mgi_id": nextflow_config_values.get("fix_mgi_id", False),  # --fix_mgi_id
+            "detect_adapter_for_pe": nextflow_config_values.get("detect_adapter_for_pe", None),  # --detect_adapter_for_pe（默认None，批量逻辑另行决定）
 
             # 前后端定长修剪与最大长度
-            "trim_front1": nf_cfg.get("trim_front1", 0),  # -f
-            "trim_tail1": nf_cfg.get("trim_tail1", 0),  # -t
-            "max_len1": nf_cfg.get("max_len1", 0),  # -b (0=无限制)
-            "trim_front2": nf_cfg.get("trim_front2", 0),  # -F
-            "trim_tail2": nf_cfg.get("trim_tail2", 0),  # -T
-            "max_len2": nf_cfg.get("max_len2", 0),  # -B (0=无限制)
+            "trim_front1": nextflow_config_values.get("trim_front1", 0),  # -f
+            "trim_tail1": nextflow_config_values.get("trim_tail1", 0),  # -t
+            "max_len1": nextflow_config_values.get("max_len1", 0),  # -b (0=无限制)
+            "trim_front2": nextflow_config_values.get("trim_front2", 0),  # -F
+            "trim_tail2": nextflow_config_values.get("trim_tail2", 0),  # -T
+            "max_len2": nextflow_config_values.get("max_len2", 0),  # -B (0=无限制)
 
             # polyG / polyX 修剪
-            "trim_poly_g": nf_cfg.get("trim_poly_g", False),  # -g
-            "poly_g_min_len": nf_cfg.get("poly_g_min_len", None),  # --poly_g_min_len（仅在启用 -g 时生效）
-            "disable_trim_poly_g": nf_cfg.get("disable_trim_poly_g", False),  # -G
-            "trim_poly_x": nf_cfg.get("trim_poly_x", False),  # -x
-            "poly_x_min_len": nf_cfg.get("poly_x_min_len", None),  # --poly_x_min_len
+            "trim_poly_g": nextflow_config_values.get("trim_poly_g", False),  # -g
+            "poly_g_min_len": nextflow_config_values.get("poly_g_min_len", None),  # --poly_g_min_len（仅在启用 -g 时生效）
+            "disable_trim_poly_g": nextflow_config_values.get("disable_trim_poly_g", False),  # -G
+            "trim_poly_x": nextflow_config_values.get("trim_poly_x", False),  # -x
+            "poly_x_min_len": nextflow_config_values.get("poly_x_min_len", None),  # --poly_x_min_len
 
             # 滑窗切除开关（cut_* 开关使用布尔值控制启用/禁用）
-            "cut_front": nf_cfg.get("cut_front", False),   # -5 启用前端切除
-            "cut_tail": nf_cfg.get("cut_tail", False),     # -3 启用后端切除  
-            "cut_right": nf_cfg.get("cut_right", False),   # -r 启用右端切除
-            "cut_window_size": nf_cfg.get("cut_window_size", 4),  # -W
-            "cut_mean_quality": nf_cfg.get("cut_mean_quality", 20),  # -M
+            "cut_front": nextflow_config_values.get("cut_front", False),   # -5 启用前端切除
+            "cut_tail": nextflow_config_values.get("cut_tail", False),     # -3 启用后端切除  
+            "cut_right": nextflow_config_values.get("cut_right", False),   # -r 启用右端切除
+            "cut_window_size": nextflow_config_values.get("cut_window_size", 4),  # -W
+            "cut_mean_quality": nextflow_config_values.get("cut_mean_quality", 20),  # -M
             # 具体窗口与质量（未指定时沿用全局窗口与质量门限，给出显式默认以便模板完整）
-            "cut_front_window_size": nf_cfg.get("cut_front_window_size", 4),
-            "cut_front_mean_quality": nf_cfg.get("cut_front_mean_quality", 20),
-            "cut_tail_window_size": nf_cfg.get("cut_tail_window_size", 4),
-            "cut_tail_mean_quality": nf_cfg.get("cut_tail_mean_quality", 20),
-            "cut_right_window_size": nf_cfg.get("cut_right_window_size", 4),
-            "cut_right_mean_quality": nf_cfg.get("cut_right_mean_quality", 20),
+            "cut_front_window_size": nextflow_config_values.get("cut_front_window_size", 4),
+            "cut_front_mean_quality": nextflow_config_values.get("cut_front_mean_quality", 20),
+            "cut_tail_window_size": nextflow_config_values.get("cut_tail_window_size", 4),
+            "cut_tail_mean_quality": nextflow_config_values.get("cut_tail_mean_quality", 20),
+            "cut_right_window_size": nextflow_config_values.get("cut_right_window_size", 4),
+            "cut_right_mean_quality": nextflow_config_values.get("cut_right_mean_quality", 20),
 
             # 质量/长度过滤细化
-            "average_qual": nf_cfg.get("average_qual", 0),  # -e (0=不启用)
-            "disable_length_filtering": nf_cfg.get("disable_length_filtering", False),  # -L
-            "length_limit": nf_cfg.get("length_limit", 0),  # --length_limit (0=无限制)
-            "low_complexity_filter": nf_cfg.get("low_complexity_filter", False),  # -y
-            "complexity_threshold": nf_cfg.get("complexity_threshold", 30),  # -Y
+            "average_qual": nextflow_config_values.get("average_qual", 0),  # -e (0=不启用)
+            "disable_length_filtering": nextflow_config_values.get("disable_length_filtering", False),  # -L
+            "length_limit": nextflow_config_values.get("length_limit", 0),  # --length_limit (0=无限制)
+            "low_complexity_filter": nextflow_config_values.get("low_complexity_filter", False),  # -y
+            "complexity_threshold": nextflow_config_values.get("complexity_threshold", 30),  # -Y
 
             # PE 重叠校正与检测
-            "correction": nf_cfg.get("correction", False),  # -c（仅PE）
-            "overlap_len_require": nf_cfg.get("overlap_len_require", 30),
-            "overlap_diff_limit": nf_cfg.get("overlap_diff_limit", 5),
-            "overlap_diff_percent_limit": nf_cfg.get("overlap_diff_percent_limit", 20),
+            "correction": nextflow_config_values.get("correction", False),  # -c（仅PE）
+            "overlap_len_require": nextflow_config_values.get("overlap_len_require", 30),
+            "overlap_diff_limit": nextflow_config_values.get("overlap_diff_limit", 5),
+            "overlap_diff_percent_limit": nextflow_config_values.get("overlap_diff_percent_limit", 20),
 
             # 过表达序列分析
-            "overrepresentation_analysis": nf_cfg.get("overrepresentation_analysis", False),  # -p
-            "overrepresentation_sampling": nf_cfg.get("overrepresentation_sampling", 20),  # -P
+            "overrepresentation_analysis": nextflow_config_values.get("overrepresentation_analysis", False),  # -p
+            "overrepresentation_sampling": nextflow_config_values.get("overrepresentation_sampling", 20),  # -P
         }
 
 
@@ -611,7 +611,7 @@ class FastpAgent:
         Args:
             sample_groups: 样本组信息
             nextflow_config: Nextflow配置
-            current_params: 当前运行参数（来自state.fastp_current_params）
+            current_params: 当前运行参数（调用方传入，推荐来自 state.fastp_params）
             version: 参数版本号，用于文件命名
         """
         # 存储全局配置供其他方法使用
@@ -640,8 +640,8 @@ class FastpAgent:
         # CPU资源：仅通过 Nextflow 的 fastp_cpus 管理
         fastp_cpus = (nextflow_config or {}).get('fastp_cpus')
 
-        # detect_adapter_for_pe：若任一组为PE则默认开启（SE不受影响）
-        any_paired = any(bool(sg.get("read2")) for sg in (sample_groups or []))
+        # detect_adapter_for_pe：优先使用 fastp_params（effective_params）；缺省时若任一组为PE则默认开启
+        any_paired = any(bool(sample_group.get("read2")) for sample_group in (sample_groups or []))
 
         # 构建批量 params 字典
         batch_params: Dict[str, Any] = {
@@ -660,7 +660,7 @@ class FastpAgent:
             "adapter_trimming": effective_params.get("adapter_trimming", True),
             "quality_filtering": effective_params.get("quality_filtering", True),
             "length_filtering": effective_params.get("length_filtering", True),
-            "detect_adapter_for_pe": any_paired if (nextflow_config or {}).get("detect_adapter_for_pe") is None else bool((nextflow_config or {}).get("detect_adapter_for_pe")),
+            "detect_adapter_for_pe": effective_params.get("detect_adapter_for_pe") if effective_params.get("detect_adapter_for_pe") is not None else any_paired,
         })
 
         # 添加高级参数（优先从effective_params读取）
@@ -679,18 +679,8 @@ class FastpAgent:
             if param in effective_params:
                 batch_params[param] = effective_params[param]
 
-        # 允许 nextflow_config 覆盖批量参数（显式配置优先级最高）
-        for key, val in (nextflow_config or {}).items():
-            if key in {"qualified_quality_phred", "unqualified_percent_limit", "n_base_limit", "length_required",
-                       "adapter_trimming", "quality_filtering", "length_filtering", "average_qual",
-                       "length_limit", "low_complexity_filter", "trim_poly_g", "disable_trim_poly_g",
-                       "trim_poly_x", "poly_g_min_len", "poly_x_min_len", "cut_front", "cut_tail",
-                       "cut_right", "cut_window_size", "cut_mean_quality", "cut_front_window_size",
-                       "cut_front_mean_quality", "cut_tail_window_size", "cut_tail_mean_quality",
-                       "cut_right_window_size", "cut_right_mean_quality", "correction", "complexity_threshold",
-                       "overlap_len_require", "overlap_diff_limit", "overlap_diff_percent_limit",
-                       "overrepresentation_sampling"}:
-                batch_params[key] = val
+        # 不再让 nextflow_config 覆盖 fastp 参数：fastp_params 是唯一真相源
+        # 若需要通过 nextflow_config 显式注入 fastp 相关键，应在 Prepare 阶段同步写入 fastp_params
 
         # 写入版本化参数文件
         params_file = results_root / f"fastp_params.v{version}.json"
@@ -716,17 +706,17 @@ class FastpAgent:
         # 运行 Nextflow（使用标准文件名）
         cmd = ["nextflow", "run", "/fastp.nf", "-params-file", str(params_file_latest), "-resume"]
         print("🚀 执行批量 fastp:", " ".join(cmd))
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+        completed_process = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
 
-        if proc.returncode != 0:
-            print(f"⚠️ Nextflow返回非零状态码: {proc.returncode}")
-            print(f"   stderr: {proc.stderr[:200]}...")
+        if completed_process.returncode != 0:
+            print(f"⚠️ Nextflow返回非零状态码: {completed_process.returncode}")
+            print(f"   stderr: {completed_process.stderr[:200]}...")
             # 但仍继续检查输出文件，因为可能只是警告
         
         # 检查是否有样本成功产生输出文件
         successful_samples = 0
-        for sg in sample_groups or []:
-            sample_id = sg.get("sample_id", "unknown")
+        for sample_group in sample_groups or []:
+            sample_id = sample_group.get("sample_id", "unknown")
             sample_dir = results_root / sample_id
             json_file = sample_dir / f"{sample_id}.fastp.json"
             if json_file.exists():
@@ -736,12 +726,12 @@ class FastpAgent:
             # 完全失败：返回统一错误
             return {
                 "samples": [
-                    {"sample_id": sg.get("sample_id", "unknown"), "success": False, "error": proc.stderr}
-                    for sg in (sample_groups or [])
+                    {"sample_id": sample_group.get("sample_id", "unknown"), "success": False, "error": completed_process.stderr}
+                    for sample_group in (sample_groups or [])
                 ],
                 "default_params": base_params,
                 "optimized_params": {},
-                "summary": f"批量执行失败: {proc.stderr[:200]}",
+                "summary": f"批量执行失败: {completed_process.stderr[:200]}",
                 "reasoning": "",
                 "total": len(sample_groups or []),
                 "success_count": 0,
@@ -751,73 +741,73 @@ class FastpAgent:
                     "latest": str(params_file_latest)
                 },
             }
-        elif proc.returncode != 0:
+        elif completed_process.returncode != 0:
             print(f"🔧 Nextflow有警告但{successful_samples}/{len(sample_groups)}样本成功，继续分析")
 
         # 成功：逐样本收集报告并做分析
         results: List[Dict[str, Any]] = []
-        for sg in sample_groups or []:
-            sid = sg.get("sample_id") or "unknown"
-            sdir = results_root / sid
+        for sample_group in sample_groups or []:
+            sample_id = sample_group.get("sample_id") or "unknown"
+            sample_output_dir = results_root / sample_id
             # 构造 FastpResult 并从报告填充
-            fr = FastpResult(success=True, exit_code=0)
+            fastp_result = FastpResult(success=True, exit_code=0)
             # 报告路径
-            html = sdir / f"{sid}.fastp.html"
-            jsn = sdir / f"{sid}.fastp.json"
-            if html.exists():
-                fr.html_report = str(html)
-            if jsn.exists():
-                fr.json_report = str(jsn)
-                fr = self._parse_json_report_with_path(str(jsn), fr)
+            html_report_path = sample_output_dir / f"{sample_id}.fastp.html"
+            json_report_path = sample_output_dir / f"{sample_id}.fastp.json"
+            if html_report_path.exists():
+                fastp_result.html_report = str(html_report_path)
+            if json_report_path.exists():
+                fastp_result.json_report = str(json_report_path)
+                fastp_result = self._parse_json_report_with_path(str(json_report_path), fastp_result)
             else:
-                fr.success = False
-                fr.error_message = "缺少 fastp JSON 报告"
+                fastp_result.success = False
+                fastp_result.error_message = "缺少 fastp JSON 报告"
 
             # 输出文件
-            if sg.get("read2"):
+            if sample_group.get("read2"):
                 # PE
-                out1 = sdir / f"{sid}_1.trimmed.fastq.gz"
-                out2 = sdir / f"{sid}_2.trimmed.fastq.gz"
-                outs = []
-                if out1.exists():
-                    outs.append(str(out1))
-                if out2.exists():
-                    outs.append(str(out2))
-                fr.output_files = outs
+                trimmed_read1_path = sample_output_dir / f"{sample_id}_1.trimmed.fastq.gz"
+                trimmed_read2_path = sample_output_dir / f"{sample_id}_2.trimmed.fastq.gz"
+                output_files_list: List[str] = []
+                if trimmed_read1_path.exists():
+                    output_files_list.append(str(trimmed_read1_path))
+                if trimmed_read2_path.exists():
+                    output_files_list.append(str(trimmed_read2_path))
+                fastp_result.output_files = output_files_list
             else:
                 # SE
-                out = sdir / f"{sid}.single.trimmed.fastq.gz"
-                if out.exists():
-                    fr.output_files = [str(out)]
+                single_trimmed_path = sample_output_dir / f"{sample_id}.single.trimmed.fastq.gz"
+                if single_trimmed_path.exists():
+                    fastp_result.output_files = [str(single_trimmed_path)]
 
 
             sample_result: Dict[str, Any] = {
-                "sample_id": sid,
-                "success": fr.success,
+                "sample_id": sample_id,
+                "success": fastp_result.success,
                 "statistics": {
                     # 基本统计
-                    "reads_before": fr.total_reads_before,
-                    "reads_after": fr.total_reads_after,
-                    "reads_retention": fr.total_reads_after / fr.total_reads_before if fr.total_reads_before > 0 else 0,
-                    "q30_rate": fr.q30_bases_after / fr.total_bases_after if fr.total_bases_after > 0 else 0,
+                    "reads_before": fastp_result.total_reads_before,
+                    "reads_after": fastp_result.total_reads_after,
+                    "reads_retention": fastp_result.total_reads_after / fastp_result.total_reads_before if fastp_result.total_reads_before > 0 else 0,
+                    "q30_rate": fastp_result.q30_bases_after / fastp_result.total_bases_after if fastp_result.total_bases_after > 0 else 0,
                     # 额外的质量指标
-                    "gc_content_before": fr.gc_content_before,
-                    "gc_content_after": fr.gc_content_after,
-                    "mean_length_before": fr.read_length_before,
-                    "mean_length_after": fr.read_length_after,
-                    "duplication_rate": fr.duplication_rate,
-                    "adapter_trimmed_reads": fr.adapter_trimmed_reads,
-                    "adapter_trimmed_percent": fr.adapter_trimmed_reads / fr.total_reads_before if fr.total_reads_before > 0 else 0,
+                    "gc_content_before": fastp_result.gc_content_before,
+                    "gc_content_after": fastp_result.gc_content_after,
+                    "mean_length_before": fastp_result.read_length_before,
+                    "mean_length_after": fastp_result.read_length_after,
+                    "duplication_rate": fastp_result.duplication_rate,
+                    "adapter_trimmed_reads": fastp_result.adapter_trimmed_reads,
+                    "adapter_trimmed_percent": fastp_result.adapter_trimmed_reads / fastp_result.total_reads_before if fastp_result.total_reads_before > 0 else 0,
                     # 过滤原因统计
-                    "low_quality_reads": fr.low_quality_reads,
-                    "too_short_reads": fr.too_short_reads,
-                    "too_many_n_reads": fr.too_many_n_reads,
+                    "low_quality_reads": fastp_result.low_quality_reads,
+                    "too_short_reads": fastp_result.too_short_reads,
+                    "too_many_n_reads": fastp_result.too_many_n_reads,
                 },
-                "output_files": fr.output_files,
-                "reports": {"html": fr.html_report, "json": fr.json_report},
+                "output_files": fastp_result.output_files,
+                "reports": {"html": fastp_result.html_report, "json": fastp_result.json_report},
             }
-            if not fr.success:
-                sample_result["error"] = fr.error_message
+            if not fastp_result.success:
+                sample_result["error"] = fastp_result.error_message
 
             results.append(sample_result)
 
