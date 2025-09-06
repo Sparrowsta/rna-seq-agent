@@ -28,6 +28,9 @@ class AgentState(BaseModel):
     # === Detect检测字段 ===
     query_results: Dict[str, Any] = Field(default={}, description="系统检测结果")
     query_summary: str = Field(default="", description="检测结果总结")
+    results_timestamp: str = Field(default="", description="结果目录时间戳")
+    results_dir: str = Field(default="", description="完整结果目录路径")
+    base_data_path: str = Field(default="", description="基础数据路径")
     
     # === Prepare配置字段 ===
     nextflow_config: Dict[str, Any] = Field(default={}, description="Nextflow配置参数")

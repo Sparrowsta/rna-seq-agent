@@ -1,11 +1,9 @@
 import json
-from datetime import datetime
 from typing import Dict, Any
 from ..state import AgentState, PrepareResponse
 from ..core import get_shared_llm
 from ..prompts import PREPARE_NODE_PROMPT
 from langgraph.prebuilt import create_react_agent
-from ..config.settings import Settings
 from ..tools import (
     scan_fastq_files,
     scan_system_resources,
@@ -43,75 +41,39 @@ def create_prepare_agent(detection_context: str = ""):
     )
     return agent
 
-def generate_timestamped_results_config(settings: Settings) -> Dict[str, str]:
-    """生成基于时间戳的结果目录配置
-    
-    Args:
-        settings: 应用配置实例
-        
-    Returns:
-        包含时间戳路径配置的字典
-    """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_data_path = str(settings.data_dir)
-    results_dir = f"{base_data_path}/results/{timestamp}"
-    
-    return {
-        "results_dir": results_dir,
-        "results_timestamp": timestamp,
-        "base_data_path": base_data_path
-    }
 
 async def prepare_node(state: AgentState) -> Dict[str, Any]:
-    """准备节点 - 优先基于Normal模式传来的用户需求生成配置参数"""
+    """准备节点 - 专注于初始配置生成，基于用户需求和检测数据"""
     print(f"⚙️ 开始智能配置分析...")
     
-    # 初始化设置和生成时间戳配置
-    settings = Settings()
-    timestamp_config = generate_timestamped_results_config(settings)
-    print(f"📁 生成时间戳结果目录: {timestamp_config['results_dir']}")
-    
-    # 获取所有必要信息
+    # 获取核心信息
     detection_results = state.query_results or {}
     current_config = state.nextflow_config or {}
     initial_requirements = state.user_requirements or {}
-    modify_requirements = state.modify_requirements or {}
-    
-    # 将时间戳配置合并到当前配置中
-    current_config.update(timestamp_config)
     
     if not detection_results:
         return {
             "nextflow_config": current_config,
             "resource_config": {},
-            "config_reasoning": "未获取到检测数据，保持现有配置",
+            "config_reasoning": "未获取到检测数据，无法进行智能配置分析",
             "response": "⚠️ 缺少检测数据，无法进行智能配置分析",
             "status": "error"
         }
     
     # 使用LLM综合分析用户需求和检测数据
-    
     try:
-        # 检查是否为用户修改请求
-        is_modification = bool(modify_requirements)
-        if is_modification:
-            print("🔧 检测到用户修改请求，正在基于修改需求调整配置...")
-        else:
-            print("🧠 LLM正在基于用户需求分析检测数据并生成配置...")
+        print("🧠 LLM正在基于用户需求分析检测数据并生成初始配置...")
         
-        # 构建需求上下文
+        # 构建上下文（仅包含初始需求，不处理修改）
         context_parts = []
         if initial_requirements:
-            context_parts.append(f"**初始配置需求**: {initial_requirements}")
-        if modify_requirements:
-            context_parts.append(f"**用户修改需求**: {modify_requirements} (优先级更高，必须重点关注)")
-            context_parts.append(f"**修改指令**: 请特别注意用户的修改要求，严格按照修改需求调整配置参数")
+            context_parts.append(f"**用户需求**: {initial_requirements}")
         
         # 添加检测数据
         context_parts.append(f"=== 📊 系统检测数据 ===")
         context_parts.append(json.dumps(detection_results, indent=2, ensure_ascii=False))
         
-        # 添加当前配置状态
+        # 添加当前配置状态（包含时间戳信息）
         context_parts.append(f"=== ⚙️ 当前配置状态 ===")
         context_parts.append(json.dumps(current_config, indent=2, ensure_ascii=False))
         
@@ -120,45 +82,34 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
         # 将上下文传递给create_prepare_agent
         agent_executor = create_prepare_agent(detection_context)
         
-        # 构建更具体的用户消息
-        if modify_requirements:
-            user_message = f"用户提出了配置修改需求，请严格按照用户的修改要求调整配置。用户修改要求: {modify_requirements.get('raw_input', '请重新生成配置')}"
-        else:
-            user_message = "请基于用户需求和检测数据生成最优配置"
+        # 构建用户消息
+        user_message = "请基于用户需求和检测数据生成最优初始配置"
         messages_input = {"messages": [{"role": "user", "content": user_message}]}
         
         result = await agent_executor.ainvoke(messages_input)
         structured_response = result.get("structured_response")
 
-        # 检查LLM响应并提取结果（严格遵循 PrepareResponse 的字段：nextflow_config/resource_config/config_reasoning）
+        # 检查LLM响应并提取结果
         if structured_response:
             reasoning = structured_response.config_reasoning or "基于用户需求和检测数据的智能分析"
 
             nextflow_cfg = structured_response.nextflow_config or {}
             resource_params = structured_response.resource_config or {}
 
-            if is_modification:
-                print(f"✅ 配置修改完成，已严格按照用户修改要求调整")
-            else:
-                print(f"✅ 配置生成完成，严格遵循用户需求")
+            print(f"✅ 初始配置生成完成")
 
             # 合并配置参数（新配置优先）
             final_config = current_config.copy()
             final_config.update(nextflow_cfg)
 
-            # 构建需求满足情况说明
+            # 构建用户需求满足说明
             user_satisfaction_note = ""
-            if initial_requirements or modify_requirements:
-                satisfaction_parts = []
-                if initial_requirements:
-                    satisfaction_parts.append(f"📋 初始需求: {initial_requirements}")
-                if modify_requirements:
-                    satisfaction_parts.append(f"🔧 修改需求: {modify_requirements} (已优先处理)")
-                user_satisfaction_note = f"\n\n🎯 **用户需求处理情况：**\n" + "\n".join(satisfaction_parts)
+            if initial_requirements:
+                user_satisfaction_note = f"\n\n🎯 **用户需求处理情况：**\n📋 {initial_requirements}"
 
             return {
                 "nextflow_config": final_config,
-                "resource_config": resource_params,  # 显式传递资源配置
+                "resource_config": resource_params,
                 "config_reasoning": reasoning,
                 "response": f"智能配置分析完成{user_satisfaction_note}\n\n💡 {reasoning}",
                 "status": "confirm"
@@ -167,11 +118,11 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
             raise Exception("Agent未返回预期的结构化响应")
         
     except Exception as e:
-        print(f"❌ LLM分析失败: {str(e)}")
+        print(f"❌ 配置生成失败: {str(e)}")
         return {
             "nextflow_config": current_config,
             "resource_config": {},
-            "config_reasoning": f"LLM分析失败: {str(e)}",
+            "config_reasoning": f"配置生成失败: {str(e)}",
             "response": f"❌ 配置生成失败: {str(e)}",
             "status": "error"
         }

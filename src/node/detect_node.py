@@ -1,4 +1,5 @@
 from typing import Dict, Any
+from datetime import datetime
 from ..state import AgentState
 from ..tools import (
     scan_fastq_files,
@@ -6,11 +7,20 @@ from ..tools import (
     scan_genome_files,
     check_tool_availability,
 )
+from ..config.settings import Settings
 
 
 async def detect_node(state: AgentState) -> Dict[str, Any]:
     """Detect节点 - 直接调用工具执行全面检测（不依赖Plan）"""
     print("🔎 正在执行全面环境与数据检测…")
+
+    # 生成时间戳和结果目录
+    settings = Settings()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_data_path = str(settings.data_dir)
+    results_dir = f"{base_data_path}/results/{timestamp}"
+    
+    print(f"📁 生成结果目录: {results_dir}")
 
     results: Dict[str, Any] = {}
     errors = []
@@ -84,4 +94,9 @@ async def detect_node(state: AgentState) -> Dict[str, Any]:
         "query_results": results,
         "execution_errors": errors or None,
         "response": query_summary,
+        
+        # 时间戳和目录信息
+        "results_dir": results_dir,
+        "results_timestamp": timestamp,
+        "base_data_path": base_data_path,
     }
