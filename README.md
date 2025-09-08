@@ -95,7 +95,7 @@ graph TB
 - Docker 20.10+
 - 至少 16GB RAM (推荐32GB用于STAR比对)
 - 100GB+ 可用磁盘空间
-- Linux/macOS/WSL2
+- Linux/WSL2
 
 > 注：Python、Nextflow等依赖已包含在Docker镜像中，无需单独安装
 
@@ -104,7 +104,7 @@ graph TB
 ```bash
 # 克隆项目
 git clone https://github.com/Sparrowsta/rnaseq-workflow.git
-cd ngs
+cd rnaseq-workflow
 
 # 设置API密钥
 echo "DEEPSEEK_API_KEY=your-api-key-here" > .env
@@ -318,7 +318,6 @@ $ docker run -it --rm \
 [HH:MM:SS] [xx/xxxxxx] process > fastp (3)            [100%] 3 of 3, cached: 3 ✔
 [HH:MM:SS] [xx/xxxxxx] process > star_align (3)       [100%] 3 of 3 ✔
 [HH:MM:SS] [xx/xxxxxx] process > featurecounts        [100%] 1 of 1 ✔
-[HH:MM:SS] [xx/xxxxxx] process > multiqc              [100%] 1 of 1 ✔
 
 ✅ 分析完成！
 
