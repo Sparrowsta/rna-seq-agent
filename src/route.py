@@ -47,28 +47,28 @@ def route_after_confirm(state: AgentState) -> str:
 
 def route_after_fastp(state: AgentState) -> str:
     """FastP节点后的路由：
-    - 单次执行（single_run）：继续STAR比对
+    - 单次执行（single）：继续STAR比对
     - 优化执行（optimized）：回到用户确认进行参数微调
     - 批次优化（batch_optimize）：继续STAR比对（收集优化建议但不中断）
     - 错误情况：回到用户确认
     """
-    mode = getattr(state, 'execution_mode', 'single_run')
-    status = getattr(state, 'status', '')
+    mode = getattr(state, 'execution_mode', 'single')
+    fastp_results = getattr(state, 'fastp_results', {})
     
-    # 直接检查顶层status是否为success
-    if status == "success":
+    # 检查fastp_results是否成功完成
+    if fastp_results and fastp_results.get("status") == "success":
         if mode == 'optimized':
             print("🔁 [ROUTE] 优化执行模式：FastP 完成后返回确认进行参数微调")
             return "user_confirm"
         elif mode == 'batch_optimize':
             print("📊 [ROUTE] 批次优化模式：FastP 完成后继续STAR比对（收集优化建议）")
             return "star"
-        else:  # single_run
+        else:  # single 或其他
             print("🧬 [ROUTE] 单次执行模式：FastP 完成后继续STAR比对")
             return "star"
     else:
         print(f"❌ [ROUTE] FastP执行失败，返回确认界面")
-        print(f"   [DEBUG] status: {status}")
+        print(f"   [DEBUG] fastp_results: {fastp_results}")
         return "user_confirm"
 
 
@@ -79,7 +79,7 @@ def route_after_star(state: AgentState) -> str:
     - 批次优化模式：继续FeatureCount（收集优化建议但不中断）
     - 其他错误：回到用户确认
     """
-    mode = getattr(state, 'execution_mode', 'single_run')
+    mode = getattr(state, 'execution_mode', 'single')
     star_results = getattr(state, 'star_results', {})
     
     # 检查STAR是否成功完成
@@ -87,9 +87,9 @@ def route_after_star(state: AgentState) -> str:
         if mode == 'optimized':
             print("🔁 [ROUTE] 优化执行模式：STAR完成后返回确认进行参数微调")
             return "user_confirm"
-        else:  # single_run
+        else:  # single 或其他
             print("🧬 [ROUTE] STAR比对成功，继续FeatureCount定量")
-            return "featurecount"
+            return "featurecounts"
     else:
         print("❌ [ROUTE] star执行失败，返回确认界面")
         return "user_confirm"
@@ -103,7 +103,7 @@ def route_after_featurecount(state: AgentState) -> str:
     - 批量优化模式：继续分析（收集所有优化建议）
     - 其他错误：回到用户确认
     """
-    mode = getattr(state, 'execution_mode', 'single_run')
+    mode = getattr(state, 'execution_mode', 'single')
     featurecount_results = getattr(state, 'featurecount_results', {})
     
     # 检查FeatureCount是否成功完成
@@ -114,7 +114,7 @@ def route_after_featurecount(state: AgentState) -> str:
         elif mode == 'batch_optimize':
             print("📊 [ROUTE] 批量优化模式：FeatureCount完成，返回确认界面显示优化建议")
             return "user_confirm"
-        else:  # single_run
+        else:  # single 或其他
             print("🧬 [ROUTE] FeatureCount定量成功，进入综合分析")
             return "analysis"
     else:
@@ -153,7 +153,7 @@ def route_after_analysis(state: AgentState) -> str:
     
     if analysis_status == "success":
             print("✅ [ROUTE] 分析完成，返回用户交互界面")
-            return "END"
+            return "user_communication"
     else:
         print("❌ [ROUTE] 分析失败，返回确认界面")
         return "end"

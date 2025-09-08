@@ -8,7 +8,7 @@ from .node.user_confirm_node import user_confirm_node
 from .node.fastp_node import fastp_node
 from .node.modify_node import modify_node
 from .node.star_node import star_node
-from .node.featurecount_node import featurecount_node
+from .node.featurecounts_node import featurecounts_node
 from .node.analysis_node import analysis_node
 from .route import (
     route_from_user_communication, 
@@ -34,7 +34,7 @@ def create_agent():
     workflow.add_node("user_confirm", user_confirm_node)
     workflow.add_node("fastp", fastp_node)
     workflow.add_node("star", star_node)
-    workflow.add_node("featurecount", featurecount_node)
+    workflow.add_node("featurecounts", featurecounts_node)
     workflow.add_node("analysis", analysis_node)
     workflow.add_node("modify", modify_node)
     
@@ -89,14 +89,14 @@ def create_agent():
         "star",
         route_after_star,
         {
-            "featurecount": "featurecount",   # 继续FeatureCount定量
+            "featurecounts": "featurecounts",   # 继续FeatureCount定量
             "user_confirm": "user_confirm",   # 回到确认（优化模式或错误） 
         }
     )
     
     # FeatureCount节点完成后的路由
     workflow.add_conditional_edges(
-        "featurecount", 
+        "featurecounts", 
         route_after_featurecount,
         {
             "analysis": "analysis",           # 进入综合分析
