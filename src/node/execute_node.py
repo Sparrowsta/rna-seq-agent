@@ -146,66 +146,52 @@ def build_nextflow_command(params_file_path: str, config_file_path: Optional[str
     return " ".join(cmd_parts)
 
 async def execute_nextflow_pipeline(command: str) -> Dict[str, Any]:
-    """执行Nextflow流水线（已优化，移除SSL重试机制）"""
+    """执行Nextflow流水线 - 使用原生界面直接输出到终端"""
     
     start_time = time.time()
     
     try:
-        print(f"🔄 执行命令: {command}")
-        print(f"🚀 启动Nextflow执行...")
+        print(f"\n{'='*60}")
+        print(f"🧬 启动 Nextflow Pipeline")
+        print(f"{'='*60}")
+        print(f"📋 命令: {command}")
+        print(f"⏰ 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"{'='*60}\n")
         
-        process = await asyncio.create_subprocess_shell(
+        # 使用 subprocess.run 让 Nextflow 直接输出到终端
+        # 不捕获 stdout/stderr，保留原生的彩色输出和进度条
+        result = subprocess.run(
             command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd="."
+            shell=True,
+            cwd=".",
+            text=True
+            # 注意：没有 stdout=PIPE，这样 Nextflow 的输出直接显示在终端
         )
-        
-        # 实时读取输出
-        output_lines = []
-        
-        # 类型断言确保stdout不为None
-        assert process.stdout is not None, "stdout should not be None when PIPE is specified"
-        
-        while True:
-            line = await process.stdout.readline()
-            if not line:
-                break
-            
-            line_text = line.decode('utf-8').strip()
-            output_lines.append(line_text)
-                
-            # 实时显示关键信息
-            if any(keyword in line_text.lower() for keyword in 
-                   ['completed', 'failed', 'error', 'submitted', 'cached']):
-                print(f"   📋 {line_text}")
-        
-        # 等待进程完成
-        await process.wait()
         
         # 计算执行时间
         duration = time.time() - start_time
         duration_str = f"{duration:.1f}秒"
-        full_output = "\n".join(output_lines)
+        
+        print(f"\n{'='*60}")
         
         # 执行结果判断
-        if process.returncode == 0:
+        if result.returncode == 0:
             print(f"✅ Nextflow执行成功 (耗时: {duration_str})")
             return {
                 "success": True,
-                "output": full_output,
+                "output": "See console output above",
                 "duration": duration_str,
-                "return_code": process.returncode,
+                "return_code": result.returncode,
                 "mode": "success"
             }
         else:
-            print(f"❌ Nextflow执行失败 (返回码: {process.returncode})")
+            print(f"❌ Nextflow执行失败 (返回码: {result.returncode})")
             return {
                 "success": False,
-                "output": full_output,
+                "output": "See console output above",
                 "duration": duration_str,
-                "return_code": process.returncode,
-                "error": f"Nextflow进程失败，返回码: {process.returncode}",
+                "return_code": result.returncode,
+                "error": f"Nextflow进程失败，返回码: {result.returncode}",
                 "mode": "failed"
             }
     

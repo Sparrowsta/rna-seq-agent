@@ -61,3 +61,5 @@ config/runtime_config.json
 config/nextflow.config
 
 .claude/index.json
+.bmad-core
+!README.md

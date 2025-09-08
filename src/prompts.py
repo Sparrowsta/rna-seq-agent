@@ -78,6 +78,15 @@ PREPARE_NODE_PROMPT = """你是RNA-seq分析配置专家。请在尽量少的工
 资源配置（轻量）：
 - 基于 assess_system_readiness 的逻辑核心数与内存(GB)估算；给出合理但保守的 cpus 与 memory（字符串如 "8 GB"）。
 - STAR 相关进程优先给 32 GB；HISAT2 相关进程 8–16 GB；其余适度分配。
+- 重要：使用正确的进程名称配置资源（必须与 main.nf 中的进程名匹配）：
+  * run_quality_control（不是 fastp）
+  * run_alignment（不是 star 或 hisat2）  
+  * run_quantification（不是 featurecounts）
+  * download_genome_fasta, download_genome_gtf
+  * prepare_local_genome
+  * build_star_index, link_star_index
+  * build_hisat2_index, link_hisat2_index
+- 不要配置不存在的进程如 multiqc
 
 返回格式约束：
 - 只返回上述 3 个字段；不要添加多余键；详细的 config_reasoning 对每一个参数进行说明，同时要格式化输出。
