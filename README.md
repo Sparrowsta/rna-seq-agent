@@ -400,7 +400,6 @@ results/
 - [Nextflow](https://www.nextflow.io/) - 流水线框架
 - [LangGraph](https://github.com/langchain-ai/langgraph) - Agent框架
 - [DeepSeek](https://www.deepseek.com/) - LLM服务
-- [Biocontainers](https://biocontainers.pro/) - 生物信息学容器
 - [fastp](https://github.com/OpenGene/fastp) - 质控工具
 - [STAR](https://github.com/alexdobin/STAR) - 比对工具
 - [HISAT2](http://daehwankimlab.github.io/hisat2/) - 比对工具
