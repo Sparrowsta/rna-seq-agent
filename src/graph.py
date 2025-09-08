@@ -64,8 +64,11 @@ def create_agent():
         "user_confirm",
         route_after_confirm,
         {
-            "fastp": "fastp",                 # 开始FastP处理
-            "modify": "modify",               # 修改配置路由
+            "fastp": "fastp",                     # 开始FastP处理
+            "star": "star",                       # 继续STAR比对
+            "featurecounts": "featurecounts",     # 继续FeatureCounts定量
+            "analysis": "analysis",               # 继续综合分析
+            "modify": "modify",                   # 修改配置路由
             "cancel": "user_communication",
             "quit": END
         }
@@ -109,7 +112,7 @@ def create_agent():
         "analysis",
         route_after_analysis,
         {
-            "user_communication": "user_communication",  # 返回用户交互
+            "user_confirm": "user_confirm",  # 返回用户确认界面
         }
     )
     

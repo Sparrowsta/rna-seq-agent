@@ -31,7 +31,18 @@ def route_after_confirm(state: AgentState) -> str:
         print("🚀 [ROUTE] 用户选择执行分析")
         print("🧬 [ROUTE] 统一路由到FastP节点处理")
         return "fastp"
-            
+    elif user_decision == "continue_star":
+        print("🎯 [ROUTE] 继续到STAR比对")
+        return "star"
+    elif user_decision == "continue_featurecounts":
+        print("📊 [ROUTE] 继续到FeatureCounts定量")
+        return "featurecounts"
+    elif user_decision == "continue_analysis":
+        print("📈 [ROUTE] 继续到综合分析")
+        return "analysis"
+    elif user_decision == "apply_optimization":
+        print("✨ [ROUTE] 应用优化建议到modify节点")
+        return "modify"
     elif user_decision == "modify":
         print("🔧 [ROUTE] 用户选择修改配置")
         return "modify"
@@ -104,10 +115,10 @@ def route_after_featurecount(state: AgentState) -> str:
     - 其他错误：回到用户确认
     """
     mode = getattr(state, 'execution_mode', 'single')
-    featurecount_results = getattr(state, 'featurecount_results', {})
+    featurecounts_results = getattr(state, 'featurecounts_results', {})
     
-    # 检查FeatureCount是否成功完成
-    if featurecount_results and featurecount_results.get("status") == "success":
+    # 检查FeatureCounts是否成功完成
+    if featurecounts_results and featurecounts_results.get("status") == "success":
         if mode == 'optimized':
             print("🔁 [ROUTE] 优化执行模式：FeatureCount完成后返回确认进行参数微调")
             return "user_confirm"
@@ -134,9 +145,9 @@ def route_to_analysis(state: AgentState) -> str:
         # 检查是否有必要的数据进行分析
         fastp_results = getattr(state, 'fastp_results', {})
         star_results = getattr(state, 'star_results', {}) 
-        featurecount_results = getattr(state, 'featurecount_results', {})
+        featurecounts_results = getattr(state, 'featurecounts_results', {})
         
-        if fastp_results or star_results or featurecount_results:
+        if fastp_results or star_results or featurecounts_results:
             print("🧬 [ROUTE] 满足分析条件，进入综合分析")
             return "analysis"
     
@@ -146,14 +157,13 @@ def route_to_analysis(state: AgentState) -> str:
 
 def route_after_analysis(state: AgentState) -> str:
     """Analysis节点后的路由：
-    - 分析成功：返回用户交互界面
-    - 分析失败：回到用户确认界面
+    - 无论成功失败，都返回用户确认界面
     """
     analysis_status = getattr(state, 'status', '')
     
     if analysis_status == "success":
-            print("✅ [ROUTE] 分析完成，返回用户交互界面")
-            return "user_communication"
+        print("✅ [ROUTE] 分析完成，返回用户确认界面")
+        return "user_confirm"
     else:
-        print("❌ [ROUTE] 分析失败，返回确认界面")
-        return "end"
+        print("❌ [ROUTE] 分析失败，返回用户确认界面")
+        return "user_confirm"

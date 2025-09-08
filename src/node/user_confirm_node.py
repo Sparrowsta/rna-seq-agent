@@ -206,6 +206,18 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
                         print(f"     - {param_key}: {current_value} -> {suggestion_value} {flag}")
             else:
                 print(f"\n   ⚙️ 优化建议（Opt）: 无")
+                
+            # 显示最新的优化建议（如果有的话）
+            latest_optimization_suggestions = getattr(state, 'fastp_optimization_suggestions', {})
+            latest_optimization_reasoning = getattr(state, 'fastp_optimization_reasoning', '')
+            
+            if latest_optimization_suggestions:
+                print(f"\n   🔍 **最新优化分析**:")
+                print(f"     💡 {latest_optimization_reasoning}")
+                print(f"     📊 具体建议:")
+                for param_key, suggested_value in latest_optimization_suggestions.items():
+                    current_val = flattened_effective_fastp.get(param_key, "未设置")
+                    print(f"       - {param_key}: {current_val} → {suggested_value}")
     except Exception as _:
         pass
 
@@ -213,6 +225,31 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
     print(f"   {config_reasoning}")
     
     print(f"\n🔄 **请选择下一步操作:**")
+    
+    # 根据执行进度显示不同的选项
+    completed_steps = getattr(state, 'completed_steps', [])
+    current_step = getattr(state, 'current_step', '')
+    
+    if completed_steps:
+        print(f"   📊 **执行进度**: {' -> '.join(completed_steps)}")
+        if current_step:
+            print(f"   🔄 **当前步骤**: {current_step}")
+        
+        # 根据进度显示继续选项
+        if "featurecounts" in completed_steps:
+            print(f"   /continue        - ➡️ 继续到综合分析")
+        elif "star" in completed_steps:
+            print(f"   /continue        - ➡️ 继续到FeatureCounts定量")
+        elif "fastp" in completed_steps:
+            print(f"   /continue        - ➡️ 继续到STAR比对")
+        
+        print(f"   /restart         - 🔄 重新开始完整流水线")
+    
+    # 检查是否有优化建议可以应用
+    latest_optimization_suggestions = getattr(state, 'fastp_optimization_suggestions', {})
+    if latest_optimization_suggestions:
+        print(f"   /apply_opt       - ✨ 应用最新优化建议")
+    
     print(f"   /execute_once    - ▶️ 单次执行（仅运行fastp质控）")
     print(f"   /execute_opt     - ⚡ 优化执行（运行fastp并给出组级优化建议）")
     print(f"   /modify [需求]   - 🔧 修改配置")  
@@ -241,6 +278,37 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
             user_decision = "execute"
             execution_mode = 'optimized'
             decision_msg = "⚡ 优化执行分析"
+        elif user_choice_lower in ['/continue', '/继续']:
+            # 根据当前进度决定下一步 - 只有有进度时才允许continue
+            if not completed_steps:
+                # 没有任何进度，不能continue
+                print(f"❌ 无执行进度，请先选择 /execute_once 或 /execute_opt 开始分析")
+                return await user_confirm_node(state)
+            elif "featurecounts" in completed_steps:
+                user_decision = "continue_analysis"
+                decision_msg = "➡️ 继续到综合分析"
+            elif "star" in completed_steps:
+                user_decision = "continue_featurecounts"
+                decision_msg = "➡️ 继续到FeatureCounts定量"
+            elif "fastp" in completed_steps:
+                user_decision = "continue_star"
+                decision_msg = "➡️ 继续到STAR比对"
+        elif user_choice_lower in ['/restart', '/重启', '/重新开始']:
+            user_decision = "execute"
+            execution_mode = 'single'
+            decision_msg = "🔄 重新开始完整流水线"
+            # 清空进度信息
+            completed_steps = []
+            current_step = ""
+        elif user_choice_lower in ['/apply_opt', '/应用优化', '/优化应用']:
+            # 应用最新的优化建议
+            latest_optimization_suggestions = getattr(state, 'fastp_optimization_suggestions', {})
+            if latest_optimization_suggestions:
+                user_decision = "apply_optimization"
+                decision_msg = f"✨ 应用优化建议（{len(latest_optimization_suggestions)}项参数）"
+            else:
+                print(f"❌ 当前没有可用的优化建议")
+                return await user_confirm_node(state)
         elif user_choice_lower in ['/quit', '/exit', '/退出', '/bye']:
             user_decision = "quit"
             decision_msg = "🚪 退出程序"
@@ -302,6 +370,10 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
         "response": decision_msg,
         "status": user_decision,
         "execution_mode": locals().get('execution_mode', getattr(state, 'execution_mode', 'single')),
+        
+        # 进度信息
+        "completed_steps": locals().get('completed_steps', getattr(state, 'completed_steps', [])),
+        "current_step": locals().get('current_step', getattr(state, 'current_step', '')),
         
         # 重新修改时设置modify需求，保持初始user_requirements不变
         "user_requirements": getattr(state, 'user_requirements', {}),  # 保持初始需求

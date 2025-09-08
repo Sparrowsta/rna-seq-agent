@@ -40,6 +40,9 @@ class AgentState(BaseModel):
 
     # === 执行模式（用于路由与展示） ===
     execution_mode: str = Field(default="single", description="执行模式: single/optimized")
+    current_step: str = Field(default="", description="当前执行步骤: fastp/star/featurecounts/analysis")
+    completed_steps: List[str] = Field(default=[], description="已完成的步骤列表")
+    pipeline_progress: Dict[str, Any] = Field(default={}, description="流水线执行进度跟踪")
 
     # === FastP参数管理 ===
     fastp_params: Dict[str, Any] = Field(default={}, description="FastP运行参数")
@@ -48,6 +51,7 @@ class AgentState(BaseModel):
     fastp_version: int = Field(default=1, description="FastP参数版本号")
     fastp_version_history: List[Dict[str, Any]] = Field(default=[], description="FastP版本历史")
     fastp_optimization_suggestions: str = Field(default="", description="FastP参数优化建议")
+    fastp_optimization_params: Dict[str, Any] = Field(default={}, description="FastP优化参数字典")
     
     # === STAR参数管理 ===
     star_params: Dict[str, Any] = Field(default={}, description="STAR比对参数")
@@ -56,14 +60,16 @@ class AgentState(BaseModel):
     star_version: int = Field(default=1, description="STAR参数版本号")
     star_version_history: List[Dict[str, Any]] = Field(default=[], description="STAR版本历史")
     star_optimization_suggestions: str = Field(default="", description="STAR参数优化建议")
+    star_optimization_params: Dict[str, Any] = Field(default={}, description="STAR优化参数字典")
     
-    # === FeatureCount参数管理 ===
-    featurecount_params: Dict[str, Any] = Field(default={}, description="FeatureCount定量参数")
-    featurecount_params_history: List[Dict[str, Any]] = Field(default=[], description="FeatureCount参数执行历史")
-    featurecount_results: Dict[str, Any] = Field(default={}, description="FeatureCount定量结果数据")
-    featurecount_version: int = Field(default=1, description="FeatureCount参数版本号")
-    featurecount_version_history: List[Dict[str, Any]] = Field(default=[], description="FeatureCount版本历史")
-    featurecount_optimization_suggestions: str = Field(default="", description="FeatureCount参数优化建议")
+    # === FeatureCounts参数管理 ===
+    featurecounts_params: Dict[str, Any] = Field(default={}, description="FeatureCounts定量参数")
+    featurecounts_params_history: List[Dict[str, Any]] = Field(default=[], description="FeatureCounts参数执行历史")
+    featurecounts_results: Dict[str, Any] = Field(default={}, description="FeatureCounts定量结果数据")
+    featurecounts_version: int = Field(default=1, description="FeatureCounts参数版本号")
+    featurecounts_version_history: List[Dict[str, Any]] = Field(default=[], description="FeatureCounts版本历史")
+    featurecounts_optimization_suggestions: str = Field(default="", description="FeatureCounts参数优化建议")
+    featurecounts_optimization_params: Dict[str, Any] = Field(default={}, description="FeatureCounts优化参数字典")
 
     # === 工作流集成字段 ===
     workflow_status: str = Field(default="", description="整体流程状态")
@@ -91,3 +97,21 @@ class PrepareResponse(BaseModel):
     nextflow_config: Dict[str, Any] = Field(default={}, description="生成的Nextflow配置参数")
     resource_config: Dict[str, Dict[str, Any]] = Field(default={}, description="各进程的CPU和内存资源配置")
     config_reasoning: str = Field(default="", description="配置决策理由")
+
+class FastpResponse(BaseModel):
+    """FastP节点的响应格式"""
+    status: str = Field(description="执行状态")
+    summary: str = Field(description="执行总结")
+    response: str = Field(description="节点响应消息")
+
+class StarResponse(BaseModel):
+    """STAR节点的响应格式"""
+    status: str = Field(description="执行状态")
+    summary: str = Field(description="执行总结")
+    response: str = Field(description="节点响应消息")
+
+class FeaturecountsResponse(BaseModel):
+    """FeatureCounts节点的响应格式"""
+    status: str = Field(description="执行状态")
+    summary: str = Field(description="执行总结")
+    response: str = Field(description="节点响应消息")

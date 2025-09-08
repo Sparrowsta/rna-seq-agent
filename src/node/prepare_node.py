@@ -11,7 +11,6 @@ from ..tools import (
     check_tool_availability,
     get_project_overview,
 )
-from ..agents.fastp_agent import FastpAgent
 
 def create_prepare_agent(detection_context: str = ""):
     """创建Prepare节点的智能配置Agent
@@ -99,36 +98,16 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
 
             print(f"✅ 初始配置生成完成")
 
-            # 合并配置参数（新配置优先）
-            final_config = current_config.copy()
-            final_config.update(nextflow_cfg)
-
-            # 若未指定qc工具，默认使用fastp（与架构默认一致）
-            if not (final_config.get("qc_tool")):
-                final_config["qc_tool"] = "fastp"
-
-            # 生成初始 FastP 参数，便于在 Confirm 阶段展示
-            fastp_params_initial = {}
-            try:
-                if (final_config.get("qc_tool", "").lower() == "fastp"):
-                    fastp_params_initial = FastpAgent()._get_base_params_from_nf(final_config)
-            except Exception:
-                # 不影响主流程，缺省为空
-                fastp_params_initial = {}
-
             # 构建用户需求满足说明
             user_satisfaction_note = ""
             if initial_requirements:
                 user_satisfaction_note = f"\n\n🎯 **用户需求处理情况：**\n📋 {initial_requirements}"
 
             return {
-                "nextflow_config": final_config,
+                "nextflow_config": nextflow_cfg,
                 "resource_config": resource_params,
                 "config_reasoning": reasoning,
                 "response": f"智能配置分析完成{user_satisfaction_note}\n\n💡 {reasoning}",
-                # 初次完成准备时即设置 FastP 参数，便于确认页展示
-                "fastp_params": fastp_params_initial,
-                "fastp_params_history": [],
                 "status": "confirm"
             }
         else:
