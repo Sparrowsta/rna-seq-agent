@@ -58,9 +58,10 @@ def star_node(state: AgentState) -> Dict[str, Any]:
     # 获取前一步的信息
     sample_count = len(state.nextflow_config.get('sample_groups', []))
     species = state.nextflow_config.get('species', 'human')
+    execution_mode = state.execution_mode
     
-    # 返回成功结果
-    return {
+    # 基础执行结果
+    result = {
         "status": "star_completed",
         "response": f"✅ STAR比对完成\n- 比对样本: {sample_count}个\n- 物种: {species}\n- 比对率: 88.5%\n- 唯一比对: 82.3%",
         "current_step": "star",
@@ -70,3 +71,60 @@ def star_node(state: AgentState) -> Dict[str, Any]:
             "summary": f"STAR成功比对{sample_count}个样本，平均比对率88.5%"
         }
     }
+    
+    # 根据执行模式处理优化逻辑
+    if execution_mode == "single":
+        # 单次执行模式：不生成任何优化参数
+        print("🚀 [SINGLE] 单次执行模式，直接完成")
+        result["response"] += "\n\n🚀 **单次执行**: 任务完成，无优化处理"
+        
+    elif execution_mode == "optimized":
+        # 精细优化模式：立即应用优化参数
+        print("⚡ [OPTIMIZED] 精细优化模式，立即应用优化...")
+        
+        # 硬编码模拟优化参数
+        optimization_suggestions = {
+            "--runThreadN": 16,
+            "--outFilterMultimapNmax": 20,
+            "--outFilterMismatchNmax": 2,
+            "--alignIntronMax": 1000000
+        }
+        optimization_reasoning = "比对率88.5%略低，已应用多重比对和线程数优化"
+        
+        # 立即更新执行参数
+        optimized_params = {**state.star_params, **optimization_suggestions}
+        result["star_params"] = optimized_params
+        result["star_optimization_suggestions"] = optimization_reasoning
+        result["response"] += f"\n\n⚡ **立即优化**: {optimization_reasoning}"
+        
+        print(f"✅ [OPTIMIZED] STAR优化参数已应用: {len(optimization_suggestions)}个参数")
+        
+    elif execution_mode == "batch_optimize":
+        # 批次优化模式：收集优化参数
+        print("📦 [BATCH] STAR批次优化模式，收集优化参数...")
+        
+        # 硬编码模拟STAR优化参数
+        star_optimization = {
+            "optimization_reasoning": "比对率88.5%略低于最佳水平，建议调整多重比对参数和线程数以提升性能",
+            "suggested_params": {
+                "--runThreadN": 16,
+                "--outFilterMultimapNmax": 20,
+                "--outFilterMismatchNmax": 2,
+                "--alignIntronMax": 1000000
+            },
+            "current_params": state.star_params.copy(),
+            "tool_name": "star"
+        }
+        
+        # 将优化参数添加到批次收集器（继承之前的收集结果）
+        batch_optimizations = state.batch_optimizations.copy()
+        batch_optimizations["star"] = star_optimization
+        
+        result["batch_optimizations"] = batch_optimizations
+        # 也记录优化理由，便于在确认页展示
+        result["star_optimization_suggestions"] = star_optimization.get("optimization_reasoning", "")
+        result["response"] += "\n\n📦 **STAR优化参数已收集**: 比对率偏低，建议调整多重比对参数"
+        
+        print(f"✅ [BATCH] STAR优化参数收集完成: {len(star_optimization['suggested_params'])}个参数")
+    
+    return result

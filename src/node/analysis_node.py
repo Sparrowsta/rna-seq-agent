@@ -9,7 +9,7 @@ from ..state import AgentState
 
 def analysis_node(state: AgentState) -> Dict[str, Any]:
     """
-    Analysis节点实现 - 短接版本（测试路由）
+    Analysis节点实现 - 综合分析节点
     
     功能：
     - 汇总所有分析结果
@@ -18,9 +18,6 @@ def analysis_node(state: AgentState) -> Dict[str, Any]:
     """
     print("\n📈 综合分析节点开始执行...")
     
-    # 短接：直接返回预设信息，不调用LLM
-    print("⚡ [SHORT-CIRCUIT] 跳过LLM调用，返回预设结果")
-    
     # 获取所有前面步骤的信息
     fastp_results = state.fastp_results or {}
     star_results = state.star_results or {}
@@ -28,31 +25,45 @@ def analysis_node(state: AgentState) -> Dict[str, Any]:
     sample_count = len(state.nextflow_config.get('sample_groups', []))
     species = state.nextflow_config.get('species', 'human')
     
-    # 生成综合报告
+    # 检查是否有足够的数据进行分析
+    if not (fastp_results or star_results or featurecounts_results):
+        return {
+            "status": "error",
+            "response": "❌ 缺少分析数据，无法生成综合报告",
+        }
+    
+    # 根据实际执行结果生成综合报告
     analysis_report = f"""
-🎉 RNA-seq分析流水线执行完成（短接测试）
+🎉 RNA-seq分析流水线执行完成
 
 📊 **分析概览**:
 - 样本数量: {sample_count}个
 - 目标物种: {species}
 - 流水线: FastP → STAR → FeatureCounts → 分析
 
-✅ **各步骤执行状态**:
-- FastP质控: ✅ 通过率95%
-- STAR比对: ✅ 比对率88.5%
-- 基因定量: ✅ 检测24,587个基因
-- 综合分析: ✅ 完成
-
-📋 **主要结果**:
-- 高质量读长比例: 92%
-- 基因组比对成功率: 88.5%
-- 可定量基因数: 24,587个
-- 数据质量: 优秀
-
+✅ **各步骤执行状态**:"""
+    
+    # 根据实际结果添加各步骤状态
+    if fastp_results:
+        status_fastp = "✅ 完成" if fastp_results.get("status") == "success" else "❌ 失败"
+        analysis_report += f"\n- FastP质控: {status_fastp}"
+    
+    if star_results:
+        status_star = "✅ 完成" if star_results.get("status") == "success" else "❌ 失败"
+        analysis_report += f"\n- STAR比对: {status_star}"
+        
+    if featurecounts_results:
+        status_fc = "✅ 完成" if featurecounts_results.get("status") == "success" else "❌ 失败"
+        analysis_report += f"\n- 基因定量: {status_fc}"
+    
+    analysis_report += "\n- 综合分析: ✅ 完成\n"
+    
+    # 添加分析建议
+    analysis_report += """
 💡 **后续建议**:
 - 可进行差异表达分析
 - 建议进行功能富集分析
-- 数据质量良好，可用于下游分析
+- 检查结果文件进行进一步分析
     """
     
     print("🧹 [CLEANUP] 清理状态信息，准备下次执行...")
@@ -73,10 +84,7 @@ def analysis_node(state: AgentState) -> Dict[str, Any]:
         "featurecounts_results": {},
         
         # 清空优化相关状态
-        "fastp_optimization_suggestions": "",  # 清空优化建议文字
-        "fastp_optimization_params": {},       # 清空优化参数字典
-        
-        # 可选：保留配置信息供参考，但清空执行状态
-        # "nextflow_config": {},  # 保留配置
-        # "resource_config": {},   # 保留配置
+        "fastp_optimization_suggestions": "",
+        "star_optimization_suggestions": "",
+        "featurecounts_optimization_suggestions": "",
     }

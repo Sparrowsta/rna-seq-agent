@@ -572,3 +572,322 @@ def get_help() -> Dict[str, Any]:
         ],
         "mode_description": "Normal模式专注快速信息查看和项目概览，Plan模式负责深度检测和分析方案制定"
     }
+
+
+# ==================== FastP专用工具函数 ====================
+
+@tool
+def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]) -> Dict[str, Any]:
+    """执行Nextflow FastP质量控制流程
+    
+    Args:
+        fastp_params: FastP参数字典，例如 {"qualified_quality_phred": 25, "length_required": 50}
+        sample_info: 样本信息，包含sample_groups等
+    
+    Returns:
+        执行结果字典，包含状态、输出路径、执行日志等
+    """
+    try:
+        config = get_tools_config()
+        
+        # 验证必需参数
+        if not fastp_params:
+            return {
+                "success": False,
+                "error": "FastP参数不能为空",
+                "execution_time": 0
+            }
+        
+        if not sample_info.get("sample_groups"):
+            return {
+                "success": False, 
+                "error": "样本信息缺失",
+                "execution_time": 0
+            }
+        
+        # 记录开始时间
+        start_time = time.time()
+        
+        # 统一数据根目录来源：始终以 Settings().data_dir 为准，不从 sample_info 读取
+        base_data_path = str(config.settings.data_dir)
+
+        # 结果目录：优先使用 sample_info 提供；否则按时间戳生成到 data/results 下
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        results_dir = sample_info.get("results_dir") or str(config.settings.data_dir / "results" / f"fastp_{timestamp}")
+
+        # 工作目录：固定放到 data/tmp 下（包含时间戳/结果名）
+        run_id = results_dir.split('/')[-1] if '/' in str(results_dir) else timestamp
+        temp_dir = Path(base_data_path) / "tmp" / f"nextflow_fastp_{run_id}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        results_dir = Path(results_dir)
+        print(f"📁 运行目录: base={base_data_path} work={temp_dir} results={results_dir}")
+        
+        nextflow_params: Dict[str, Any] = {}
+        for raw_key, value in (fastp_params or {}).items():
+            if value is None:
+                continue
+            key = str(raw_key)
+            if key.startswith("--"):
+                key = key[2:]
+            if key == "thread":
+                key = "threads"
+            nextflow_params[key] = value
+        
+        # 添加样本组信息
+        nextflow_params["sample_groups"] = sample_info["sample_groups"]
+        
+        # 设置结果目录和数据路径
+        nextflow_params["results_dir"] = str(results_dir)
+        nextflow_params["data"] = base_data_path
+        
+        # 创建Nextflow参数文件
+        params_file = temp_dir / "fastp_params.json"
+        with open(params_file, 'w', encoding='utf-8') as f:
+            json.dump(nextflow_params, f, indent=2, ensure_ascii=False)
+        
+        # 构建Nextflow命令（兼容Docker与本地路径）
+        # 1) 优先使用项目根目录下的 fastp.nf（本地开发）
+        # 2) Docker镜像中 fastp.nf 位于根路径 '/'（见 Dockerfile COPY fastp.nf /）
+        nf_candidates = [
+            config.settings.project_root / "fastp.nf",
+            Path("/fastp.nf")
+        ]
+        nextflow_script = None
+        for cand in nf_candidates:
+            if cand.exists():
+                nextflow_script = cand
+                break
+        if nextflow_script is None:
+            return {
+                "success": False,
+                "error": "未找到 fastp.nf 脚本，请检查容器内是否存在 /fastp.nf 或本地项目根目录",
+                "searched": [str(p) for p in nf_candidates]
+            }
+
+        cmd = [
+            "nextflow", "run",
+            str(nextflow_script),
+            "-params-file", str(params_file),
+            "-work-dir", str(temp_dir / "work"),
+            "--data", str(config.settings.data_dir)
+        ]
+        
+        print(f"🚀 执行Nextflow FastP流水线...")
+        print(f"   参数文件: {params_file}")
+        print(f"   工作目录: {temp_dir / 'work'}")
+        print(f"   结果目录: {results_dir}")
+        
+        # 执行Nextflow流水线
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=1800,  # 30分钟超时
+            cwd=config.settings.project_root
+        )
+        
+        execution_time = time.time() - start_time
+        
+        if result.returncode == 0:
+            # 解析输出结果
+            sample_count = len(sample_info["sample_groups"])
+            
+            return {
+                "success": True,
+                "message": f"FastP质控完成，处理了{sample_count}个样本",
+                "execution_time": execution_time,
+                "results_dir": str(results_dir),
+                "work_dir": str(temp_dir / "work"),
+                "params_file": str(params_file),
+                "sample_count": sample_count,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "nextflow_params": nextflow_params
+            }
+        else:
+            return {
+                "success": False,
+                "error": f"Nextflow执行失败 (返回码: {result.returncode})",
+                "execution_time": execution_time,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "cmd": " ".join(cmd)
+            }
+            
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "error": "Nextflow执行超时（30分钟）",
+            "execution_time": time.time() - start_time
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"执行FastP流水线时发生错误: {str(e)}",
+            "execution_time": 0
+        }
+
+
+@tool  
+def parse_fastp_results(results_directory: str) -> Dict[str, Any]:
+    """解析FastP结果文件，提取客观质量指标供LLM分析
+    
+    Args:
+        results_directory: FastP结果目录路径
+    
+    Returns:
+        解析的质量指标字典，包含各样本的质量统计、过滤率等客观数据
+        注意：此工具仅提供客观数据分析，不生成优化建议。优化建议由LLM基于这些数据智能生成。
+    """
+    try:
+        results_dir = Path(results_directory)
+        if not results_dir.exists():
+            return {
+                "success": False,
+                "error": f"结果目录不存在: {results_directory}"
+            }
+        
+        # 查找所有FastP JSON报告文件
+        json_files = list(results_dir.rglob("*.fastp.json"))
+        
+        if not json_files:
+            return {
+                "success": False,
+                "error": "未找到FastP JSON报告文件"
+            }
+        
+        sample_metrics = []
+        overall_stats = {
+            "total_reads_before": 0,
+            "total_reads_after": 0,
+            "total_bases_before": 0,
+            "total_bases_after": 0,
+            "q20_rates": [],
+            "q30_rates": [],
+            "gc_contents": []
+        }
+        
+        # 解析每个样本的JSON报告
+        for json_file in json_files:
+            try:
+                with open(json_file, 'r') as f:
+                    fastp_data = json.load(f)
+                
+                # 提取样本ID（从文件名）
+                sample_id = json_file.stem.replace('.fastp', '')
+                
+                # 提取质量指标
+                summary = fastp_data.get("summary", {})
+                before_filtering = summary.get("before_filtering", {})
+                after_filtering = summary.get("after_filtering", {})
+                
+                # 读取数和碱基数
+                reads_before = before_filtering.get("total_reads", 0)
+                reads_after = after_filtering.get("total_reads", 0)
+                bases_before = before_filtering.get("total_bases", 0)
+                bases_after = after_filtering.get("total_bases", 0)
+                
+                # 质量指标
+                q20_before = before_filtering.get("q20_rate", 0)
+                q20_after = after_filtering.get("q20_rate", 0)
+                q30_before = before_filtering.get("q30_rate", 0)
+                q30_after = after_filtering.get("q30_rate", 0)
+                
+                # GC含量
+                gc_before = before_filtering.get("gc_content", 0)
+                gc_after = after_filtering.get("gc_content", 0)
+                
+                # 过滤率计算
+                read_pass_rate = reads_after / reads_before if reads_before > 0 else 0
+                base_pass_rate = bases_after / bases_before if bases_before > 0 else 0
+                
+                # 平均长度
+                avg_length_before = bases_before / reads_before if reads_before > 0 else 0
+                avg_length_after = bases_after / reads_after if reads_after > 0 else 0
+                
+                sample_metric = {
+                    "sample_id": sample_id,
+                    "json_file": str(json_file),
+                    "reads_before": reads_before,
+                    "reads_after": reads_after,
+                    "bases_before": bases_before,
+                    "bases_after": bases_after,
+                    "read_pass_rate": round(read_pass_rate, 4),
+                    "base_pass_rate": round(base_pass_rate, 4),
+                    "q20_before": round(q20_before, 4),
+                    "q20_after": round(q20_after, 4),
+                    "q30_before": round(q30_before, 4),
+                    "q30_after": round(q30_after, 4),
+                    "gc_content_before": round(gc_before, 4),
+                    "gc_content_after": round(gc_after, 4),
+                    "avg_length_before": round(avg_length_before, 1),
+                    "avg_length_after": round(avg_length_after, 1),
+                    "quality_improvement": {
+                        "q20_improvement": round(q20_after - q20_before, 4),
+                        "q30_improvement": round(q30_after - q30_before, 4)
+                    }
+                }
+                
+                sample_metrics.append(sample_metric)
+                
+                # 累积总体统计
+                overall_stats["total_reads_before"] += reads_before
+                overall_stats["total_reads_after"] += reads_after
+                overall_stats["total_bases_before"] += bases_before
+                overall_stats["total_bases_after"] += bases_after
+                overall_stats["q20_rates"].append(q20_after)
+                overall_stats["q30_rates"].append(q30_after)
+                overall_stats["gc_contents"].append(gc_after)
+                
+            except Exception as e:
+                sample_metrics.append({
+                    "sample_id": json_file.stem.replace('.fastp', ''),
+                    "json_file": str(json_file),
+                    "error": f"解析失败: {str(e)}"
+                })
+        
+        # 计算总体指标
+        total_samples = len([m for m in sample_metrics if "error" not in m])
+        if total_samples > 0:
+            overall_read_pass_rate = overall_stats["total_reads_after"] / overall_stats["total_reads_before"]
+            overall_base_pass_rate = overall_stats["total_bases_after"] / overall_stats["total_bases_before"]
+            avg_q20_rate = sum(overall_stats["q20_rates"]) / len(overall_stats["q20_rates"])
+            avg_q30_rate = sum(overall_stats["q30_rates"]) / len(overall_stats["q30_rates"])
+            avg_gc_content = sum(overall_stats["gc_contents"]) / len(overall_stats["gc_contents"])
+        else:
+            overall_read_pass_rate = 0
+            overall_base_pass_rate = 0
+            avg_q20_rate = 0
+            avg_q30_rate = 0
+            avg_gc_content = 0
+        
+        # 质量评估（仅提供客观指标，不生成优化建议）
+        quality_assessment = {
+            "overall_quality": "good" if avg_q30_rate > 0.85 else "moderate" if avg_q30_rate > 0.7 else "poor",
+            "pass_rate_status": "good" if overall_read_pass_rate > 0.8 else "moderate" if overall_read_pass_rate > 0.6 else "poor"
+        }
+        
+        return {
+            "success": True,
+            "total_samples": total_samples,
+            "results_directory": results_directory,
+            "sample_metrics": sample_metrics,
+            "overall_statistics": {
+                "total_reads_before": overall_stats["total_reads_before"],
+                "total_reads_after": overall_stats["total_reads_after"],
+                "total_bases_before": overall_stats["total_bases_before"],
+                "total_bases_after": overall_stats["total_bases_after"],
+                "overall_read_pass_rate": round(overall_read_pass_rate, 4),
+                "overall_base_pass_rate": round(overall_base_pass_rate, 4),
+                "average_q20_rate": round(avg_q20_rate, 4),
+                "average_q30_rate": round(avg_q30_rate, 4),
+                "average_gc_content": round(avg_gc_content, 4)
+            },
+            "quality_assessment": quality_assessment
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"解析FastP结果失败: {str(e)}"
+        }

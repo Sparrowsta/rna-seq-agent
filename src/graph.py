@@ -16,7 +16,6 @@ from .route import (
     route_after_fastp,
     route_after_star,
     route_after_featurecount,
-    route_to_analysis,
     route_after_analysis
 )
 
@@ -46,9 +45,9 @@ def create_agent():
         "user_communication", 
         route_from_user_communication,
         {
-            "end": END,             # 结束流程
-            "normal": "normal",     # 进入意图分析
-            "detect": "detect"      # 进入检测流程（去除Plan节点）
+            "end": END,                     # 结束流程
+            "normal": "normal",             # 进入意图分析
+            "detect": "detect"             # 进入检测流程（去除Plan节点）
         }
     )
     
@@ -69,6 +68,7 @@ def create_agent():
             "featurecounts": "featurecounts",     # 继续FeatureCounts定量
             "analysis": "analysis",               # 继续综合分析
             "modify": "modify",                   # 修改配置路由
+            "user_confirm": "user_confirm",       # 回退到确认（兜底，防未识别输入）
             "cancel": "user_communication",
             "quit": END
         }

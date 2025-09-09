@@ -31,6 +31,10 @@ def route_after_confirm(state: AgentState) -> str:
         print("🚀 [ROUTE] 用户选择执行分析")
         print("🧬 [ROUTE] 统一路由到FastP节点处理")
         return "fastp"
+    elif user_decision in {"fastp", "star", "featurecounts"}:
+        # 直接回到指定步骤对应的Agent（用于 /re_opt 二次优化等）
+        print(f"♻️ [ROUTE] 返回到当前步骤进行二次优化: {user_decision}")
+        return user_decision
     elif user_decision == "continue_star":
         print("🎯 [ROUTE] 继续到STAR比对")
         return "star"
@@ -40,9 +44,6 @@ def route_after_confirm(state: AgentState) -> str:
     elif user_decision == "continue_analysis":
         print("📈 [ROUTE] 继续到综合分析")
         return "analysis"
-    elif user_decision == "apply_optimization":
-        print("✨ [ROUTE] 应用优化建议到modify节点")
-        return "modify"
     elif user_decision == "modify":
         print("🔧 [ROUTE] 用户选择修改配置")
         return "modify"

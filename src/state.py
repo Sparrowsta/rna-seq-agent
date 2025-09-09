@@ -2,6 +2,7 @@
 from typing import List, Dict, Any, Union, Optional, Literal
 from pydantic import BaseModel, Field
 from datetime import datetime
+from .config.default_tool_params import DEFAULT_FASTP_PARAMS, DEFAULT_STAR_PARAMS, DEFAULT_FEATURECOUNTS_PARAMS
 
 # ==================== 统一Agent状态 ====================
 
@@ -33,43 +34,51 @@ class AgentState(BaseModel):
     
     # === Modify修改字段 ===
     modification_history: List[Dict[str, Any]] = Field(default=[], description="配置修改历史记录")
+    # Modify入口临时携带的修改需求（来自Confirm节点）
+    modify_requirements: Dict[str, Any] = Field(default={}, description="用户在/modify中输入的修改需求")
     
     # === UserConfirm确认字段 ===
     user_decision: str = Field(default="", description="用户决策: execute/replan/cancel")
     confirmation_message: str = Field(default="", description="确认界面展示信息")
 
     # === 执行模式（用于路由与展示） ===
-    execution_mode: str = Field(default="single", description="执行模式: single/optimized")
+    execution_mode: str = Field(default="single", description="执行模式: single/optimized/batch_optimize")
     current_step: str = Field(default="", description="当前执行步骤: fastp/star/featurecounts/analysis")
     completed_steps: List[str] = Field(default=[], description="已完成的步骤列表")
     pipeline_progress: Dict[str, Any] = Field(default={}, description="流水线执行进度跟踪")
 
+    # === 批次优化模式字段 ===
+    batch_optimization_mode: bool = Field(default=False, description="是否启用批次优化模式 - 当execution_mode为batch_optimize时自动设为True")
+    batch_optimizations: Dict[str, Dict[str, Any]] = Field(default={}, description="批次优化收集的所有工具优化参数")
+    batch_optimization_round: int = Field(default=1, description="批次优化轮次")
+    batch_optimization_complete: bool = Field(default=False, description="批次优化是否完成")
+
     # === FastP参数管理 ===
-    fastp_params: Dict[str, Any] = Field(default={}, description="FastP运行参数")
+    fastp_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_FASTP_PARAMS.copy(), description="FastP运行参数")
     fastp_params_history: List[Dict[str, Any]] = Field(default=[], description="FastP参数执行历史")
     fastp_results: Dict[str, Any] = Field(default={}, description="FastP执行结果数据")
     fastp_version: int = Field(default=1, description="FastP参数版本号")
     fastp_version_history: List[Dict[str, Any]] = Field(default=[], description="FastP版本历史")
     fastp_optimization_suggestions: str = Field(default="", description="FastP参数优化建议")
-    fastp_optimization_params: Dict[str, Any] = Field(default={}, description="FastP优化参数字典")
+    fastp_optimization_params: Dict[str, Any] = Field(default={}, description="FastP优化参数字典（只包含改变了的参数）")
     
     # === STAR参数管理 ===
-    star_params: Dict[str, Any] = Field(default={}, description="STAR比对参数")
+    star_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_STAR_PARAMS.copy(), description="STAR比对参数")
     star_params_history: List[Dict[str, Any]] = Field(default=[], description="STAR参数执行历史")
     star_results: Dict[str, Any] = Field(default={}, description="STAR比对结果数据")
     star_version: int = Field(default=1, description="STAR参数版本号")
     star_version_history: List[Dict[str, Any]] = Field(default=[], description="STAR版本历史")
-    star_optimization_suggestions: str = Field(default="", description="STAR参数优化建议")
-    star_optimization_params: Dict[str, Any] = Field(default={}, description="STAR优化参数字典")
+    star_optimization_suggestions: str = Field(default="", description="STAR参数优化建议（文本描述）")
+    star_optimization_params: Dict[str, Any] = Field(default={}, description="STAR优化参数字典（只包含改变了的参数）")
     
     # === FeatureCounts参数管理 ===
-    featurecounts_params: Dict[str, Any] = Field(default={}, description="FeatureCounts定量参数")
+    featurecounts_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_FEATURECOUNTS_PARAMS.copy(), description="FeatureCounts定量参数")
     featurecounts_params_history: List[Dict[str, Any]] = Field(default=[], description="FeatureCounts参数执行历史")
     featurecounts_results: Dict[str, Any] = Field(default={}, description="FeatureCounts定量结果数据")
     featurecounts_version: int = Field(default=1, description="FeatureCounts参数版本号")
     featurecounts_version_history: List[Dict[str, Any]] = Field(default=[], description="FeatureCounts版本历史")
-    featurecounts_optimization_suggestions: str = Field(default="", description="FeatureCounts参数优化建议")
-    featurecounts_optimization_params: Dict[str, Any] = Field(default={}, description="FeatureCounts优化参数字典")
+    featurecounts_optimization_suggestions: str = Field(default="", description="FeatureCounts参数优化建议（文本描述）")
+    featurecounts_optimization_params: Dict[str, Any] = Field(default={}, description="FeatureCounts优化参数字典（只包含改变了的参数）")
 
     # === 工作流集成字段 ===
     workflow_status: str = Field(default="", description="整体流程状态")
@@ -99,19 +108,21 @@ class PrepareResponse(BaseModel):
     config_reasoning: str = Field(default="", description="配置决策理由")
 
 class FastpResponse(BaseModel):
-    """FastP节点的响应格式"""
-    status: str = Field(description="执行状态")
-    summary: str = Field(description="执行总结")
-    response: str = Field(description="节点响应消息")
+    """FastP节点的Agent响应格式"""
+    fastp_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_FASTP_PARAMS.copy(), description="优化后的FastP参数")
+    fastp_optimization_suggestions: str = Field(description="详细的优化理由、数据支撑和预期效果")
+    fastp_optimization_params: Dict[str, Any] = Field(default={}, description="仅包含改变了的优化参数")
+    # 由LLM统一返回的输出文件路径与关键信息（结构由Prompt定义）
+    results: Dict[str, Any] = Field(default={}, description="FastP执行产生的输出与摘要；遵循Prompt约定")
 
 class StarResponse(BaseModel):
-    """STAR节点的响应格式"""
-    status: str = Field(description="执行状态")
-    summary: str = Field(description="执行总结")
-    response: str = Field(description="节点响应消息")
+    """STAR节点的Agent响应格式"""
+    star_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_STAR_PARAMS.copy(), description="优化后的STAR参数")
+    star_optimization_suggestions: str = Field(description="详细的优化理由、数据支撑和预期效果")
+    star_optimization_params: Dict[str, Any] = Field(default={}, description="仅包含改变了的优化参数")
 
 class FeaturecountsResponse(BaseModel):
-    """FeatureCounts节点的响应格式"""
-    status: str = Field(description="执行状态")
-    summary: str = Field(description="执行总结")
-    response: str = Field(description="节点响应消息")
+    """FeatureCounts节点的Agent响应格式"""
+    featurecounts_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_FEATURECOUNTS_PARAMS.copy(), description="优化后的FeatureCounts参数")
+    featurecounts_optimization_suggestions: str = Field(description="详细的优化理由、数据支撑和预期效果")
+    featurecounts_optimization_params: Dict[str, Any] = Field(default={}, description="仅包含改变了的优化参数")
