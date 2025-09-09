@@ -64,65 +64,37 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
         }
     }
     
-    # 根据执行模式处理优化逻辑
     if execution_mode == "single":
-        # 单次执行模式：仅调用 Nextflow FastP，不做结果分析/优化
-        print("🚀 [SINGLE] 单次执行模式：调用 Nextflow FastP ...")
-
+        # 单次执行：统一通过Agent执行，但不做参数优化
+        print("🚀 [SINGLE] 单次执行模式：统一通过Agent执行FastP（不应用优化）")
         try:
-            # 构造样本信息
-            sample_groups = state.nextflow_config.get("sample_groups", [])
-            if not sample_groups:
-                return {
-                    "status": "error",
-                    "response": "❌ 未找到样本信息(sample_groups)，无法执行FastP",
-                    "current_step": "fastp",
-                    "completed_steps": completed_steps
-                }
+            agent_response = await _call_fastp_optimization_agent(state)
 
-            sample_info = {
-                "sample_groups": sample_groups,
-                **({"results_dir": state.nextflow_config.get("results_dir")} if state.nextflow_config.get("results_dir") else {}),
-                **({"results_dir": state.results_dir} if (not state.nextflow_config.get("results_dir") and state.results_dir) else {}),
-            }
-
-            fastp_params = state.fastp_params or {}
-            fastp_run_result = run_nextflow_fastp.invoke({
-                "fastp_params": fastp_params,
-                "sample_info": sample_info
-            })
-
-            if not (fastp_run_result and fastp_run_result.get("success")):
-                error_message = (fastp_run_result or {}).get("error") or "FastP流水线执行失败"
-                return {
-                    "status": "error",
-                    "response": f"❌ {error_message}",
-                    "current_step": "fastp",
-                    "completed_steps": completed_steps,
-                    "fastp_results": {"status": "error", "error": error_message}
-                }
-
-            # 成功：填充最小结果集（仅执行信息，不做解析/优化）
-            results_dir = fastp_run_result.get("results_dir")
-            result["fastp_results"] = {
-                "status": "success",
-                "results_dir": results_dir,
-                "per_sample_outputs": []
-            }
+            # 透传结果路径供下游使用
+            try:
+                if getattr(agent_response, 'results', None):
+                    agent_results = agent_response.results or {}
+                    result["fastp_results"] = {
+                        "status": "success",
+                        "results_dir": agent_results.get("results_dir"),
+                        "per_sample_outputs": agent_results.get("per_sample_outputs") or []
+                    }
+            except Exception:
+                pass
 
             result["response"] = (
-                f"✅ FastP质控完成 (单次执行)\n- 样本: {fastp_run_result.get('sample_count')}\n"
-                f"- 结果目录: {results_dir}"
+                "✅ FastP质控完成（单次执行模式）\n\n"
+                "🚀 **执行详情**: 已完成质量控制，保持原有参数配置"
             )
-
         except Exception as e:
             return {
                 "status": "error",
-                "response": f"❌ FastP单次执行异常: {str(e)}",
+                "response": f"❌ FastP单次执行失败: {str(e)}",
                 "current_step": "fastp",
-                "completed_steps": completed_steps
+                "completed_steps": completed_steps,
+                "fastp_results": {"status": "failed", "error": str(e)}
             }
-        
+    
     elif execution_mode == "optimized":
         # 精细优化模式：调用Agent进行智能优化
         print("⚡ [OPTIMIZED] 精细优化模式，调用Agent进行智能优化...")
@@ -181,7 +153,6 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
                 "current_params": state.fastp_params.copy(),
                 "tool_name": "fastp"
             }
-
             # 将优化参数添加到批次收集器
             batch_optimizations = state.batch_optimizations.copy()
             batch_optimizations["fastp"] = fastp_optimization
@@ -211,6 +182,33 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
                 "response": f"❌ FastP批次优化失败: {str(e)}",
                 "current_step": "fastp",
                 "completed_steps": completed_steps
+            }
+    else:
+        # 未知模式：按 single 处理
+        print(f"ℹ️ 未知执行模式 '{execution_mode}'，按 single 处理")
+        try:
+            agent_response = await _call_fastp_optimization_agent(state)
+            try:
+                if getattr(agent_response, 'results', None):
+                    agent_results = agent_response.results or {}
+                    result["fastp_results"] = {
+                        "status": "success",
+                        "results_dir": agent_results.get("results_dir"),
+                        "per_sample_outputs": agent_results.get("per_sample_outputs") or []
+                    }
+            except Exception:
+                pass
+            result["response"] = (
+                "✅ FastP质控完成（按single处理）\n\n"
+                "🚀 **执行详情**: 已完成质量控制，保持原有参数配置"
+            )
+        except Exception as e:
+            return {
+                "status": "error",
+                "response": f"❌ FastP执行失败: {str(e)}",
+                "current_step": "fastp",
+                "completed_steps": completed_steps,
+                "fastp_results": {"status": "failed", "error": str(e)}
             }
     
     # 同时聚合到跨节点 results 字段，便于统一读取
@@ -246,11 +244,38 @@ async def _call_fastp_optimization_agent(state: AgentState) -> FastpResponse:
         },
     }
 
+    # 根据执行模式，给Agent明确的运行指令，统一走同一个Agent
+    mode = (state.execution_mode or "single").lower()
+    if mode == "single":
+        mode_instructions = (
+            "本次执行模式为 single（单次执行）。\n"
+            "- 仅执行 FastP 质量控制，不进行任何参数优化。\n"
+            "- 保持 current_fastp_params 原样返回（fastp_params 可与输入相同），fastp_optimization_params 必须为空对象。\n"
+            "- 必须调用 run_nextflow_fastp 执行，并可调用 parse_fastp_results 解析关键质量指标。\n"
+            "- 请在结果中返回 results 字段（包含 results_dir 与 per_sample_outputs），便于下游 STAR 使用。\n"
+            "- 仍需返回 FastpResponse 结构化结果。\n"
+        )
+    elif mode == "batch_optimize":
+        mode_instructions = (
+            "本次执行模式为 batch_optimize（批次优化）。\n"
+            "- 执行 FastP 并解析结果，生成优化建议，但不要在当前节点应用这些参数。\n"
+            "- fastp_params 请给出“建议后的完整参数字典”，fastp_optimization_params 仅包含改动的键值对。\n"
+            "- 返回 results（results_dir, per_sample_outputs）供下游使用。\n"
+        )
+    else:  # optimized
+        mode_instructions = (
+            "本次执行模式为 optimized（精细优化）。\n"
+            "- 执行 FastP、解析结果并生成优化建议。\n"
+            "- fastp_params 请返回“应用优化后的完整参数字典”，fastp_optimization_params 仅包含改动项。\n"
+            "- 返回 results（results_dir, per_sample_outputs）供下游使用。\n"
+        )
+
     user_prompt = (
-        "请依据系统提示中的标准流程与指导原则进行FastP优化。"
-        "以下为本次任务的上下文数据（JSON）：\n\n"
+        "请依据系统提示中的标准流程与指导原则执行本次任务。\n\n"
+        + mode_instructions
+        + "以下为本次任务的上下文数据（JSON）：\n\n"
         + json.dumps(user_context, ensure_ascii=False, indent=2)
-        + "\n\n请基于上述数据完成工具调用、结果解析与参数优化，并按系统提示要求返回结构化结果。"
+        + "\n\n请基于上述数据完成必要的工具调用，并按系统提示要求返回结构化结果（FastpResponse）。"
     )
     
     # 创建并调用Agent
