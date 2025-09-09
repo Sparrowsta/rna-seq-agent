@@ -47,7 +47,7 @@ def create_agent():
         {
             "end": END,                     # 结束流程
             "normal": "normal",             # 进入意图分析
-            "detect": "detect"             # 进入检测流程（去除Plan节点）
+            "detect": "detect",             # 进入检测流程（去除Plan节点）
         }
     )
     
@@ -58,6 +58,7 @@ def create_agent():
     workflow.add_edge("detect", "prepare")  # Detect完成所有任务后直接进入Prepare
     workflow.add_edge("prepare", "user_confirm")
     
+    
     # 用户确认后的路由
     workflow.add_conditional_edges(
         "user_confirm",
@@ -67,6 +68,9 @@ def create_agent():
             "star": "star",                       # 继续STAR比对
             "featurecounts": "featurecounts",     # 继续FeatureCounts定量
             "analysis": "analysis",               # 继续综合分析
+            "continue_star": "star",              # /continue命令：继续到STAR
+            "continue_featurecounts": "featurecounts",  # /continue命令：继续到FeatureCounts
+            "continue_analysis": "analysis",      # /continue命令：继续到Analysis
             "modify": "modify",                   # 修改配置路由
             "user_confirm": "user_confirm",       # 回退到确认（兜底，防未识别输入）
             "cancel": "user_communication",

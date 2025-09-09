@@ -23,6 +23,7 @@ async def user_communication_node(state: AgentState) -> Dict[str, Any]:
     print(f"")
     print(f"⚙️ **系统命令:**")
     print(f"   /help                   - ❓ 获取详细帮助信息")
+    print(f"")
     print(f"   /exit                   - 🚪 退出程序")
     print(f"")
     print(f"💡 **使用提示:**")
@@ -45,11 +46,10 @@ async def user_communication_node(state: AgentState) -> Dict[str, Any]:
         
         # 定义plan等价命令
         plan_prefixes = ['/plan', '/开始分析']
+        
         user_input_lower = user_input.lower()
         is_plan_command = (user_input_lower in plan_prefixes or 
                           any(user_input_lower.startswith(f"{prefix} ") for prefix in plan_prefixes))
-        
-        # 基本路由判断
         if user_input_lower in ['/exit', '/退出']:
             return {
                 "messages": [{"role": "user", "content": user_input}],
