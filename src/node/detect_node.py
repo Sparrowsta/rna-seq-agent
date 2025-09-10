@@ -89,6 +89,7 @@ async def detect_node(state: AgentState) -> Dict[str, Any]:
     print(f"✅ 检测完成: {query_summary}")
 
     return {
+        "success": True,
         "query_summary": query_summary,
         "status": "prepare",
         "query_results": results,

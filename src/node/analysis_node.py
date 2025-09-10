@@ -25,11 +25,16 @@ def analysis_node(state: AgentState) -> Dict[str, Any]:
     sample_count = len(state.nextflow_config.get('sample_groups', []))
     species = state.nextflow_config.get('species', 'human')
     
-    # 检查是否有足够的数据进行分析
     if not (fastp_results or star_results or featurecounts_results):
         return {
-            "status": "error",
+            "success": False,
+            "status": "analysis_failed",
             "response": "❌ 缺少分析数据，无法生成综合报告",
+            "analysis_results": {
+                "success": False,
+                "status": "failed",
+                "error": "缺少分析数据"
+            }
         }
     
     # 根据实际执行结果生成综合报告
@@ -43,17 +48,17 @@ def analysis_node(state: AgentState) -> Dict[str, Any]:
 
 ✅ **各步骤执行状态**:"""
     
-    # 根据实际结果添加各步骤状态
+    # 根据实际结果添加各步骤状态 - 使用success字段检查
     if fastp_results:
-        status_fastp = "✅ 完成" if fastp_results.get("status") == "success" else "❌ 失败"
+        status_fastp = "✅ 完成" if fastp_results.get("success") else "❌ 失败"
         analysis_report += f"\n- FastP质控: {status_fastp}"
     
     if star_results:
-        status_star = "✅ 完成" if star_results.get("status") == "success" else "❌ 失败"
+        status_star = "✅ 完成" if star_results.get("success") else "❌ 失败"
         analysis_report += f"\n- STAR比对: {status_star}"
         
     if featurecounts_results:
-        status_fc = "✅ 完成" if featurecounts_results.get("status") == "success" else "❌ 失败"
+        status_fc = "✅ 完成" if featurecounts_results.get("success") else "❌ 失败"
         analysis_report += f"\n- 基因定量: {status_fc}"
     
     analysis_report += "\n- 综合分析: ✅ 完成\n"
@@ -70,8 +75,16 @@ def analysis_node(state: AgentState) -> Dict[str, Any]:
     
     # 返回成功结果并清空影响路由的状态
     return {
-        "status": "success",
+        "success": True,
+        "status": "analysis_completed",
         "response": analysis_report,
+        "analysis_results": {
+            "success": True,
+            "status": "success",
+            "analysis_report": analysis_report,
+            "sample_count": sample_count,
+            "species": species
+        },
         
         # 清空执行进度状态
         "current_step": "",

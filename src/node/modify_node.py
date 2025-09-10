@@ -221,6 +221,7 @@ FastP参数：
         
         # 返回更新后的状态
         return {
+            "success": True,
             # 更新配置
             "nextflow_config": updated_nextflow,
             "resource_config": updated_resource,
@@ -245,7 +246,7 @@ FastP参数：
             
             # 状态和响应
             "response": f"✅ 已应用配置修改：{modify_request.modification_reason}",
-            "status": "user_confirm"  # 直接返回到user_confirm节点
+            "status": "success"  # 修改成功状态
         }
         
     except Exception as e:
@@ -253,7 +254,8 @@ FastP参数：
         print(f"🔄 返回到用户确认节点...")
         
         return {
+            "success": False,
             "response": f"❌ 修改解析失败: {str(e)}",
-            "status": "user_confirm",
+            "status": "failed",
             "modify_requirements": {}  # 清空修改需求
         }

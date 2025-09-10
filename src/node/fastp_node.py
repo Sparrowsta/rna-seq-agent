@@ -51,16 +51,16 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
     if "fastp" not in completed_steps:
         completed_steps.append("fastp")
     
-    sample_count = len(state.nextflow_config.get('sample_groups', []))
     execution_mode = state.execution_mode
     
-    # 初始化结果字典
     result = {
+        "success": True,
         "status": "fastp_completed",
         "current_step": "fastp",
         "completed_steps": completed_steps,
         "fastp_results": {
-            # 占位，保证后续 update/赋值安全
+            "success": True,
+            "status": "success"
         }
     }
     
@@ -70,17 +70,18 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
         try:
             agent_response = await _call_fastp_optimization_agent(state)
 
-            # 透传结果路径供下游使用
             try:
                 if getattr(agent_response, 'results', None):
                     agent_results = agent_response.results or {}
-                    result["fastp_results"] = {
-                        "status": "success",
+                    result["fastp_results"].update({
                         "results_dir": agent_results.get("results_dir"),
                         "per_sample_outputs": agent_results.get("per_sample_outputs") or []
-                    }
+                    })
             except Exception:
-                pass
+                result["success"] = False
+                result["status"] = "fastp_failed"  
+                result["fastp_results"]["success"] = False
+                result["fastp_results"]["status"] = "failed"
 
             result["response"] = (
                 "✅ FastP质控完成（单次执行模式）\n\n"
@@ -88,11 +89,16 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
             )
         except Exception as e:
             return {
-                "status": "error",
+                "success": False,
+                "status": "fastp_failed",
                 "response": f"❌ FastP单次执行失败: {str(e)}",
                 "current_step": "fastp",
                 "completed_steps": completed_steps,
-                "fastp_results": {"status": "failed", "error": str(e)}
+                "fastp_results": {
+                    "success": False,
+                    "status": "failed", 
+                    "error": str(e)
+                }
             }
     
     elif execution_mode == "optimized":
@@ -110,31 +116,36 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
 
             result["fastp_params"] = optimized_params
             result["fastp_optimization_suggestions"] = optimization_reasoning
-            result["fastp_optimization_params"] = optimization_params_changes  # 记录变更的参数
+            result["fastp_optimization_params"] = optimization_params_changes
 
-            # 由LLM统一返回的输出路径，直接透传以供下游使用
             try:
                 if getattr(agent_response, 'results', None):
-                    # 平铺为顶层字段，保持与单次执行一致
                     agent_results = agent_response.results or {}
-                    result["fastp_results"] = {
-                        "status": "success",
+                    result["fastp_results"].update({
                         "results_dir": agent_results.get("results_dir"),
                         "per_sample_outputs": agent_results.get("per_sample_outputs") or []
-                    }
+                    })
             except Exception:
-                pass
+                result["success"] = False
+                result["status"] = "fastp_failed"
+                result["fastp_results"]["success"] = False
+                result["fastp_results"]["status"] = "failed"
 
             print(f"✅ [OPTIMIZED] FastP智能优化完成: {len(optimized_params)}个参数")
 
         except Exception as e:
             print(f"❌ [OPTIMIZED] FastP优化失败: {str(e)}")
-            # 直接返回错误，不进行回退处理
             return {
-                "status": "error",
+                "success": False,
+                "status": "fastp_failed",
                 "response": f"❌ FastP智能优化失败: {str(e)}",
                 "current_step": "fastp",
-                "completed_steps": completed_steps
+                "completed_steps": completed_steps,
+                "fastp_results": {
+                    "success": False,
+                    "status": "failed", 
+                    "error": str(e)
+                }
             }
         
     elif execution_mode == "batch_optimize":
@@ -145,11 +156,16 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
             # 调用FastP优化Agent
             agent_response = await _call_fastp_optimization_agent(state)
 
+            # 立即更新参数以供批次收集使用
+            optimized_params = agent_response.fastp_params
+            optimization_reasoning = agent_response.fastp_optimization_suggestions
+            optimization_params_changes = agent_response.fastp_optimization_params
+
             # 构建批次优化数据结构
             fastp_optimization = {
-                "optimization_reasoning": agent_response.fastp_optimization_suggestions,
-                "suggested_params": agent_response.fastp_params,
-                "optimization_params_changes": agent_response.fastp_optimization_params,  # 添加变更参数记录
+                "optimization_reasoning": optimization_reasoning,
+                "suggested_params": optimized_params,
+                "optimization_params_changes": optimization_params_changes,  # 添加变更参数记录
                 "current_params": state.fastp_params.copy(),
                 "tool_name": "fastp"
             }
@@ -158,30 +174,36 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
             batch_optimizations["fastp"] = fastp_optimization
 
             result["batch_optimizations"] = batch_optimizations
-            result["response"] += f"\n\n📦 **智能优化参数已收集**: 已收集FastP优化参数"
+            result["response"] = (result.get("response", "") + "\n\n📦 **智能优化参数已收集**: 已收集FastP优化参数")
 
-            # LLM返回的输出路径也一并附带
             try:
                 if getattr(agent_response, 'results', None):
                     agent_results = agent_response.results or {}
-                    result["fastp_results"] = {
-                        "status": "success",
+                    result["fastp_results"].update({
                         "results_dir": agent_results.get("results_dir"),
                         "per_sample_outputs": agent_results.get("per_sample_outputs") or []
-                    }
+                    })
             except Exception:
-                pass
+                result["success"] = False
+                result["status"] = "fastp_failed"
+                result["fastp_results"]["success"] = False
+                result["fastp_results"]["status"] = "failed"
 
-            print(f"✅ [BATCH] FastP智能优化参数收集完成: {len(agent_response.fastp_params)}个参数")
+            print(f"✅ [BATCH] FastP智能优化参数收集完成: {len(optimized_params)}个参数")
 
         except Exception as e:
             print(f"❌ [BATCH] FastP优化失败: {str(e)}")
-            # 直接返回错误，不进行回退处理
             return {
-                "status": "error",
+                "success": False,
+                "status": "fastp_failed",
                 "response": f"❌ FastP批次优化失败: {str(e)}",
                 "current_step": "fastp",
-                "completed_steps": completed_steps
+                "completed_steps": completed_steps,
+                "fastp_results": {
+                    "success": False,
+                    "status": "failed",
+                    "error": str(e)
+                }
             }
     else:
         # 未知模式：按 single 处理
@@ -191,24 +213,31 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
             try:
                 if getattr(agent_response, 'results', None):
                     agent_results = agent_response.results or {}
-                    result["fastp_results"] = {
-                        "status": "success",
+                    result["fastp_results"].update({
                         "results_dir": agent_results.get("results_dir"),
                         "per_sample_outputs": agent_results.get("per_sample_outputs") or []
-                    }
+                    })
             except Exception:
-                pass
+                result["success"] = False
+                result["status"] = "fastp_failed"
+                result["fastp_results"]["success"] = False
+                result["fastp_results"]["status"] = "failed"
             result["response"] = (
                 "✅ FastP质控完成（按single处理）\n\n"
                 "🚀 **执行详情**: 已完成质量控制，保持原有参数配置"
             )
         except Exception as e:
             return {
-                "status": "error",
+                "success": False,
+                "status": "fastp_failed",
                 "response": f"❌ FastP执行失败: {str(e)}",
                 "current_step": "fastp",
                 "completed_steps": completed_steps,
-                "fastp_results": {"status": "failed", "error": str(e)}
+                "fastp_results": {
+                    "success": False,
+                    "status": "failed", 
+                    "error": str(e)
+                }
             }
     
     # 同时聚合到跨节点 results 字段，便于统一读取

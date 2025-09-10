@@ -67,6 +67,9 @@ WORKDIR /data
 
 # 11. 复制应用文件到根目录（应用与数据分离）
 COPY fastp.nf /
+COPY star.nf /
+COPY featurecounts.nf /
+COPY build_index.nf /
 COPY main.py /
 COPY src/ /src/
 

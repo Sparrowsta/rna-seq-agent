@@ -53,11 +53,12 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
     
     if not detection_results:
         return {
+            "success": False,
             "nextflow_config": current_config,
             "resource_config": {},
             "config_reasoning": "未获取到检测数据，无法进行智能配置分析",
             "response": "⚠️ 缺少检测数据，无法进行智能配置分析",
-            "status": "error"
+            "status": "failed"
         }
     
     # 使用LLM综合分析用户需求和检测数据
@@ -104,11 +105,12 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
                 user_satisfaction_note = f"\n\n🎯 **用户需求处理情况：**\n📋 {initial_requirements}"
 
             return {
+                "success": True,
                 "nextflow_config": nextflow_cfg,
                 "resource_config": resource_params,
                 "config_reasoning": reasoning,
                 "response": f"智能配置分析完成{user_satisfaction_note}\n\n💡 {reasoning}",
-                "status": "confirm"
+                "status": "success"
             }
         else:
             raise Exception("Agent未返回预期的结构化响应")
@@ -116,9 +118,10 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
     except Exception as e:
         print(f"❌ 配置生成失败: {str(e)}")
         return {
+            "success": False,
             "nextflow_config": current_config,
             "resource_config": {},
             "config_reasoning": f"配置生成失败: {str(e)}",
             "response": f"❌ 配置生成失败: {str(e)}",
-            "status": "error"
+            "status": "failed"
         }

@@ -244,15 +244,19 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
                     star_index_exists = False
                     hisat2_index_exists = False
                     
+                    star_index_dir_str = ""
+                    hisat2_index_dir_str = ""
                     if fasta_exists:
                         # STAR索引检查
                         star_index_dir = config.get_star_index_dir(Path(fasta_path))
+                        star_index_dir_str = str(star_index_dir)
                         if star_index_dir.exists():
                             star_index_files = list(star_index_dir.iterdir())
                             star_index_exists = len(star_index_files) > 0
                         
                         # HISAT2索引检查
                         hisat2_index_dir = config.get_hisat2_index_dir(Path(fasta_path))
+                        hisat2_index_dir_str = str(hisat2_index_dir)
                         if hisat2_index_dir.exists():
                             ht2_files = list(hisat2_index_dir.glob("*.ht2"))
                             hisat2_index_exists = len(ht2_files) > 0
@@ -268,7 +272,9 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
                         "gtf_exists": gtf_exists,
                         "complete": fasta_exists and gtf_exists,
                         "star_index_exists": star_index_exists,
-                        "hisat2_index_exists": hisat2_index_exists
+                        "star_index_dir": star_index_dir_str,
+                        "hisat2_index_exists": hisat2_index_exists,
+                        "hisat2_index_dir": hisat2_index_dir_str
                     }
                 
                 result = {
@@ -611,16 +617,23 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
         # 统一数据根目录来源：始终以 Settings().data_dir 为准，不从 sample_info 读取
         base_data_path = str(config.settings.data_dir)
 
-        # 结果目录：优先使用 sample_info 提供；否则按时间戳生成到 data/results 下
+        # 结果目录（运行根目录）：优先使用 sample_info 提供；否则按时间戳生成到 data/results/<timestamp>
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        results_dir = sample_info.get("results_dir") or str(config.settings.data_dir / "results" / f"fastp_{timestamp}")
+        results_dir = sample_info.get("results_dir") or str(config.settings.data_dir / "results" / f"{timestamp}")
 
-        # 工作目录：固定放到 data/tmp 下（包含时间戳/结果名）
+        # 工作目录：统一到 /data/work
         run_id = results_dir.split('/')[-1] if '/' in str(results_dir) else timestamp
-        temp_dir = Path(base_data_path) / "tmp" / f"nextflow_fastp_{run_id}"
-        temp_dir.mkdir(parents=True, exist_ok=True)
+        work_dir = Path(base_data_path) / "work" / f"fastp_{run_id}"
+        work_dir.mkdir(parents=True, exist_ok=True)
         results_dir = Path(results_dir)
-        print(f"📁 运行目录: base={base_data_path} work={temp_dir} results={results_dir}")
+        # 确保结果目录存在，避免 publishDir 目标不存在造成的发布失败
+        try:
+            results_dir.mkdir(parents=True, exist_ok=True)
+            (results_dir / "fastp").mkdir(parents=True, exist_ok=True)
+
+        except Exception:
+            pass
+        print(f"📁 运行目录: base={base_data_path} work={work_dir} results={results_dir}")
         
         nextflow_params: Dict[str, Any] = {}
         for raw_key, value in (fastp_params or {}).items():
@@ -641,7 +654,7 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
         nextflow_params["data"] = base_data_path
         
         # 创建Nextflow参数文件
-        params_file = temp_dir / "fastp_params.json"
+        params_file = work_dir / "fastp_params.json"
         with open(params_file, 'w', encoding='utf-8') as f:
             json.dump(nextflow_params, f, indent=2, ensure_ascii=False)
         
@@ -668,13 +681,14 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
             "nextflow", "run",
             str(nextflow_script),
             "-params-file", str(params_file),
-            "-work-dir", str(temp_dir / "work"),
+            "-work-dir", str(work_dir),
             "--data", str(config.settings.data_dir)
         ]
         
         print(f"🚀 执行Nextflow FastP流水线...")
         print(f"   参数文件: {params_file}")
-        print(f"   工作目录: {temp_dir / 'work'}")
+        # 正确显示并使用本函数创建的 Nextflow 工作目录
+        print(f"   工作目录: {work_dir}")
         print(f"   结果目录: {results_dir}")
         
         # 执行Nextflow流水线
@@ -690,42 +704,90 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
         
         if result.returncode == 0:
             # 解析输出结果
-            sample_count = len(sample_info["sample_groups"])
+            sample_groups = sample_info.get("sample_groups", [])
+            sample_count = len(sample_groups)
             
-            return {
+            # 基于约定的发布目录结构，构造每个样本的输出文件路径
+            per_sample_outputs = []
+            fastp_root = results_dir / "fastp"
+            for item in sample_groups:
+                sid = item.get("sample_id") or item.get("id")
+                if not sid:
+                    continue
+                sdir = fastp_root / sid
+                out = {
+                    "sample_id": sid,
+                    "html": str(sdir / f"{sid}.fastp.html"),
+                    "json": str(sdir / f"{sid}.fastp.json"),
+                }
+                # 判断单双端
+                r2 = item.get("read2")
+                if r2:
+                    out.update({
+                        "trimmed_r1": str(sdir / f"{sid}_1.trimmed.fastq.gz"),
+                        "trimmed_r2": str(sdir / f"{sid}_2.trimmed.fastq.gz"),
+                        "is_paired": True,
+                    })
+                else:
+                    out.update({
+                        "trimmed_single": str(sdir / f"{sid}.single.trimmed.fastq.gz"),
+                        "is_paired": False,
+                    })
+                per_sample_outputs.append(out)
+            
+            payload = {
                 "success": True,
                 "message": f"FastP质控完成，处理了{sample_count}个样本",
                 "execution_time": execution_time,
                 "results_dir": str(results_dir),
-                "work_dir": str(temp_dir / "work"),
+                # 返回正确的 Nextflow 工作目录，便于用户排查
+                "work_dir": str(work_dir),
                 "params_file": str(params_file),
                 "sample_count": sample_count,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "nextflow_params": nextflow_params
+                "per_sample_outputs": per_sample_outputs
             }
+            # 仅在调试模式返回详细日志
+            try:
+                if get_tools_config().settings.debug_mode:
+                    payload.update({
+                        "stdout": result.stdout,
+                        "stderr": result.stderr,
+                        "nextflow_params": nextflow_params
+                    })
+            except Exception:
+                pass
+            return payload
         else:
-            return {
+            payload = {
                 "success": False,
                 "error": f"Nextflow执行失败 (返回码: {result.returncode})",
                 "execution_time": execution_time,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "cmd": " ".join(cmd)
             }
+            try:
+                if get_tools_config().settings.debug_mode:
+                    payload.update({
+                        "stdout": result.stdout,
+                        "stderr": result.stderr,
+                        "cmd": " ".join(cmd)
+                    })
+            except Exception:
+                pass
+            return payload
             
     except subprocess.TimeoutExpired:
-        return {
+        payload = {
             "success": False,
             "error": "Nextflow执行超时（30分钟）",
             "execution_time": time.time() - start_time
         }
+        return payload
     except Exception as e:
-        return {
+        payload = {
             "success": False,
             "error": f"执行FastP流水线时发生错误: {str(e)}",
             "execution_time": 0
         }
+        return payload
 
 
 @tool  
@@ -1046,272 +1108,309 @@ def download_genome_assets(genome_id: str, force: bool = False) -> Dict[str, Any
 
 
 @tool
-def build_star_index(genome_id: str, sjdb_overhang: Optional[int] = None, 
-                    runThreadN: Optional[int] = None, force_rebuild: bool = False) -> Dict[str, Any]:
-    """构建STAR基因组索引
-    
+def build_star_index(
+    genome_id: str,
+    sjdb_overhang: Optional[int] = None,
+    runThreadN: Optional[int] = None,
+    force_rebuild: bool = False,
+) -> Dict[str, Any]:
+    """构建STAR基因组索引（使用 build_index.nf）
+
     Args:
         genome_id: 基因组标识，用于定位FASTA和GTF文件
-        sjdb_overhang: 可选的剪接位点overhang参数（通常为reads长度-1）
-        runThreadN: 构建索引的线程数，默认使用DEFAULT_STAR_PARAMS中的值
+        sjdb_overhang: 剪接位点overhang（默认用 DEFAULT_STAR_PARAMS 或 100）
+        runThreadN: 线程数（默认用 DEFAULT_STAR_PARAMS 或 4）
         force_rebuild: 若索引目录已存在是否强制重建
-    
+
     Returns:
-        Dict: 索引构建结果
-        {
-            "success": bool,
-            "index_dir": str,      # 索引目录路径
-            "stdout": str,         # 构建过程输出
-            "stderr": str,         # 错误输出
-            "skipped": bool        # 是否跳过构建
-        }
+        Dict: 执行结果（包含 index_dir/stdout/stderr/skipped 等）
     """
     try:
         from .config.default_tool_params import DEFAULT_STAR_PARAMS
-        
         tools_config = get_tools_config()
-        
-        # 读取基因组配置获取文件路径
+
+        # 读取基因组配置
         genomes_config_path = tools_config.genomes_config_path
         if not genomes_config_path.exists():
-            return {
-                "success": False,
-                "error": f"基因组配置文件不存在: {genomes_config_path}"
-            }
-        
+            return {"success": False, "error": f"基因组配置文件不存在: {genomes_config_path}"}
+
         with open(genomes_config_path, 'r', encoding='utf-8') as f:
             genomes_config = json.load(f)
-        
         if genome_id not in genomes_config:
-            return {
-                "success": False,
-                "error": f"基因组 '{genome_id}' 在配置文件中不存在"
-            }
-        
-        config = genomes_config[genome_id]
-        fasta_relative = config.get("fasta_path")
-        gtf_relative = config.get("gtf_path")
-        
-        if not fasta_relative or not gtf_relative:
-            return {
-                "success": False,
-                "error": f"基因组 '{genome_id}' 配置中缺少fasta_path或gtf_path"
-            }
-        
-        # 构建绝对路径
+            return {"success": False, "error": f"基因组 '{genome_id}' 在配置文件中不存在"}
+
+        cfg = genomes_config[genome_id]
+        fasta_rel = cfg.get("fasta_path")
+        gtf_rel = cfg.get("gtf_path")
+        if not fasta_rel or not gtf_rel:
+            return {"success": False, "error": f"基因组 '{genome_id}' 缺少 fasta_path 或 gtf_path"}
+
         project_root = tools_config.settings.project_root
-        fasta_path = project_root / fasta_relative
-        gtf_path = project_root / gtf_relative
-        
-        # 检查输入文件是否存在
+        fasta_path = project_root / fasta_rel
+        gtf_path = project_root / gtf_rel
         if not fasta_path.exists():
-            return {
-                "success": False,
-                "error": f"FASTA文件不存在: {fasta_path}"
-            }
-        
+            return {"success": False, "error": f"FASTA文件不存在: {fasta_path}"}
         if not gtf_path.exists():
-            return {
-                "success": False,
-                "error": f"GTF文件不存在: {gtf_path}"
-            }
-        
-        # 获取STAR索引目录
+            return {"success": False, "error": f"GTF文件不存在: {gtf_path}"}
+
+        # 目标索引目录
         index_dir = tools_config.get_star_index_dir(fasta_path)
-        
-        # 检查索引是否已存在
+
+        # 存在即跳过
         if index_dir.exists() and not force_rebuild:
-            # 简单检查是否包含关键索引文件
             key_files = ["SA", "SAindex", "Genome"]
             if all((index_dir / f).exists() for f in key_files):
                 return {
                     "success": True,
                     "index_dir": str(index_dir),
                     "skipped": True,
-                    "message": "STAR索引已存在，跳过构建"
+                    "message": "STAR索引已存在，跳过构建",
                 }
-        
-        # 创建索引目录
-        index_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 准备构建参数
-        if runThreadN is None:
-            runThreadN = DEFAULT_STAR_PARAMS.get("runThreadN", 8)
-        
-        # 这里应该通过Nextflow执行索引构建，但为了简化实现，暂时使用直接调用
-        # 在生产环境中应该创建一个独立的build_index.nf脚本
-        cmd = [
-            "STAR",
-            "--runMode", "genomeGenerate",
-            "--genomeDir", str(index_dir),
-            "--genomeFastaFiles", str(fasta_path),
-            "--sjdbGTFfile", str(gtf_path),
-            "--runThreadN", str(runThreadN)
+
+        # 构造 Nextflow 参数
+        sjdb = (
+            int(sjdb_overhang)
+            if sjdb_overhang is not None
+            else int(DEFAULT_STAR_PARAMS.get("sjdbOverhang") or 100)
+        )
+        threads = (
+            int(runThreadN)
+            if runThreadN is not None
+            else int(DEFAULT_STAR_PARAMS.get("runThreadN", 4))
+        )
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        temp_dir = Path(tools_config.settings.data_dir) / "tmp" / f"nextflow_star_index_{timestamp}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        nf_params = {
+            "genome_fasta": str(fasta_path),
+            "genome_gtf": str(gtf_path),
+            "star_index_dir": str(index_dir),
+            "sjdb_overhang": sjdb,
+            "runThreadN": threads,
+            "limitGenomeGenerateRAM": 32000000000,
+        }
+
+        params_file = temp_dir / "build_index_params.json"
+        with open(params_file, "w", encoding="utf-8") as f:
+            json.dump(nf_params, f, indent=2, ensure_ascii=False)
+
+        # 定位 build_index.nf
+        nf_candidates = [
+            tools_config.settings.project_root / "build_index.nf",
+            Path("/build_index.nf"),
         ]
-        
-        if sjdb_overhang is not None:
-            cmd.extend(["--sjdbOverhang", str(sjdb_overhang)])
-        
-        print(f"构建STAR索引: {' '.join(cmd)}")
-        
-        # 执行构建命令
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)  # 2小时超时
-        
-        if result.returncode == 0:
-            return {
-                "success": True,
-                "index_dir": str(index_dir),
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "skipped": False
-            }
-        else:
+        nextflow_script = None
+        for cand in nf_candidates:
+            if cand.exists():
+                nextflow_script = cand
+                break
+        if nextflow_script is None:
             return {
                 "success": False,
-                "error": f"STAR索引构建失败: {result.stderr}",
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "return_code": result.returncode
+                "error": "未找到 build_index.nf 脚本",
+                "searched": [str(p) for p in nf_candidates],
             }
-        
+
+        # 运行 Nextflow
+        # 统一 Nextflow 工作目录到 /data/work
+        work_root = tools_config.settings.data_dir / "work"
+        work_dir = work_root / f"star_index_{timestamp}"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            "nextflow",
+            "run",
+            str(nextflow_script),
+            "-params-file",
+            str(params_file),
+            "-work-dir",
+            str(work_dir),
+        ]
+
+        print("🚀 构建STAR索引 (Nextflow)…")
+        print(f"   参数文件: {params_file}")
+        print(f"   目标目录: {index_dir}")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=7200,
+            cwd=tools_config.settings.project_root,
+        )
+
+        payload = {
+            "success": result.returncode == 0,
+            "index_dir": str(index_dir),
+            "skipped": False,
+            "params_file": str(params_file),
+        }
+        try:
+            if get_tools_config().settings.debug_mode:
+                payload.update({
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "cmd": " ".join(cmd)
+                })
+        except Exception:
+            pass
+        return payload
+
     except subprocess.TimeoutExpired:
-        return {
-            "success": False,
-            "error": "STAR索引构建超时"
-        }
+        return {"success": False, "error": "STAR索引构建超时"}
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"构建STAR索引失败: {str(e)}"
-        }
+        return {"success": False, "error": f"构建STAR索引失败: {str(e)}"}
 
 
 @tool
-def run_nextflow_star(star_params: Dict[str, Any], fastp_results: Dict[str, Any], 
-                     genome_info: Dict[str, Any]) -> Dict[str, Any]:
-    """执行Nextflow STAR比对流程
-    
-    Args:
-        star_params: STAR参数字典
-        fastp_results: FastP结果数据，包含修剪后FASTQ文件信息
-        genome_info: 基因组信息，包含索引路径等
-    
-    Returns:
-        Dict: STAR执行结果
-        {
-            "success": bool,
-            "results_dir": str,       # 结果目录
-            "work_dir": str,          # 工作目录
-            "params_file": str,       # 参数文件路径
-            "sample_count": int,      # 处理样本数
-            "stdout": str,            # 执行输出
-            "stderr": str             # 错误输出
-        }
+def run_nextflow_star(
+    star_params: Dict[str, Any],
+    fastp_results: Dict[str, Any],
+    genome_info: Dict[str, Any],
+    results_timestamp: Optional[str] = None,
+    base_results_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """执行 STAR 比对（精简版）
+
+    约束（与路径契约一致）:
+    - 仅在 fastp_results.success 为真且包含 per_sample_outputs 时放行
+    - 统一复用 FastP 的 results_dir 作为运行根目录
+    - STAR 索引优先使用 genome_info.star_index_dir；否则由 genome_info.fasta_path 推导
+    - sample_inputs 仅来源于 fastp_results.per_sample_outputs（不再扫描目录）
+    - per_sample_outputs 路径与 star.nf 产出一致（样本子目录 + 默认文件名）
     """
     try:
         tools_config = get_tools_config()
-        
-        # 检查FastP结果
-        if not fastp_results.get("success"):
-            return {
-                "success": False,
-                "error": "FastP结果无效，无法执行STAR比对"
-            }
-        
+
+        # 1) 校验 FastP 结果与运行根目录
+        if not (fastp_results and fastp_results.get("success")):
+            return {"success": False, "error": "FastP结果无效，无法执行STAR比对"}
+
         fastp_results_dir = fastp_results.get("results_dir")
         if not fastp_results_dir:
-            return {
-                "success": False,
-                "error": "FastP结果目录缺失"
-            }
-        
-        # 生成结果目录和时间戳
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        results_dir = tools_config.results_dir / f"star_{timestamp}"
-        work_dir = results_dir / "work"
+            return {"success": False, "error": "FastP结果缺少results_dir"}
+
+        per_sample = fastp_results.get("per_sample_outputs") or []
+        if not per_sample:
+            return {"success": False, "error": "FastP结果缺少per_sample_outputs"}
+
+        # 2) 运行根目录与工作目录
+        timestamp = results_timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+        results_dir = Path(fastp_results_dir)
+        run_id = results_dir.name or timestamp
+        work_dir = tools_config.settings.data_dir / "work" / f"star_{run_id}"
         results_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 清理参数：移除None值和特殊字段
-        cleaned_params = {}
-        for key, value in star_params.items():
-            if value is not None and key not in ["star_cpus"]:
-                # 移除--前缀（如果存在）
-                clean_key = key.lstrip('-')
-                cleaned_params[clean_key] = value
-        
-        # 准备Nextflow参数文件
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        # 3) 解析 STAR 索引目录
+        def _resolve(p: str) -> Path:
+            pp = Path(p)
+            return pp if pp.is_absolute() else (tools_config.settings.project_root / pp)
+
+        star_index_dir = ""
+        if isinstance(genome_info, dict):
+            star_index_dir = genome_info.get("star_index_dir") or genome_info.get("index_dir") or ""
+            if not star_index_dir:
+                fasta_path = genome_info.get("fasta_path") or genome_info.get("fasta")
+                if fasta_path:
+                    star_index_dir = str(tools_config.get_star_index_dir(_resolve(fasta_path)))
+
+        if not star_index_dir:
+            return {"success": False, "error": "缺少STAR索引目录（genome_info.star_index_dir 或 fasta_path 必须提供）"}
+
+        star_index_path = _resolve(star_index_dir)
+        if not star_index_path.exists():
+            return {"success": False, "error": f"STAR索引不存在: {star_index_path}"}
+
+        # 4) 构造 sample_inputs（仅使用 FastP 返回的结构）
+        sample_inputs: List[Dict[str, Any]] = []
+        for i, fp in enumerate(per_sample):
+            sid = fp.get("sample_id", f"sample_{i+1}")
+            r1 = fp.get("trimmed_single") or fp.get("trimmed_r1")
+            r2 = fp.get("trimmed_r2")
+            if not r1:
+                continue
+            sample_inputs.append({
+                "sample_id": sid,
+                "is_paired": bool(r2),
+                "read1": r1,
+                **({"read2": r2} if r2 else {})
+            })
+        if not sample_inputs:
+            return {"success": False, "error": "未从FastP结果构造到任何样本输入"}
+
+        # 5) 组装 Nextflow 参数
+        cleaned_params: Dict[str, Any] = {}
+        for k, v in (star_params or {}).items():
+            if v is None or k in {"star_cpus", "outFileNamePrefix"}:
+                continue
+            cleaned_params[k.lstrip('-')] = v
+
         nf_params = {
-            "from_fastp_dir": fastp_results_dir,
-            "star_index": genome_info.get("star_index_dir", ""),
+            "sample_inputs": json.dumps(sample_inputs, ensure_ascii=False),
+            "star_index": str(star_index_path),
             "results_dir": str(results_dir),
             "work_dir": str(work_dir),
-            **cleaned_params
+            **cleaned_params,
         }
-        
-        # 写入参数文件
+
         params_file = results_dir / "star_params.json"
-        with open(params_file, 'w', encoding='utf-8') as f:
+        with open(params_file, "w", encoding="utf-8") as f:
             json.dump(nf_params, f, indent=2, ensure_ascii=False)
-        
-        # 构建Nextflow命令（这里使用简化的模拟实现）
-        # 在真实实现中应该调用独立的align.nf脚本
+
+        # 6) 定位并执行 Nextflow
+        nf_candidates = [
+            tools_config.settings.project_root / "star.nf",
+            Path("/star.nf"),
+        ]
+        nextflow_script = next((p for p in nf_candidates if p.exists()), None)
+        if nextflow_script is None:
+            return {"success": False, "error": "未找到 star.nf 脚本", "searched": [str(p) for p in nf_candidates]}
+
         print(f"执行STAR比对 - 参数文件: {params_file}")
-        print(f"FastP输入目录: {fastp_results_dir}")
-        print(f"STAR索引: {genome_info.get('star_index_dir', 'N/A')}")
-        
-        # 模拟成功执行
-        time.sleep(2)  # 模拟处理时间
-        
-        # 创建模拟结果目录结构
-        star_output_dir = results_dir / "star"
-        star_output_dir.mkdir(exist_ok=True)
-        
-        # 模拟样本处理结果
-        sample_count = len(fastp_results.get("per_sample_outputs", []))
-        
-        # 为每个样本创建输出文件路径信息（基于STAR输出规范）
-        per_sample_outputs = []
-        for i, fastp_sample in enumerate(fastp_results.get("per_sample_outputs", [])):
-            sample_id = fastp_sample.get("sample_id", f"sample_{i+1}")
-            sample_output_dir = star_output_dir / sample_id
-            sample_output_dir.mkdir(exist_ok=True)
-            
-            # 根据STAR标准输出文件结构定义
-            sample_output = {
-                "sample_id": sample_id,
-                "aligned_bam": str(sample_output_dir / f"{sample_id}.Aligned.sortedByCoord.out.bam"),
-                "log_final": str(sample_output_dir / "Log.final.out"), 
-                "log_out": str(sample_output_dir / "Log.out"),
-                "log_progress": str(sample_output_dir / "Log.progress.out"),
-                "splice_junctions": str(sample_output_dir / "SJ.out.tab")
+        print(f"STAR索引: {nf_params['star_index']}")
+        cmd = [
+            "nextflow", "run", str(nextflow_script),
+            "-params-file", str(params_file),
+            "-work-dir", str(work_dir),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200, cwd=tools_config.settings.project_root)
+
+        # 7) 组装每样本输出路径（与 star.nf publishDir 对齐）
+        star_out = results_dir / "star"
+        per_sample_outputs: List[Dict[str, Any]] = []
+        for item in sample_inputs:
+            sid = item["sample_id"]
+            sdir = star_out / sid
+            entry = {
+                "sample_id": sid,
+                "aligned_bam": str(sdir / f"{sid}.Aligned.sortedByCoord.out.bam"),
+                "log_final": str(sdir / f"{sid}.Log.final.out"),
+                "log_out": str(sdir / f"{sid}.Log.out"),
+                "log_progress": str(sdir / f"{sid}.Log.progress.out"),
+                "splice_junctions": str(sdir / f"{sid}.SJ.out.tab"),
             }
-            
-            # 如果启用了转录组输出
-            if cleaned_params.get("quantMode") and "TranscriptomeSAM" in str(cleaned_params.get("quantMode", "")):
-                sample_output["transcriptome_bam"] = str(sample_output_dir / f"{sample_id}.Aligned.toTranscriptome.out.bam")
-                
-            # 如果启用了基因计数
-            if cleaned_params.get("quantMode") and "GeneCounts" in str(cleaned_params.get("quantMode", "")):
-                sample_output["gene_counts"] = str(sample_output_dir / f"{sample_id}.ReadsPerGene.out.tab")
-                
-            per_sample_outputs.append(sample_output)
-        
-        return {
-            "success": True,
+            qm = str(nf_params.get("quantMode", ""))
+            if "TranscriptomeSAM" in qm:
+                entry["transcriptome_bam"] = str(sdir / f"{sid}.Aligned.toTranscriptome.out.bam")
+            if "GeneCounts" in qm:
+                entry["gene_counts"] = str(sdir / f"{sid}.ReadsPerGene.out.tab")
+            per_sample_outputs.append(entry)
+
+        payload = {
+            "success": result.returncode == 0,
             "results_dir": str(results_dir),
-            "work_dir": str(work_dir), 
+            "work_dir": str(work_dir),
             "params_file": str(params_file),
-            "sample_count": sample_count,
+            "sample_count": len(sample_inputs),
             "per_sample_outputs": per_sample_outputs,
-            "stdout": f"STAR比对完成，处理了{sample_count}个样本",
-            "stderr": ""
         }
-        
+        if get_tools_config().settings.debug_mode:
+            payload.update({"stdout": result.stdout, "stderr": result.stderr, "cmd": " ".join(cmd)})
+        return payload
+
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"执行STAR比对失败: {str(e)}"
-        }
+        return {"success": False, "error": f"执行STAR比对失败: {str(e)}"}
 
 
 @tool
@@ -1365,7 +1464,8 @@ def parse_star_metrics(results_directory: str) -> Dict[str, Any]:
             if not sample_dir.is_dir():
                 continue
                 
-            log_final_file = sample_dir / "Log.final.out"
+            # 与 star.nf 中 outFileNamePrefix 保持一致：{sample_id}/{sample_id}.*
+            log_final_file = sample_dir / f"{sample_dir.name}.Log.final.out"
             if not log_final_file.exists():
                 sample_metrics.append({
                     "sample_id": sample_dir.name,
@@ -1478,3 +1578,417 @@ def _extract_metric(text: str, pattern: str) -> float:
         except ValueError:
             return 0.0
     return 0.0
+
+
+# ==================== FeatureCounts 专用工具函数 ====================
+
+@tool
+def run_nextflow_featurecounts(
+    featurecounts_params: Dict[str, Any],
+    star_results: Dict[str, Any],
+    genome_info: Dict[str, Any],
+    results_timestamp: Optional[str] = None,
+    base_results_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """执行Nextflow FeatureCounts定量流程
+
+    Args:
+        featurecounts_params: FeatureCounts参数字典（可包含 -T/-s/-p/-M 等风格键）
+        star_results: STAR节点结果，需包含 per_sample_outputs 中的 BAM 路径
+        genome_info: 基因组信息（需提供 GTF 路径，如 gtf_path）
+        results_timestamp: 可选的时间戳，优先用于结果目录
+        base_results_dir: 可选的基底结果目录（来自Detect节点）
+
+    Returns:
+        执行结果字典，包含状态、输出路径、样本输出等
+    """
+    try:
+        tools_config = get_tools_config()
+
+        # 仅支持容器路径的归一化（不做本地映射）
+        def _to_container_path(path_str: str) -> str:
+            """将输入规范化为容器内路径：
+            - 允许 '/data/...', '/config/...', '/work/...'
+            - 'genomes/...' 将映射为 '/data/genomes/...'
+            - 其他相对或本地路径一律原样返回（由存在性校验报错）
+            """
+            s = str(path_str or '').strip()
+            if not s:
+                return s
+            if s.startswith('/data/') or s.startswith('/config/') or s.startswith('/work/'):
+                return s
+            if s.startswith('genomes/'):
+                return '/data/' + s
+            return s
+
+        # 校验依赖输入
+        if not (star_results and star_results.get("success")):
+            return {"success": False, "error": "STAR结果无效，无法执行FeatureCounts"}
+
+        per_sample = star_results.get("per_sample_outputs") or []
+        if not per_sample:
+            return {"success": False, "error": "STAR结果缺少 per_sample_outputs 信息"}
+
+        # 环境检查：允许本地与容器环境，路径规范化在下方处理
+
+        # 解析并归一化 GTF 注释文件路径（容器内）
+        gtf_file_raw = (
+            genome_info.get("gtf_path")
+            or genome_info.get("gtf")
+            or genome_info.get("annotation_gtf")
+            or ""
+        )
+        if not gtf_file_raw:
+            return {"success": False, "error": "genome_info 未提供 GTF 注释文件路径 (gtf_path)"}
+        gtf_file = _to_container_path(gtf_file_raw)
+        if not Path(gtf_file).exists():
+            return {
+                "success": False,
+                "error": f"GTF文件不存在: {gtf_file}",
+            }
+
+        # 运行根目录（results_dir）：复用 STAR 的 results_dir，保持同一运行根目录
+        timestamp = results_timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_root = Path(star_results.get("results_dir") or base_results_dir or tools_config.results_dir / f"{timestamp}")
+        # 容器路径规范（如需）
+        run_root = Path(_to_container_path(str(run_root)))
+        results_dir = run_root
+        # 统一 Nextflow 工作目录到 /data/work，使用运行ID区分
+        run_id = results_dir.name or timestamp
+        work_dir = tools_config.settings.data_dir / "work" / f"featurecounts_{run_id}"
+        results_dir.mkdir(parents=True, exist_ok=True)
+        work_dir.mkdir(parents=True, exist_ok=True)
+        (results_dir / "featurecounts").mkdir(parents=True, exist_ok=True)
+
+        # 构建 Nextflow 参数（与 featurecounts.nf 对齐）
+        # 将 STAR 输出的 BAM 列表转换为JSON字符串（Nextflow 端会 echo 后再解析）
+        bam_entries = []
+        for item in per_sample:
+            sid = item.get("sample_id") or "sample"
+            bam = item.get("aligned_bam") or item.get("bam")
+            if not bam:
+                continue
+            bam_norm = _to_container_path(bam)
+            if not Path(bam_norm).exists():
+                return {
+                    "success": False,
+                    "error": f"BAM文件不存在: {bam_norm}",
+                }
+            bam_entries.append({"sample_id": sid, "bam_file": bam_norm})
+        if not bam_entries:
+            return {"success": False, "error": "未从STAR结果中收集到任何BAM路径"}
+
+        # 参数映射：Python风格/短旗标 → Nextflow params 名称
+        mapped: Dict[str, Any] = {}
+        p = featurecounts_params or {}
+
+        def pick_bool(key: str) -> Optional[bool]:
+            v = p.get(key)
+            if isinstance(v, bool):
+                return v
+            return None
+
+        def pick_int(key: str) -> Optional[int]:
+            v = p.get(key)
+            try:
+                return int(v) if v is not None else None
+            except Exception:
+                return None
+
+        # 线程/链特异性/特征/属性/质量阈
+        mapped["threads"] = pick_int("-T") or p.get("threads") or 4
+        mapped["strand_specificity"] = pick_int("-s") or p.get("strand_specificity") or 0
+        mapped["feature_type"] = p.get("-t") or p.get("feature_type") or "exon"
+        mapped["attribute_type"] = p.get("-g") or p.get("attribute_type") or "gene_id"
+        mapped["min_mapping_quality"] = pick_int("-Q") or p.get("min_mapping_quality") or 10
+
+        # 布尔开关 - 修改count_reads_pairs默认值为false
+        mapped["count_reads_pairs"] = pick_bool("-p") if pick_bool("-p") is not None else (p.get("count_reads_pairs") if isinstance(p.get("count_reads_pairs"), bool) else False)
+        mapped["count_multi_mapping_reads"] = pick_bool("-M") if pick_bool("-M") is not None else bool(p.get("count_multi_mapping_reads", False))
+        mapped["ignore_duplicates"] = bool(p.get("--ignoreDup", False) or p.get("ignore_duplicates", False))
+        mapped["require_both_ends_mapped"] = bool(p.get("-B", False) or p.get("require_both_ends_mapped", False))
+        mapped["exclude_chimeric"] = bool(p.get("-C", False) or p.get("exclude_chimeric", False))
+
+        # 组装 Nextflow 参数文件
+        nf_params = {
+            "input_bam_list": json.dumps(bam_entries, ensure_ascii=False),
+            "gtf_file": gtf_file,
+            "results_dir": str(results_dir),
+            "work_dir": str(work_dir),
+            **mapped,
+        }
+
+        params_file = results_dir / "featurecounts_params.json"
+        with open(params_file, "w", encoding="utf-8") as f:
+            json.dump(nf_params, f, indent=2, ensure_ascii=False)
+
+        # 定位 Nextflow 脚本
+        nf_candidates = [
+            tools_config.settings.project_root / "featurecounts.nf",
+            Path("/featurecounts.nf"),
+        ]
+        nextflow_script = None
+        for cand in nf_candidates:
+            if cand.exists():
+                nextflow_script = cand
+                break
+        if nextflow_script is None:
+            return {
+                "success": False,
+                "error": "未找到 featurecounts.nf 脚本",
+                "searched": [str(p) for p in nf_candidates],
+            }
+
+        # 执行 Nextflow
+        cmd = [
+            "nextflow",
+            "run",
+            str(nextflow_script),
+            "-params-file",
+            str(params_file),
+            "-work-dir",
+            str(work_dir),
+        ]
+
+        print("🚀 执行Nextflow FeatureCounts流水线…")
+        print(f"   参数文件: {params_file}")
+        print(f"   工作目录: {work_dir}")
+        print(f"   结果目录: {results_dir}")
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=1800,
+            cwd=tools_config.settings.project_root,
+        )
+
+        # 构建输出结构 - 适配新的批量输出格式
+        sample_count = len(bam_entries)
+        per_sample_outputs: List[Dict[str, Any]] = []
+        fc_root = results_dir / "featurecounts"
+        
+        # 新的featurecounts.nf脚本生成批量文件，不再有每个样本的单独目录
+        # 主要输出文件：
+        # - all_samples.featureCounts (完整计数矩阵)
+        # - all_samples.featureCounts.summary (统计摘要)
+        # - merged_counts_matrix.txt (兼容格式的矩阵)
+        
+        # 为兼容性生成per_sample_outputs结构，指向批量文件
+        for entry in bam_entries:
+            sid = entry["sample_id"]
+            sample_output = {
+                "sample_id": sid,
+                "counts_file": str(fc_root / "all_samples.featureCounts"),  # 指向批量文件
+                "summary_file": str(fc_root / "all_samples.featureCounts.summary"),  # 指向批量文件
+            }
+            per_sample_outputs.append(sample_output)
+
+        payload = {
+            "success": result.returncode == 0,
+            "message": f"FeatureCounts定量完成，处理了{sample_count}个样本" if result.returncode == 0 else "FeatureCounts执行失败",
+            "results_dir": str(results_dir),
+            "work_dir": str(work_dir),
+            "params_file": str(params_file),
+            "sample_count": sample_count,
+            "per_sample_outputs": per_sample_outputs,
+            "matrix_path": str(fc_root / "merged_counts_matrix.txt"),
+            "nextflow_params": nf_params,
+        }
+        try:
+            if get_tools_config().settings.debug_mode:
+                payload.update({
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "cmd": " ".join(cmd),
+                })
+            else:
+                # 非调试模式去掉 nextflow_params 以减小负载
+                payload.pop("nextflow_params", None)
+        except Exception:
+            pass
+        return payload
+
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "error": "Nextflow执行超时（30分钟）",
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"执行FeatureCounts流水线失败: {str(e)}",
+        }
+
+
+@tool
+def parse_featurecounts_metrics(results_directory: str) -> Dict[str, Any]:
+    """解析FeatureCounts定量结果，输出样本级与总体指标
+    
+    Args:
+        results_directory: FeatureCounts结果目录（包含 featurecounts 子目录）
+    
+    Returns:
+        解析后的指标（assignment rates、未分配原因等）
+    """
+    try:
+        results_path = Path(results_directory)
+        if not results_path.exists():
+            return {"success": False, "error": f"结果目录不存在: {results_directory}"}
+        
+        fc_dir = results_path / "featurecounts"
+        if not fc_dir.exists():
+            return {"success": False, "error": f"缺少特征计数目录: {fc_dir}"}
+        
+        # 查找批量输出的汇总文件
+        summary_file = fc_dir / "all_samples.featureCounts.summary"
+        counts_file = fc_dir / "all_samples.featureCounts"
+        
+        if not summary_file.exists():
+            return {"success": False, "error": f"未找到FeatureCounts汇总文件: {summary_file}"}
+        
+        if not counts_file.exists():
+            return {"success": False, "error": f"未找到FeatureCounts计数文件: {counts_file}"}
+        
+        # 解析批量汇总文件
+        sample_metrics: List[Dict[str, Any]] = []
+        totals = {
+            "assigned": 0,
+            "nofeatures": 0,
+            "multimapping": 0,
+            "ambiguous": 0,
+            "mappingquality": 0,
+            "other": 0,
+            "total": 0,
+        }
+        
+        try:
+            with open(summary_file, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+                
+                if len(lines) < 2:
+                    return {"success": False, "error": "汇总文件格式错误"}
+                
+                # 解析标题行获取样本名称
+                header = lines[0].strip().split('\t')
+                if len(header) < 2:
+                    return {"success": False, "error": "汇总文件标题行格式错误"}
+                
+                sample_names = header[1:]  # 第一列是Status，后面是样本名（通常为输入BAM的文件名）
+                sample_count = len(sample_names)
+                
+                # 初始化每个样本的指标
+                for sample_name in sample_names:
+                    # 规范化样本ID：
+                    # - 若列名以 .bam 结尾，使用去扩展名的basename
+                    # - 若列名包含路径但不带前缀，使用其父目录名（即样本子目录名）
+                    from pathlib import Path as _P
+                    sid = sample_name
+                    try:
+                        p = _P(sample_name)
+                        if sample_name.endswith('.bam'):
+                            sid = p.stem
+                        elif '/' in sample_name or '\\' in sample_name:
+                            sid = p.parent.name or p.name
+                        else:
+                            sid = sample_name.replace('.Aligned.sortedByCoord.out.bam', '')
+                    except Exception:
+                        sid = sample_name
+
+                    sample_metrics.append({
+                        "sample_id": sid,
+                        "assigned": 0,
+                        "unassigned_unmapped": 0,
+                        "unassigned_mappingquality": 0,
+                        "unassigned_nofeatures": 0,
+                        "unassigned_ambiguity": 0,
+                        "total_reads": 0
+                    })
+                
+                # 解析每一行统计数据
+                for line in lines[1:]:
+                    parts = line.strip().split('\t')
+                    if len(parts) < 2:
+                        continue
+                        
+                    status = parts[0]
+                    values = [int(v) for v in parts[1:]]
+                    
+                    # 更新每个样本的指标
+                    for i, value in enumerate(values):
+                        if i < len(sample_metrics):
+                            if status == "Assigned":
+                                sample_metrics[i]["assigned"] = value
+                                totals["assigned"] += value
+                            elif status == "Unassigned_Unmapped":
+                                sample_metrics[i]["unassigned_unmapped"] = value
+                            elif status == "Unassigned_MappingQuality":
+                                sample_metrics[i]["unassigned_mappingquality"] = value
+                                totals["mappingquality"] += value
+                            elif status == "Unassigned_NoFeatures":
+                                sample_metrics[i]["unassigned_nofeatures"] = value
+                                totals["nofeatures"] += value
+                            elif status == "Unassigned_Ambiguity":
+                                sample_metrics[i]["unassigned_ambiguity"] = value
+                                totals["ambiguous"] += value
+                
+                # 计算每个样本的总读数和分配率
+                for sample_metric in sample_metrics:
+                    sample_metric["total_reads"] = (
+                        sample_metric["assigned"] +
+                        sample_metric["unassigned_unmapped"] +
+                        sample_metric["unassigned_mappingquality"] +
+                        sample_metric["unassigned_nofeatures"] +
+                        sample_metric["unassigned_ambiguity"]
+                    )
+                    
+                    if sample_metric["total_reads"] > 0:
+                        sample_metric["assignment_rate"] = round(
+                            sample_metric["assigned"] / sample_metric["total_reads"], 4
+                        )
+                    else:
+                        sample_metric["assignment_rate"] = 0.0
+                    
+                    totals["total"] += sample_metric["total_reads"]
+        
+        except Exception as e:
+            return {"success": False, "error": f"解析汇总文件失败: {str(e)}"}
+        
+        # 计算总体统计
+        total_assignment_rate = totals["assigned"] / totals["total"] if totals["total"] > 0 else 0.0
+        
+        # 读取计数矩阵获取基因数量
+        gene_count = 0
+        try:
+            with open(counts_file, "r", encoding="utf-8") as f:
+                # 跳过注释行
+                for line in f:
+                    if not line.startswith('#'):
+                        gene_count += 1
+                gene_count -= 1  # 减去标题行
+        except Exception:
+            gene_count = 0
+        
+        return {
+            "success": True,
+            "results_directory": results_directory,
+            "summary_file": str(summary_file),
+            "counts_file": str(counts_file),
+            "sample_count": len(sample_metrics),
+            "gene_count": gene_count,
+            "sample_metrics": sample_metrics,
+            "overall_statistics": {
+                "total_reads": totals["total"],
+                "total_assigned": totals["assigned"],
+                "total_unassigned_nofeatures": totals["nofeatures"],
+                "total_unassigned_ambiguity": totals["ambiguous"],
+                "total_unassigned_mappingquality": totals["mappingquality"],
+                "overall_assignment_rate": round(total_assignment_rate, 4)
+            }
+        }
+    
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"解析FeatureCounts结果失败: {str(e)}"
+        }

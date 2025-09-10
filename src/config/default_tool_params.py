@@ -126,49 +126,52 @@ DEFAULT_STAR_PARAMS = {
     "chimMainSegmentMultNmax": None,          # 嵌合体主片段最大比对数
 }
 
-# FeatureCounts 默认参数 - 使用 Python 风格命名
+# FeatureCounts 默认参数 - 使用 Python 风格命名，与文档要求保持一致
 DEFAULT_FEATURECOUNTS_PARAMS = {
     # 基础参数
-    "T": 4,                                    # 默认线程数
-    "p": False,                                # 单端测序不需要配对检查
-    "B": False,                                # 不要求配对reads都比对
-    "C": False,                                # 不排除嵌合体reads
+    "-T": 4,                                   # 默认线程数
+    "-s": 0,                                   # 链特异性（0=无，1=正向，2=反向）
+    "-p": False,                               # 单端测序模式（False=单端，True=双端）
+    "-B": False,                               # 双端测序时不要求两端都比对
+    "-C": False,                               # 不排除嵌合体reads
     
-    # 特征类型和属性
-    "t": "exon",                               # 计数特征类型
-    "g": "gene_id",                            # 用于聚合的属性
+    # 特征类型和属性  
+    "-t": "exon",                              # 计数特征类型
+    "-g": "gene_id",                           # 用于聚合的属性
     
-    # 定量参数
-    "s": 0,                                    # 非链特异性文库
-    "Q": 10,                                   # 最低比对质量
-    "M": True,                                 # 计数多重比对reads
-    "O": True,                                 # 允许reads分配到重叠特征
-    "fraction": True,                          # 多重比对reads分数计数
+    # 定量策略参数
+    "-M": False,                               # 是否计数多重比对reads
+    "-O": False,                               # 是否允许重叠特征分配
+    "--fraction": False,                       # 是否使用分数计数模式
+    "-Q": 10,                                  # 最低比对质量阈值
     
-    # RNA-seq 特殊参数
-    "primary": False,                          # 计数所有比对（不仅主要比对）
-    "minOverlap": 10,                          # 最小重叠碱基数
-    "fracOverlap": 0.0,                        # 不要求最小重叠比例
-    "largestOverlap": False,                   # 不使用最大重叠分配策略
+    # 重叠控制参数
+    "--minOverlap": 1,                         # 最小重叠碱基数
+    "--fracOverlap": 0.0,                      # 最小重叠比例（0.0=不限制）
     
-    # 输出格式
-    "f": False,                                # 不按特征级别输出
-    "J": False,                                # 不计数剪接位点
-    "extraAttributes": None,                   # 不输出额外属性
+    # 输出控制
+    "-f": False,                               # 不按特征级别输出
+    "-J": False,                               # 不计数剪接位点
     
-    # 额外的高级参数
-    "featurecounts_cpus": None,                # Nextflow process.cpus
-    "a": None,                                 # 注释文件路径（通过Nextflow提供）
-    "F": None,                                 # 注释格式（GTF/SAF）
-    "R": None,                                 # 输出read分配信息
-    "readExtension5": None,                    # 5'端延伸长度
-    "readExtension3": None,                    # 3'端延伸长度
-    "read2pos": None,                          # Read2计数位置
-    "countReadPairs": None,                    # 是否计数read pairs
-    "ignoreDup": None,                         # 是否忽略重复reads
-    "splitOnly": None,                         # 只计数split alignment
-    "nonSplitOnly": None,                      # 只计数non-split alignment
-    "countSplitAlignmentsOnly": None,          # 计数split alignments
-    "byReadGroup": None,                       # 按read group计数
-    "donotsort": None,                         # 不排序（假定已排序）
+    # Nextflow集成参数
+    "featurecounts_cpus": None,                # Nextflow process.cpus（会映射到-T）
+    
+    # 高级参数（通常保持默认或根据需要调整）
+    "-a": None,                                # 注释文件路径（通过Nextflow提供）
+    "-F": None,                                # 注释格式（GTF/SAF，默认GTF）
+    "--primary": False,                        # 仅使用主要比对
+    "--ignoreDup": False,                      # 不忽略PCR重复
+    "--splitOnly": False,                      # 不限制只计数分割比对
+    "--nonSplitOnly": False,                   # 不限制只计数非分割比对
+    "--largestOverlap": False,                 # 不使用最大重叠策略
+    "--readShiftType": None,                   # reads位置偏移类型
+    "--readShiftSize": None,                   # reads位置偏移大小
+    "-R": None,                                # 输出read分配详情
+    "--readExtension5": None,                  # 5'端延伸长度
+    "--readExtension3": None,                  # 3'端延伸长度
+    "--read2pos": None,                        # Read2计数位置
+    "--countReadPairs": None,                  # 计数read pairs而非单个reads
+    "--donotsort": None,                       # 假设输入已排序（提高性能）
+    "--byReadGroup": None,                     # 按read group分别计数
+    "--extraAttributes": None,                 # 输出额外的特征属性
 }

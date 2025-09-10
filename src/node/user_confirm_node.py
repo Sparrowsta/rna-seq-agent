@@ -177,8 +177,9 @@ def _build_node_result(state: AgentState, decision, view) -> Dict[str, Any]:
 
 准备进入下一阶段..."""
 
-    # 构建返回字典
+    # 构建返回字典（success-first：确认节点总是放行成功；status 固定为 'confirm'）
     result = {
+        "success": True,
         # 从 prepare_node 继承并传递
         "nextflow_config": nextflow_config,
         "resource_config": resource_config,
@@ -188,7 +189,7 @@ def _build_node_result(state: AgentState, decision, view) -> Dict[str, Any]:
         "confirmation_message": confirmation_message,
         "user_decision": decision.decision,
         "response": decision_msg,
-        "status": decision.decision,
+        "status": "confirm",
         "execution_mode": decision.execution_mode or getattr(state, 'execution_mode', 'single'),
         
         # 进度信息
@@ -231,13 +232,14 @@ def _build_cancel_result(state: AgentState, decision_msg: str, user_choice: str)
 准备进入下一阶段..."""
     
     return {
+        "success": True,  # 放行成功 - UserConfirm节点总是成功
         "nextflow_config": nextflow_config,
         "resource_config": state.resource_config or {},
         "config_reasoning": config_reasoning,
         "confirmation_message": confirmation_message,
         "user_decision": "cancel",
         "response": decision_msg,
-        "status": "cancel",
+        "status": "confirm",  # 标准状态，不是cancel
         "execution_mode": getattr(state, 'execution_mode', 'single'),
         "completed_steps": getattr(state, 'completed_steps', []),
         "current_step": getattr(state, 'current_step', ''),

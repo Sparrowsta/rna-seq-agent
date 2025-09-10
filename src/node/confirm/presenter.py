@@ -147,23 +147,23 @@ def _build_param_sections(state: AgentState, nextflow_config: Dict[str, Any]) ->
     """构建参数对比区域列表"""
     sections = []
     
-    # FastP 参数对比
+    # FastP 参数对比（容错：若未声明qc_tool但存在参数同样显示）
     qc_tool = (nextflow_config.get('qc_tool') or '').lower()
-    if qc_tool == 'fastp':
+    if qc_tool == 'fastp' or (getattr(state, 'fastp_params', {}) or {}):
         fastp_section = _build_fastp_section(state)
         if fastp_section:
             sections.append(fastp_section)
     
-    # STAR 参数对比
+    # STAR 参数对比（容错）
     align_tool = (nextflow_config.get('align_tool') or '').lower()
-    if align_tool == 'star':
+    if align_tool == 'star' or (getattr(state, 'star_params', {}) or {}):
         star_section = _build_star_section(state)
         if star_section:
             sections.append(star_section)
     
-    # FeatureCounts 参数对比
+    # FeatureCounts 参数对比（容错）
     quant_tool = (nextflow_config.get('quant_tool') or '').lower()
-    if quant_tool == 'featurecounts':
+    if quant_tool == 'featurecounts' or (getattr(state, 'featurecounts_params', {}) or {}):
         fc_section = _build_featurecounts_section(state)
         if fc_section:
             sections.append(fc_section)
@@ -185,9 +185,11 @@ def _build_fastp_section(state: AgentState) -> Optional[Section]:
     modification_history = getattr(state, 'modification_history', []) or []
     user_mods = extract_user_modifications_from_history(modification_history, 'fastp')
     
-    # 优化记录
-    fastp_history = getattr(state, 'fastp_params_history', []) or []
-    opt_applied = extract_optimization_from_history(fastp_history)
+    # 优化记录：优先使用新字段 fastp_optimization_params；否则回退到历史
+    opt_applied = getattr(state, 'fastp_optimization_params', None)
+    if not opt_applied:
+        fastp_history = getattr(state, 'fastp_params_history', []) or []
+        opt_applied = extract_optimization_from_history(fastp_history)
     
     # 优化理由文本
     reasoning_text = getattr(state, 'fastp_optimization_suggestions', '') or ''
@@ -220,9 +222,11 @@ def _build_star_section(state: AgentState) -> Optional[Section]:
     modification_history = getattr(state, 'modification_history', []) or []
     user_mods = extract_user_modifications_from_history(modification_history, 'star')
     
-    # 优化记录
-    star_history = getattr(state, 'star_params_history', []) or []
-    opt_applied = extract_optimization_from_history(star_history)
+    # 优化记录：优先使用新字段 star_optimization_params；否则回退到历史
+    opt_applied = getattr(state, 'star_optimization_params', None)
+    if not opt_applied:
+        star_history = getattr(state, 'star_params_history', []) or []
+        opt_applied = extract_optimization_from_history(star_history)
     
     # 优化理由文本
     reasoning_text = getattr(state, 'star_optimization_suggestions', '') or ''
@@ -255,9 +259,11 @@ def _build_featurecounts_section(state: AgentState) -> Optional[Section]:
     modification_history = getattr(state, 'modification_history', []) or []
     user_mods = extract_user_modifications_from_history(modification_history, 'featurecounts')
     
-    # 优化记录
-    fc_history = getattr(state, 'featurecounts_params_history', []) or []
-    opt_applied = extract_optimization_from_history(fc_history)
+    # 优化记录：优先使用新字段 featurecounts_optimization_params；否则回退到历史
+    opt_applied = getattr(state, 'featurecounts_optimization_params', None)
+    if not opt_applied:
+        fc_history = getattr(state, 'featurecounts_params_history', []) or []
+        opt_applied = extract_optimization_from_history(fc_history)
     
     # 优化理由文本
     reasoning_text = getattr(state, 'featurecounts_optimization_suggestions', '') or ''

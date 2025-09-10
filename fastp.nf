@@ -79,7 +79,6 @@ process fastp_quality_control {
     tag "FastP质控: ${sample_id}"
     
     publishDir "${params.results_dir}/fastp/${sample_id}", mode: 'copy', pattern: "*.{html,json,fastq.gz}"
-    publishDir "${params.results_dir}/logs", mode: 'copy', pattern: "*.done"
     
     input:
     tuple val(sample_id), path(read1), path(read2)
@@ -87,7 +86,6 @@ process fastp_quality_control {
     output:
     tuple val(sample_id), path("${sample_id}*trimmed.fastq.gz"), emit: qc_reads, optional: true
     path "${sample_id}.fastp.*", emit: qc_reports, optional: true
-    path "${sample_id}.fastp.done", emit: status_file
     
     script:
     // 构建标准化fastp命令模板 - 硬编码最佳实践
@@ -150,7 +148,6 @@ process fastp_quality_control {
             --verbose
         
         echo "FastP质控完成: ${sample_id}"
-        touch ${sample_id}.fastp.done
         """
     } else if (read1 && read1.name != "NO_FILE") {
         // 单端测序 - 完整参数模板
@@ -201,7 +198,6 @@ process fastp_quality_control {
             --verbose
         
         echo "FastP质控完成: ${sample_id}"
-        touch ${sample_id}.fastp.done
         """
     } else {
         error "无效的FASTQ文件配置: sample_id=${sample_id}, read1=${read1?.name}, read2=${read2?.name}"
@@ -245,7 +241,6 @@ workflow.onComplete {
       - 质量过滤: ${params.quality_filtering}
       - 长度过滤: ${params.length_filtering}
     输出目录: ${params.results_dir}/fastp
-    日志目录: ${params.results_dir}/logs
     ================================================
     """
 }

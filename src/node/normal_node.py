@@ -56,6 +56,7 @@ async def normal_node(state: AgentState) -> Dict[str, Any]:
         user_requirements = structured_response.user_requirements
         
         return {
+            "success": True,
             "messages": result.get("messages", state.messages),
             "query_response": query_response,
             "user_requirements": user_requirements,
@@ -68,6 +69,7 @@ async def normal_node(state: AgentState) -> Dict[str, Any]:
         traceback.print_exc()
         
         return {
+            "success": False,
             "messages": state.messages,
             "query_response": f"抱歉，处理您的请求时出现错误: {str(e)}",
             "status": "error"
