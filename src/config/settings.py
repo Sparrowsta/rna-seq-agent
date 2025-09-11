@@ -58,7 +58,11 @@ class Settings(BaseModel):
     @property
     def genomes_config_path(self) -> Path:
         """基因组配置文件路径"""
-        return self.config_dir / "genomes.json"
+        # 新位置：genomes.json已移动到src目录下
+        if self.is_container_environment:
+            return Path("/src") / "genomes.json"
+        else:
+            return self.project_root / "src" / "genomes.json"
     
     @property
     def runtime_config_path(self) -> Path:

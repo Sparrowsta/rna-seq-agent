@@ -65,16 +65,12 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt && \
 # 10. 设置工作目录为/data，与数据映射一致
 WORKDIR /data
 
-# 11. 复制应用文件到根目录（应用与数据分离）
-COPY fastp.nf /
-COPY star.nf /
-COPY featurecounts.nf /
-COPY build_index.nf /
+# 11. 复制应用文件到对应目录（应用与数据分离）
 COPY main.py /
 COPY src/ /src/
 
 # 12. 复制静态配置文件到镜像
-COPY config/genomes.json /config/genomes.json
+# genomes.json已移动到src目录下，无需单独复制
 
 # data目录和.env文件将通过volume映射和环境变量传入
 

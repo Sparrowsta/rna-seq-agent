@@ -659,11 +659,11 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
             json.dump(nextflow_params, f, indent=2, ensure_ascii=False)
         
         # 构建Nextflow命令（兼容Docker与本地路径）
-        # 1) 优先使用项目根目录下的 fastp.nf（本地开发）
-        # 2) Docker镜像中 fastp.nf 位于根路径 '/'（见 Dockerfile COPY fastp.nf /）
+        # 1) 优先使用src/nextflow/目录下的 fastp.nf（本地开发）
+        # 2) Docker镜像中 fastp.nf 位于 /src/nextflow/（见 Dockerfile COPY）
         nf_candidates = [
-            config.settings.project_root / "fastp.nf",
-            Path("/fastp.nf")
+            config.settings.project_root / "src" / "nextflow" / "fastp.nf",
+            Path("/src/nextflow/fastp.nf")
         ]
         nextflow_script = None
         for cand in nf_candidates:
@@ -673,7 +673,7 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
         if nextflow_script is None:
             return {
                 "success": False,
-                "error": "未找到 fastp.nf 脚本，请检查容器内是否存在 /fastp.nf 或本地项目根目录",
+                "error": "未找到 fastp.nf 脚本，请检查容器内是否存在 /src/nextflow/fastp.nf 或本地src/nextflow目录",
                 "searched": [str(p) for p in nf_candidates]
             }
 
@@ -1198,8 +1198,8 @@ def build_star_index(
 
         # 定位 build_index.nf
         nf_candidates = [
-            tools_config.settings.project_root / "build_index.nf",
-            Path("/build_index.nf"),
+            tools_config.settings.project_root / "src" / "nextflow" / "build_index.nf",
+            Path("/src/nextflow/build_index.nf"),
         ]
         nextflow_script = None
         for cand in nf_candidates:
@@ -1209,7 +1209,7 @@ def build_star_index(
         if nextflow_script is None:
             return {
                 "success": False,
-                "error": "未找到 build_index.nf 脚本",
+                "error": "未找到 build_index.nf 脚本，请检查 /src/nextflow/build_index.nf 路径",
                 "searched": [str(p) for p in nf_candidates],
             }
 
@@ -1360,12 +1360,12 @@ def run_nextflow_star(
 
         # 6) 定位并执行 Nextflow
         nf_candidates = [
-            tools_config.settings.project_root / "star.nf",
-            Path("/star.nf"),
+            tools_config.settings.project_root / "src" / "nextflow" / "star.nf",
+            Path("/src/nextflow/star.nf"),
         ]
         nextflow_script = next((p for p in nf_candidates if p.exists()), None)
         if nextflow_script is None:
-            return {"success": False, "error": "未找到 star.nf 脚本", "searched": [str(p) for p in nf_candidates]}
+            return {"success": False, "error": "未找到 star.nf 脚本，请检查 /src/nextflow/star.nf 路径", "searched": [str(p) for p in nf_candidates]}
 
         print(f"执行STAR比对 - 参数文件: {params_file}")
         print(f"STAR索引: {nf_params['star_index']}")
@@ -1724,8 +1724,8 @@ def run_nextflow_featurecounts(
 
         # 定位 Nextflow 脚本
         nf_candidates = [
-            tools_config.settings.project_root / "featurecounts.nf",
-            Path("/featurecounts.nf"),
+            tools_config.settings.project_root / "src" / "nextflow" / "featurecounts.nf",
+            Path("/src/nextflow/featurecounts.nf"),
         ]
         nextflow_script = None
         for cand in nf_candidates:
@@ -1735,7 +1735,7 @@ def run_nextflow_featurecounts(
         if nextflow_script is None:
             return {
                 "success": False,
-                "error": "未找到 featurecounts.nf 脚本",
+                "error": "未找到 featurecounts.nf 脚本，请检查 /src/nextflow/featurecounts.nf 路径",
                 "searched": [str(p) for p in nf_candidates],
             }
 
