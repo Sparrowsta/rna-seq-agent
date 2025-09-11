@@ -52,6 +52,16 @@ async def normal_node(state: AgentState) -> Dict[str, Any]:
         # LangGraph的create_react_agent使用response_format时，结构化输出在result["structured_response"]中
         structured_response = result.get("structured_response")
         
+        if not structured_response:
+            # 如果没有结构化响应，返回失败状态
+            return {
+                "success": False,
+                "response": "❌ LLM调用失败，无法解析用户请求。请重试或检查网络连接。",
+                "query_response": "LLM调用失败",
+                "user_requirements": {},
+                "routing_decision": "normal"  # 保持在normal状态让用户重试
+            }
+        
         query_response = structured_response.query_response
         user_requirements = structured_response.user_requirements
         

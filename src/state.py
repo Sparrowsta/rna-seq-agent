@@ -1,7 +1,6 @@
 
-from typing import List, Dict, Any, Union, Optional, Literal
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
-from datetime import datetime
 from .config.default_tool_params import DEFAULT_FASTP_PARAMS, DEFAULT_STAR_PARAMS, DEFAULT_FEATURECOUNTS_PARAMS
 
 # ==================== 统一Agent状态 ====================
@@ -92,6 +91,17 @@ class AgentState(BaseModel):
     rna_seq_complete: bool = Field(default=False, description="RNA-seq流程完整标志")
 
 # ==================== 节点响应模型 - 用于特定节点的结构化输出 ====================
+
+# LLM 智能分析结构化输出模型
+class LLMAnalysisModel(BaseModel):
+    """LLM 智能分析的结构化输出模型"""
+    global_summary: str  # 3-5句面向非技术读者的总结
+    key_findings: List[str]  # 每条包含具体数据的关键发现
+    per_sample_flags: List[Dict[str, Any]]  # sample_id, issues, severity
+    recommendations: List[Dict[str, str]]  # type, title, detail
+    risks: List[str]  # 潜在风险与注意事项
+    report_md: Optional[str] = None  # 可选的额外Markdown片段
+    debug_notes: Optional[List[str]] = None  # 调试模式时的补充信息
 
 class NormalResponse(BaseModel):
     """Normal节点的精简响应格式 - 兼容create_react_agent工具响应"""

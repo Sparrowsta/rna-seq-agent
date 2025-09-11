@@ -997,8 +997,6 @@ def download_genome_assets(genome_id: str, force: bool = False) -> Dict[str, Any
             }
         
         config = genomes_config[genome_id]
-        species = config.get("species", "unknown")
-        version = config.get("version", "unknown")
         fasta_url = config.get("fasta_url")
         gtf_url = config.get("gtf_url")
         fasta_relative = config.get("fasta_path")
@@ -1267,8 +1265,7 @@ def run_nextflow_star(
     star_params: Dict[str, Any],
     fastp_results: Dict[str, Any],
     genome_info: Dict[str, Any],
-    results_timestamp: Optional[str] = None,
-    base_results_dir: Optional[str] = None,
+    results_timestamp: Optional[str] = None
 ) -> Dict[str, Any]:
     """执行 STAR 比对（精简版）
 
@@ -1863,38 +1860,75 @@ def parse_featurecounts_metrics(results_directory: str) -> Dict[str, Any]:
         }
         
         try:
+            # 规范化样本ID的内部工具：
+            # - 兼容列名为BAM文件路径/文件名/带STAR后缀的多种情况
+            # - 目标：与样本ID（如 SRRxxxx、样本目录名）对齐
+            def _normalize_sample_id(name: str) -> str:
+                s = str(name or "").strip()
+                if not s:
+                    return s
+                # 去除可能的路径前缀（同时支持 / 与 \\ 分隔符）
+                if "/" in s:
+                    s = s.split("/")[-1]
+                if "\\" in s:
+                    s = s.split("\\")[-1]
+                # 去除常见扩展名
+                for ext in [".bam", ".cram", ".sam", ".txt"]:
+                    if s.endswith(ext):
+                        s = s[: -len(ext)]
+                        break
+                # 去除STAR常见后缀（点/下划线变体）
+                star_suffixes = [
+                    ".Aligned.sortedByCoord.out",
+                    ".Aligned.out",
+                    ".Aligned",
+                    "_Aligned.sortedByCoord.out",
+                    "_Aligned.out",
+                    "_Aligned",
+                ]
+                for suf in star_suffixes:
+                    if s.endswith(suf):
+                        s = s[: -len(suf)]
+                        break
+                return s
+
             with open(summary_file, "r", encoding="utf-8", errors="ignore") as f:
                 lines = f.readlines()
                 
                 if len(lines) < 2:
                     return {"success": False, "error": "汇总文件格式错误"}
                 
-                # 解析标题行获取样本名称
+                # 解析标题行获取样本名称（用于回退）
                 header = lines[0].strip().split('\t')
                 if len(header) < 2:
                     return {"success": False, "error": "汇总文件标题行格式错误"}
-                
-                sample_names = header[1:]  # 第一列是Status，后面是样本名（通常为输入BAM的文件名）
-                sample_count = len(sample_names)
-                
-                # 初始化每个样本的指标
-                for sample_name in sample_names:
-                    # 规范化样本ID：
-                    # - 若列名以 .bam 结尾，使用去扩展名的basename
-                    # - 若列名包含路径但不带前缀，使用其父目录名（即样本子目录名）
-                    from pathlib import Path as _P
-                    sid = sample_name
-                    try:
-                        p = _P(sample_name)
-                        if sample_name.endswith('.bam'):
-                            sid = p.stem
-                        elif '/' in sample_name or '\\' in sample_name:
-                            sid = p.parent.name or p.name
-                        else:
-                            sid = sample_name.replace('.Aligned.sortedByCoord.out.bam', '')
-                    except Exception:
-                        sid = sample_name
 
+                # 优先从参数文件读取样本ID顺序（与执行输入一致）
+                sample_ids: List[str] = []
+                try:
+                    params_path = results_path / "featurecounts_params.json"
+                    if params_path.exists():
+                        with open(params_path, "r", encoding="utf-8") as pf:
+                            pf_json = json.load(pf)
+                        input_bam_list = pf_json.get("input_bam_list")
+                        if isinstance(input_bam_list, str):
+                            input_bam_list = json.loads(input_bam_list)
+                        if isinstance(input_bam_list, list):
+                            for ent in input_bam_list:
+                                sid = ent.get("sample_id") or _normalize_sample_id(ent.get("bam_file", ""))
+                                sample_ids.append(_normalize_sample_id(sid))
+                except Exception:
+                    # 若读取或解析失败，忽略并回退到header
+                    sample_ids = []
+
+                # 校验样本数是否与汇总列数一致；否则回退到header列名
+                if not sample_ids or len(sample_ids) != (len(header) - 1):
+                    sample_names = header[1:]  # 第一列是Status，后面是样本名（通常为输入BAM的文件名）
+                    sample_ids = [_normalize_sample_id(nm) for nm in sample_names]
+
+                # 初始化每个样本的指标
+                for sid in sample_ids:
+                    
                     sample_metrics.append({
                         "sample_id": sid,
                         "assigned": 0,
@@ -1969,11 +2003,15 @@ def parse_featurecounts_metrics(results_directory: str) -> Dict[str, Any]:
         except Exception:
             gene_count = 0
         
+        # 重要文件路径（若存在合并矩阵，则优先提供）
+        matrix_file = fc_dir / "merged_counts_matrix.txt"
+
         return {
             "success": True,
             "results_directory": results_directory,
             "summary_file": str(summary_file),
             "counts_file": str(counts_file),
+            "matrix_path": str(matrix_file) if matrix_file.exists() else str(counts_file),
             "sample_count": len(sample_metrics),
             "gene_count": gene_count,
             "sample_metrics": sample_metrics,
@@ -1992,3 +2030,341 @@ def parse_featurecounts_metrics(results_directory: str) -> Dict[str, Any]:
             "success": False,
             "error": f"解析FeatureCounts结果失败: {str(e)}"
         }
+
+
+# ==================== Analysis 报告生成工具函数 ====================
+
+@tool
+def write_analysis_markdown(
+    analysis_report: Dict[str, Any],
+    output_dir: Optional[str] = None,
+    filename: Optional[str] = None,
+    append_llm_section: bool = True
+) -> Dict[str, Any]:
+    """将结构化的 analysis_report 渲染为可读的 Markdown 摘要文件
+    
+    Args:
+        analysis_report: 按设计文档第4节JSON结构约定生成的分析报告
+        output_dir: 目标目录，若为空则使用 context.results_dir/reports/timestamp
+        filename: 文件名，默认 analysis_summary.md
+        append_llm_section: 是否追加LLM洞察到文末
+    
+    Returns:
+        Dict: 包含成功状态、文件路径、字节数等信息
+    """
+    try:
+        from .config import get_tools_config
+        tools_config = get_tools_config()
+        
+        # 参数验证
+        if not analysis_report or not isinstance(analysis_report, dict):
+            return {
+                "success": False,
+                "error": "analysis_report 参数无效或为空"
+            }
+        
+        # 确定输出目录和文件名
+        filename = filename or "analysis_summary.md"
+        
+        if output_dir:
+            target_dir = Path(output_dir)
+        else:
+            # 从report中获取目录信息
+            context = analysis_report.get("context", {})
+            results_dir = context.get("results_dir")
+            timestamp = context.get("timestamp")
+            
+            if results_dir and timestamp:
+                target_dir = Path(results_dir) / "reports" / timestamp
+            else:
+                # fallback到默认报告目录
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                target_dir = tools_config.reports_dir / timestamp
+        
+        # 创建目录
+        target_dir.mkdir(parents=True, exist_ok=True)
+        output_path = target_dir / filename
+        
+        # 渲染Markdown内容
+        markdown_content = _render_analysis_markdown(analysis_report, append_llm_section)
+        
+        # 写入文件
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(markdown_content)
+        
+        # 计算统计信息
+        file_size = output_path.stat().st_size
+        line_count = markdown_content.count('\n') + 1
+        
+        return {
+            "success": True,
+            "path": str(output_path.absolute()),
+            "bytes": file_size,
+            "lines": line_count,
+            "used_output_dir": str(target_dir),
+            "used_filename": filename
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"生成Markdown报告失败: {str(e)}"
+        }
+
+
+def _render_analysis_markdown(report: Dict[str, Any], append_llm: bool = True) -> str:
+    """渲染分析报告为Markdown格式的辅助函数"""
+    
+    def _safe_get(obj: Dict, *keys, default="-"):
+        """安全获取嵌套字典值"""
+        for key in keys:
+            if isinstance(obj, dict) and key in obj:
+                obj = obj[key]
+            else:
+                return default
+        return obj if obj is not None else default
+    
+    def _format_percent(value, default="-"):
+        """格式化百分比"""
+        if value is None or value == default:
+            return default
+        try:
+            return f"{float(value) * 100:.1f}%" if 0 <= float(value) <= 1 else f"{float(value):.1f}%"
+        except (ValueError, TypeError):
+            return default
+    
+    def _format_number(value, default="-"):
+        """格式化数字"""
+        if value is None:
+            return default
+        try:
+            if isinstance(value, float):
+                return f"{value:,.1f}" if value >= 1000 else f"{value:.3f}"
+            else:
+                return f"{int(value):,}"
+        except (ValueError, TypeError):
+            return default
+    
+    # 获取报告各部分
+    pipeline = report.get("pipeline", {})
+    context = report.get("context", {})
+    metrics = report.get("metrics", {})
+    per_sample = report.get("per_sample", [])
+    summary = report.get("summary", {})
+    files = report.get("files", {})
+    recommendations = report.get("recommendations", [])
+    llm_output = report.get("llm", report.get("llm_output", {}))
+    
+    # 开始构建Markdown
+    lines = []
+    
+    # 1) 标题与基本信息
+    steps_str = " → ".join(pipeline.get("steps", []))
+    lines.extend([
+        f"# RNA-seq 分析报告",
+        "",
+        f"**分析流程**: {steps_str}",
+        f"**物种**: {pipeline.get('species', '未知')}",
+        f"**基因组版本**: {pipeline.get('genome_version', '未知')}",
+        f"**样本数量**: {context.get('sample_count', 0)}",
+        f"**分析时间**: {context.get('timestamp', '未知')}",
+        f"**结果目录**: `{context.get('results_dir', '未知')}`",
+        ""
+    ])
+    
+    # 2) 总体结论与关键发现
+    status = summary.get("status", "UNKNOWN")
+    status_emoji = {"PASS": "✅", "WARN": "⚠️", "FAIL": "❌"}.get(status, "❓")
+    
+    samples_info = summary.get("samples", {})
+    lines.extend([
+        f"## {status_emoji} 总体结论: {status}",
+        "",
+        f"**样本统计**:",
+        f"- 通过: {samples_info.get('pass', 0)} 个",
+        f"- 警告: {samples_info.get('warn', 0)} 个", 
+        f"- 失败: {samples_info.get('fail', 0)} 个",
+        ""
+    ])
+    
+    key_findings = summary.get("key_findings", [])
+    if key_findings:
+        lines.extend([
+            f"**关键发现**:",
+            *[f"- {finding}" for finding in key_findings],
+            ""
+        ])
+    
+    # 3) 各步骤总体指标
+    lines.append("## 📊 流程步骤指标")
+    lines.append("")
+    
+    # FastP 指标
+    fastp_metrics = metrics.get("fastp", {}).get("overall", {})
+    if fastp_metrics:
+        lines.extend([
+            "### FastP 质量控制",
+            f"- 平均Q30质量: {_format_percent(fastp_metrics.get('average_q30_rate'))}",
+            f"- 读数通过率: {_format_percent(fastp_metrics.get('overall_read_pass_rate'))}",
+            f"- 碱基通过率: {_format_percent(fastp_metrics.get('overall_base_pass_rate'))}",
+            f"- 总reads处理: {_format_number(fastp_metrics.get('total_reads_before'))} → {_format_number(fastp_metrics.get('total_reads_after'))}",
+            ""
+        ])
+    
+    # STAR 指标
+    star_metrics = metrics.get("star", {}).get("overall", {})
+    if star_metrics:
+        lines.extend([
+            "### STAR 序列比对",
+            f"- 总体比对率: {_format_percent(star_metrics.get('overall_mapping_rate'))}",
+            f"- 唯一比对率: {_format_percent(star_metrics.get('overall_unique_mapping_rate'))}",
+            f"- 多重比对率: {_format_percent(star_metrics.get('overall_multi_mapping_rate'))}",
+            f"- 平均错配率: {_format_percent(star_metrics.get('average_mismatch_rate'))}",
+            ""
+        ])
+    
+    # FeatureCounts 指标  
+    fc_metrics = metrics.get("featurecounts", {}).get("overall", {})
+    if fc_metrics:
+        lines.extend([
+            "### FeatureCounts 基因定量",
+            f"- 整体分配率: {_format_percent(fc_metrics.get('overall_assignment_rate'))}",
+            f"- 总分配reads: {_format_number(fc_metrics.get('total_assigned'))}",
+            f"- 未分配(无特征): {_format_number(fc_metrics.get('total_unassigned_nofeatures'))}",
+            f"- 未分配(歧义): {_format_number(fc_metrics.get('total_unassigned_ambiguity'))}",
+            ""
+        ])
+    
+    # 4) 样本级摘要 - 按健康度排序
+    if per_sample:
+        lines.extend([
+            "## 🔬 样本详情",
+            "",
+            "| 样本ID | 健康度 | Q30 | 比对率 | 分配率 | 备注 |",
+            "|--------|--------|-----|--------|--------|------|"
+        ])
+        
+        # 按健康度排序 (FAIL > WARN > PASS)
+        health_order = {"FAIL": 0, "WARN": 1, "PASS": 2}
+        sorted_samples = sorted(per_sample, key=lambda x: health_order.get(x.get("health", "UNKNOWN"), 3))
+        
+        for sample in sorted_samples:
+            sid = sample.get("sample_id", "")
+            health = sample.get("health", "")
+            health_emoji = {"PASS": "✅", "WARN": "⚠️", "FAIL": "❌"}.get(health, "❓")
+            
+            # 提取关键指标
+            fastp_data = sample.get("fastp", {})
+            star_data = sample.get("star", {})
+            fc_data = sample.get("featurecounts", {})
+            
+            q30 = _format_percent(fastp_data.get("q30_after"))
+            mapping = _format_percent(star_data.get("mapping_rate"))
+            assignment = _format_percent(fc_data.get("assignment_rate"))
+            
+            notes = sample.get("notes", [])
+            notes_str = ", ".join(notes[:2]) if notes else "-"
+            if len(notes) > 2:
+                notes_str += "..."
+                
+            lines.append(f"| {sid} | {health_emoji} {health} | {q30} | {mapping} | {assignment} | {notes_str} |")
+        
+        lines.append("")
+    
+    # 5) 重要文件
+    matrix_path = files.get("matrix_path") or _safe_get(fc_metrics, "matrix_path")
+    report_json = files.get("report_json")
+    
+    if matrix_path or report_json:
+        lines.extend([
+            "## 📁 重要文件",
+            ""
+        ])
+        if matrix_path:
+            lines.append(f"- **计数矩阵**: `{matrix_path}`")
+        if report_json:
+            lines.append(f"- **详细报告**: `{report_json}`")
+        lines.append("")
+    
+    # 6) 建议与后续步骤
+    if recommendations:
+        lines.extend([
+            "## 💡 建议与后续步骤",
+            ""
+        ])
+        
+        for rec in recommendations:
+            rec_type = rec.get("type", "")
+            title = rec.get("title", "")
+            detail = rec.get("detail", "")
+            
+            if rec_type == "action":
+                lines.append(f"### 🔧 {title}")
+            elif rec_type == "next":
+                lines.append(f"### 📈 {title}")
+            else:
+                lines.append(f"### {title}")
+            
+            lines.extend([f"{detail}", ""])
+    
+    # 7) LLM 洞察 (可选)
+    if append_llm and llm_output:
+        lines.extend([
+            "## 🤖 智能分析洞察",
+            ""
+        ])
+        
+        global_summary = llm_output.get("global_summary")
+        if global_summary:
+            lines.extend([
+                "### 总体评估",
+                global_summary,
+                ""
+            ])
+        
+        llm_findings = llm_output.get("key_findings", [])
+        if llm_findings:
+            lines.extend([
+                "### 关键发现",
+                *[f"- {finding}" for finding in llm_findings],
+                ""
+            ])
+        
+        per_sample_flags = llm_output.get("per_sample_flags", [])
+        if per_sample_flags:
+            lines.extend([
+                "### 样本级问题",
+                ""
+            ])
+            for flag in per_sample_flags:
+                sid = flag.get("sample_id", "")
+                issues = flag.get("issues", [])
+                severity = flag.get("severity", "")
+                if issues:
+                    lines.append(f"**{sid}** ({severity}): " + ", ".join(issues))
+            lines.append("")
+        
+        risks = llm_output.get("risks", [])
+        if risks:
+            lines.extend([
+                "### ⚠️ 潜在风险",
+                *[f"- {risk}" for risk in risks],
+                ""
+            ])
+        
+        # 如果有额外的LLM生成的Markdown片段
+        report_md = llm_output.get("report_md")
+        if report_md:
+            lines.extend([
+                "### 补充分析",
+                report_md,
+                ""
+            ])
+    
+    # 生成时间戳
+    lines.extend([
+        "---",
+        f"*报告生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*"
+    ])
+    
+    return "\n".join(lines)
