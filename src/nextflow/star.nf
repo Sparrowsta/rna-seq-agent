@@ -43,16 +43,6 @@ if (!params.sample_inputs) error "Missing required parameter: sample_inputs"
 if (!params.star_index) error "Missing required parameter: star_index"
 if (!params.results_dir) error "Missing required parameter: results_dir"
 
-log.info """
-=================================
-STAR RNA-seq 比对流水线
-=================================
-样本输入信息: ${params.sample_inputs}
-STAR索引目录: ${params.star_index}
-结果目录: ${params.results_dir}
-工作目录: ${params.work_dir}
-=================================
-"""
 
 // STAR比对进程
 process STAR_ALIGN {

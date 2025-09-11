@@ -21,16 +21,6 @@ if (!params.genome_fasta) error "Missing required parameter: genome_fasta"
 if (!params.genome_gtf) error "Missing required parameter: genome_gtf"
 if (!params.star_index_dir) error "Missing required parameter: star_index_dir"
 
-log.info """
-=================================
-STAR 索引构建流水线
-=================================
-基因组FASTA: ${params.genome_fasta}
-基因组GTF: ${params.genome_gtf}
-索引输出目录: ${params.star_index_dir}
-sjdbOverhang: ${params.sjdb_overhang}
-=================================
-"""
 
 // STAR索引构建进程
 process BUILD_STAR_INDEX {
@@ -45,20 +35,22 @@ process BUILD_STAR_INDEX {
     
     script:
     """
-    mkdir -p star_index_temp
+    # 获取输入文件的完整路径，避免链接冲突
+    FASTA_FILE=\$(readlink -f ${genome_fasta})
+    GTF_FILE=\$(readlink -f ${genome_gtf})
     
+    # 清理当前目录的输入文件软链接，让STAR可以直接使用当前目录
+    rm -f ${genome_fasta} ${genome_gtf}
+    
+    # STAR索引构建 - 直接在当前目录生成索引文件  
     micromamba run -n align_env STAR \\
         --runMode genomeGenerate \\
         --runThreadN ${params.runThreadN} \\
-        --genomeDir star_index_temp \\
-        --genomeFastaFiles ${genome_fasta} \\
-        --sjdbGTFfile ${genome_gtf} \\
+        --genomeDir . \\
+        --genomeFastaFiles \$FASTA_FILE \\
+        --sjdbGTFfile \$GTF_FILE \\
         --sjdbOverhang ${params.sjdb_overhang} \\
         --limitGenomeGenerateRAM ${params.limitGenomeGenerateRAM}
-    
-    # 移动索引文件到当前目录
-    mv star_index_temp/* .
-    rmdir star_index_temp
     
     # 创建完成标记
     echo "STAR index built at \$(date)" > Log.out

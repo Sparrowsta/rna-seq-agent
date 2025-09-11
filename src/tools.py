@@ -653,8 +653,10 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
         nextflow_params["results_dir"] = str(results_dir)
         nextflow_params["data"] = base_data_path
         
-        # 创建Nextflow参数文件
-        params_file = work_dir / "fastp_params.json"
+        # 创建Nextflow参数文件 - 保存到fastp子目录中
+        fastp_dir = results_dir / "fastp"
+        fastp_dir.mkdir(parents=True, exist_ok=True)
+        params_file = fastp_dir / "fastp_params.json"
         with open(params_file, 'w', encoding='utf-8') as f:
             json.dump(nextflow_params, f, indent=2, ensure_ascii=False)
         
@@ -1111,14 +1113,19 @@ def build_star_index(
     sjdb_overhang: Optional[int] = None,
     runThreadN: Optional[int] = None,
     force_rebuild: bool = False,
+    results_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """构建STAR基因组索引（使用 build_index.nf）
+    
+    主要在RNA-seq分析流程中自动调用，当系统检测到缺少STAR索引时触发。
+    参数文件统一保存到results/star目录，与其他STAR相关文件放在一起。
 
     Args:
         genome_id: 基因组标识，用于定位FASTA和GTF文件
         sjdb_overhang: 剪接位点overhang（默认用 DEFAULT_STAR_PARAMS 或 100）
         runThreadN: 线程数（默认用 DEFAULT_STAR_PARAMS 或 4）
         force_rebuild: 若索引目录已存在是否强制重建
+        results_dir: 分析结果目录，参数文件保存到results/star/子目录
 
     Returns:
         Dict: 执行结果（包含 index_dir/stdout/stderr/skipped 等）
@@ -1190,7 +1197,17 @@ def build_star_index(
             "limitGenomeGenerateRAM": 32000000000,
         }
 
-        params_file = temp_dir / "build_index_params.json"
+        # 创建参数文件 - 统一保存到results/star目录（与star_params在一起）
+        if results_dir:
+            results_path = Path(results_dir)
+            star_subdir = results_path / "star"
+            star_subdir.mkdir(parents=True, exist_ok=True)
+            params_file = star_subdir / "build_index_params.json"
+        else:
+            # 罕见的独立使用情况，仍然保存到基因组star目录
+            star_dir = index_dir.parent / "star"
+            star_dir.mkdir(parents=True, exist_ok=True)
+            params_file = star_dir / f"build_index_params_{timestamp}.json"
         with open(params_file, "w", encoding="utf-8") as f:
             json.dump(nf_params, f, indent=2, ensure_ascii=False)
 
@@ -1351,7 +1368,10 @@ def run_nextflow_star(
             **cleaned_params,
         }
 
-        params_file = results_dir / "star_params.json"
+        # 保存参数文件到star子目录
+        star_dir = results_dir / "star"
+        star_dir.mkdir(parents=True, exist_ok=True)
+        params_file = star_dir / "star_params.json"
         with open(params_file, "w", encoding="utf-8") as f:
             json.dump(nf_params, f, indent=2, ensure_ascii=False)
 
@@ -1715,7 +1735,10 @@ def run_nextflow_featurecounts(
             **mapped,
         }
 
-        params_file = results_dir / "featurecounts_params.json"
+        # 保存参数文件到featurecounts子目录
+        fc_dir = results_dir / "featurecounts"
+        fc_dir.mkdir(parents=True, exist_ok=True)
+        params_file = fc_dir / "featurecounts_params.json"
         with open(params_file, "w", encoding="utf-8") as f:
             json.dump(nf_params, f, indent=2, ensure_ascii=False)
 
@@ -1906,7 +1929,7 @@ def parse_featurecounts_metrics(results_directory: str) -> Dict[str, Any]:
                 # 优先从参数文件读取样本ID顺序（与执行输入一致）
                 sample_ids: List[str] = []
                 try:
-                    params_path = results_path / "featurecounts_params.json"
+                    params_path = results_path / "featurecounts" / "featurecounts_params.json"
                     if params_path.exists():
                         with open(params_path, "r", encoding="utf-8") as pf:
                             pf_json = json.load(pf)

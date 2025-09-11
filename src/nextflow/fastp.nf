@@ -226,33 +226,3 @@ workflow {
     fastp_quality_control(fastq_samples_ch)
 }
 
-workflow.onComplete {
-    log.info """
-    ================================================
-    FastP质控流水线完成！
-    ================================================
-    执行时间: ${workflow.duration}
-    成功: ${workflow.success}
-    处理样本数: ${params.sample_groups.size()}
-    使用参数:
-      - 质量阈值: Q${params.qualified_quality_phred}
-      - 最小长度: ${params.length_required}bp  
-      - Adapter修剪: ${params.adapter_trimming}
-      - 质量过滤: ${params.quality_filtering}
-      - 长度过滤: ${params.length_filtering}
-    输出目录: ${params.results_dir}/fastp
-    ================================================
-    """
-}
-
-workflow.onError {
-    log.error """
-    ================================================
-    FastP质控流水线执行失败！
-    ================================================
-    错误信息: ${workflow.errorMessage}
-    执行时间: ${workflow.duration}
-    处理样本数: ${params.sample_groups.size()}
-    ================================================
-    """
-}

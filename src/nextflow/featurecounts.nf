@@ -33,16 +33,6 @@ if (!params.input_bam_list) error "Missing required parameter: input_bam_list"
 if (!params.gtf_file) error "Missing required parameter: gtf_file"
 if (!params.results_dir) error "Missing required parameter: results_dir"
 
-log.info """
-=================================
-FeatureCounts 基因定量流水线
-=================================
-样本输入(JSON): ${params.input_bam_list}
-GTF注释文件: ${params.gtf_file}
-结果目录: ${params.results_dir}
-工作目录: ${params.work_dir}
-=================================
-"""
 
 // ---------------- 进程：一次性处理全部样本 ----------------
 process FEATURECOUNTS_ALL {
@@ -111,25 +101,3 @@ workflow {
     FEATURECOUNTS_ALL(bam_files_ch, gtf_file_ch, sample_ids_ch)
 }
 
-workflow.onComplete {
-    log.info """
-    ================================================
-    FeatureCounts定量完成！
-    ================================================
-    执行时间: ${workflow.duration}
-    成功: ${workflow.success}
-    输出目录: ${params.results_dir}/featurecounts
-    ================================================
-    """
-}
-
-workflow.onError {
-    log.error """
-    ================================================
-    FeatureCounts流水线执行失败！
-    ================================================
-    错误信息: ${workflow.errorMessage}
-    执行时间: ${workflow.duration}
-    ================================================
-    """
-}
