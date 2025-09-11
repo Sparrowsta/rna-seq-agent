@@ -2,10 +2,9 @@
 Modify Node - 智能配置修改节点
 负责解析用户修改需求并更新所有相关配置参数
 """
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from datetime import datetime
 from pydantic import BaseModel, Field
-from langchain_core.messages import HumanMessage, SystemMessage
 from ..state import AgentState
 from ..core import get_shared_llm
 import json
@@ -24,6 +23,14 @@ class ModifyRequest(BaseModel):
     fastp_changes: Dict[str, Any] = Field(
         default={}, 
         description="FastP参数修改：quality_threshold, length_required, adapter_trimming等"
+    )
+    star_changes: Dict[str, Any] = Field(
+        default={},
+        description="STAR参数修改：outFilterMultimapNmax, twopassMode, quantMode等STAR特有参数。当用户明确提到STAR或这些参数时必须使用此字段！"
+    )
+    featurecounts_changes: Dict[str, Any] = Field(
+        default={},
+        description="FeatureCounts参数修改：-s, -p, -M, -O, -Q等FeatureCounts特有参数。当用户明确提到FeatureCounts或这些参数时必须使用此字段！"
     )
     modification_reason: str = Field(
         default="", 
@@ -63,16 +70,27 @@ async def modify_node(state: AgentState) -> Dict[str, Any]:
     # 获取当前配置
     current_nextflow = state.nextflow_config or {}
     current_resource = state.resource_config or {}
-    current_fastp = state.fastp_params or {}  # 使用简化的 fastp_params
+    current_fastp = state.fastp_params or {}
+    current_star = state.star_params or {}
+    current_featurecounts = state.featurecounts_params or {}
     
     print(f"\n📝 用户修改需求: {raw_input}")
     print(f"\n📋 当前配置概览:")
     print(f"   - Nextflow配置: {len(current_nextflow)} 项")
     print(f"   - 资源配置: {len(current_resource)} 个进程")
     print(f"   - FastP参数: {len(current_fastp)} 项")
+    print(f"   - STAR参数: {len(current_star)} 项")
+    print(f"   - FeatureCounts参数: {len(current_featurecounts)} 项")
     
     # 构建LLM提示
     system_prompt = """你是RNA-seq分析配置专家。请解析用户的修改需求，将其转换为具体的参数修改。
+
+‼️ **必须遵守的字段选择规则**：
+1. 如果用户提到"STAR"、"outFilterMultimapNmax"、"twopassMode"等STAR相关参数 → 使用star_changes字段
+2. 如果用户提到"FeatureCounts"、"-s"、"-p"、"-M"、"-Q"等FeatureCounts相关参数 → 使用featurecounts_changes字段
+3. 如果用户提到"FastP"、"qualified_quality_phred"、"length_required"等FastP相关参数 → 使用fastp_changes字段
+
+‼️ **绝对禁止**：不要说参数"不在配置范围内"！用户当前提供了完整的STAR和FeatureCounts参数，你必须使用对应的字段！
 
 严格要求：请使用下方【精确键名】返回修改，禁止使用任何别名或同义词；布尔值请使用 true/false，数值使用数字。
 
@@ -96,7 +114,31 @@ async def modify_node(state: AgentState) -> Dict[str, Any]:
 - correction, overlap_len_require, overlap_diff_limit, overlap_diff_percent_limit,
 - overrepresentation_analysis, overrepresentation_sampling
 
-请分析用户需求，返回需要修改的参数。只修改用户明确要求的部分，保持其他配置不变，并严格使用上述精确键名。
+【STAR参数（键名必须精确）】
+- outSAMtype, outSAMunmapped, outSAMattributes,
+- outFilterMultimapNmax, alignSJoverhangMin, alignSJDBoverhangMin, outFilterMismatchNmax, outFilterMismatchNoverReadLmax,
+- alignIntronMin, alignIntronMax, alignMatesGapMax, quantMode, twopassMode,
+- limitBAMsortRAM, outBAMsortingThreadN, genomeLoad, outFileNamePrefix,
+- readFilesCommand, outReadsUnmapped, outFilterIntronMotifs, outSAMstrandField,
+- outFilterType, sjdbGTFfile, sjdbOverhang, chimSegmentMin, chimOutType, chimMainSegmentMultNmax
+
+【FeatureCounts参数（键名必须精确）】
+- -s, -p, -B, -C, -t, -g, -M, -O, --fraction, -Q,
+- --minOverlap, --fracOverlap, -f, -J,
+- -a, -F, --primary, --ignoreDup, --splitOnly, --nonSplitOnly, --largestOverlap,
+- --readShiftType, --readShiftSize, -R, --readExtension5, --readExtension3,
+- --read2pos, --countReadPairs, --donotsort, --byReadGroup, --extraAttributes
+
+⚠️ **关键参数选择规则**：
+1. **质量相关参数** → 使用 fastp_changes：如"质量阈值"、"qualified_quality_phred"、"length_required"
+2. **比对相关参数** → 使用 star_changes：如"多重比对"、"两遍模式"、"outFilterMultimapNmax"、"twopassMode"  
+3. **计数相关参数** → 使用 featurecounts_changes：如"链特异性"、"双端模式"、"-s"、"-p"、"-M"
+4. **线程/CPU资源** → 使用 resource_changes：如"线程数"、"CPU核心"、"runThreadN"、"-T"参数
+5. **流程配置** → 使用 nextflow_changes：物种、基因组版本、工具选择
+
+⚠️ **重要提醒**：用户明确提到具体工具参数时，必须使用对应的工具参数字段！
+
+请分析用户需求，优先使用工具专用参数字段，返回需要修改的参数。只修改用户明确要求的部分，保持其他配置不变，并严格使用上述精确键名。
 """
 
     user_prompt = f"""当前配置状态：
@@ -110,6 +152,12 @@ Nextflow配置：
 FastP参数：
 {json.dumps(current_fastp, indent=2, ensure_ascii=False)}
 
+STAR参数：
+{json.dumps(current_star, indent=2, ensure_ascii=False)}
+
+FeatureCounts参数：
+{json.dumps(current_featurecounts, indent=2, ensure_ascii=False)}
+
 用户修改需求：
 {raw_input}
 
@@ -121,9 +169,10 @@ FastP参数：
         llm = get_shared_llm()
         llm_with_structure = llm.with_structured_output(ModifyRequest)
         
+        # 构建LangGraph标准消息格式
         messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt)
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
         ]
         
         print(f"\n🤖 正在解析修改需求...")
@@ -133,6 +182,8 @@ FastP参数：
         updated_nextflow = current_nextflow.copy()
         updated_resource = current_resource.copy()
         updated_fastp = current_fastp.copy()
+        updated_star = current_star.copy()
+        updated_featurecounts = current_featurecounts.copy()
         
         # 应用Nextflow配置修改
         if modify_request.nextflow_changes:
@@ -195,6 +246,54 @@ FastP参数：
                 updated_fastp[key] = value
                 print(f"   - {key}: {old_value} → {value}")
         
+        # 应用STAR参数修改
+        if modify_request.star_changes:
+            print(f"\n⭐ 应用STAR参数修改:")
+            
+            star_allowed_keys = {
+                "outSAMtype", "outSAMunmapped", "outSAMattributes",
+                "outFilterMultimapNmax", "alignSJoverhangMin", "alignSJDBoverhangMin", 
+                "outFilterMismatchNmax", "outFilterMismatchNoverReadLmax",
+                "alignIntronMin", "alignIntronMax", "alignMatesGapMax", "quantMode", "twopassMode",
+                "limitBAMsortRAM", "outBAMsortingThreadN", "genomeLoad", "outFileNamePrefix",
+                "readFilesCommand", "outReadsUnmapped", "outFilterIntronMotifs", 
+                "outSAMstrandField", "outFilterType", "sjdbGTFfile", "sjdbOverhang", 
+                "chimSegmentMin", "chimOutType", "chimMainSegmentMultNmax"
+            }
+            
+            for key, value in modify_request.star_changes.items():
+                if key not in star_allowed_keys:
+                    print(f"   - 跳过未知STAR键: {key}")
+                    continue
+                old_value = updated_star.get(key, "未设置")
+                updated_star[key] = value
+                print(f"   - {key}: {old_value} → {value}")
+        
+        # 应用FeatureCounts参数修改
+        if modify_request.featurecounts_changes:
+            print(f"\n📊 应用FeatureCounts参数修改:")
+            
+            fc_allowed_keys = {
+                "-s", "-p", "-B", "-C", "-t", "-g", "-M", "-O", "--fraction", "-Q",
+                "--minOverlap", "--fracOverlap", "-f", "-J",
+                "-a", "-F", "--primary", "--ignoreDup", "--splitOnly", "--nonSplitOnly", 
+                "--largestOverlap", "--readShiftType", "--readShiftSize", "-R", 
+                "--readExtension5", "--readExtension3", "--read2pos", "--countReadPairs",
+                "--donotsort", "--byReadGroup", "--extraAttributes"
+            }
+            
+            for key, value in modify_request.featurecounts_changes.items():
+                if key not in fc_allowed_keys:
+                    print(f"   - 跳过未知FeatureCounts键: {key}")
+                    continue
+                # 处理布尔类型参数
+                if key in {"-p", "-B", "-C", "-M", "-O", "--fraction", "-f", "-J", 
+                          "--primary", "--ignoreDup", "--splitOnly", "--nonSplitOnly", "--largestOverlap"}:
+                    value = _to_bool(value)
+                old_value = updated_featurecounts.get(key, "未设置")
+                updated_featurecounts[key] = value
+                print(f"   - {key}: {old_value} → {value}")
+        
         # 显示验证提示
         if modify_request.validation_notes:
             print(f"\n⚠️ 参数验证提示:")
@@ -209,7 +308,9 @@ FastP参数：
             "changes": {
                 "nextflow": modify_request.nextflow_changes,
                 "resource": modify_request.resource_changes,
-                "fastp": modify_request.fastp_changes
+                "fastp": modify_request.fastp_changes,
+                "star": modify_request.star_changes,
+                "featurecounts": modify_request.featurecounts_changes
             },
             "reason": modify_request.modification_reason
         }
@@ -225,7 +326,9 @@ FastP参数：
             # 更新配置
             "nextflow_config": updated_nextflow,
             "resource_config": updated_resource,
-            "fastp_params": updated_fastp,  # 使用 fastp_params
+            "fastp_params": updated_fastp,
+            "star_params": updated_star,
+            "featurecounts_params": updated_featurecounts,
             
             # 更新修改需求（记录已应用）
             "modify_requirements": {
@@ -233,7 +336,9 @@ FastP参数：
                 "parsed_changes": {
                     "nextflow_config": modify_request.nextflow_changes,
                     "resource_config": modify_request.resource_changes,
-                    "fastp_params": modify_request.fastp_changes
+                    "fastp_params": modify_request.fastp_changes,
+                    "star_params": modify_request.star_changes,
+                    "featurecounts_params": modify_request.featurecounts_changes
                 },
                 "applied": True
             },

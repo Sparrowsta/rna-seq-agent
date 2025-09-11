@@ -22,10 +22,7 @@ DEFAULT_FASTP_PARAMS = {
     "html_report": True,                # 生成HTML报告
     "json_report": True,                # 生成JSON报告
     
-    # 性能参数（与 Nextflow 对齐）
-    # - fastp_cpus: Nextflow process.cpus；默认为4
-    # - threads    : fastp 的 --thread 参数；在 fastp.nf 内部优先取 threads，否则回退 fastp_cpus，再回退 4
-    "fastp_cpus": 4,
+    # 注意：线程数由Nextflow resource_config统一管理，不在工具参数中重复定义
     
     # 额外 fastp 高级参数（按需传递）
     # 输入质量编码与读取控制
@@ -84,8 +81,9 @@ DEFAULT_FASTP_PARAMS = {
 
 # STAR 默认参数 - 使用 Python 风格命名
 DEFAULT_STAR_PARAMS = {
+    # 注意：线程数runThreadN由Nextflow resource_config统一管理，不在这里重复定义
+    
     # 基础参数
-    "runThreadN": 8,                          # 默认线程数
     "outSAMtype": "BAM SortedByCoordinate",   # 输出排序后的BAM
     "outSAMunmapped": "Within",               # 未比对reads保留在BAM中
     "outSAMattributes": "All",                # 输出所有SAM属性
@@ -113,7 +111,6 @@ DEFAULT_STAR_PARAMS = {
     "outFileNamePrefix": "STAR_",             # 输出文件前缀
     
     # 额外的高级参数
-    "star_cpus": None,                        # Nextflow process.cpus
     "readFilesCommand": None,                 # 读取压缩文件的命令
     "outReadsUnmapped": None,                 # 未比对reads输出选项
     "outFilterIntronMotifs": None,            # 内含子motif过滤
@@ -128,8 +125,9 @@ DEFAULT_STAR_PARAMS = {
 
 # FeatureCounts 默认参数 - 使用 Python 风格命名，与文档要求保持一致
 DEFAULT_FEATURECOUNTS_PARAMS = {
+    # 注意：线程数-T由Nextflow resource_config统一管理，不在这里重复定义
+    
     # 基础参数
-    "-T": 4,                                   # 默认线程数
     "-s": 0,                                   # 链特异性（0=无，1=正向，2=反向）
     "-p": False,                               # 单端测序模式（False=单端，True=双端）
     "-B": False,                               # 双端测序时不要求两端都比对
@@ -152,9 +150,6 @@ DEFAULT_FEATURECOUNTS_PARAMS = {
     # 输出控制
     "-f": False,                               # 不按特征级别输出
     "-J": False,                               # 不计数剪接位点
-    
-    # Nextflow集成参数
-    "featurecounts_cpus": None,                # Nextflow process.cpus（会映射到-T）
     
     # 高级参数（通常保持默认或根据需要调整）
     "-a": None,                                # 注释文件路径（通过Nextflow提供）
