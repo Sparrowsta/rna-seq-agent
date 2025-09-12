@@ -332,13 +332,13 @@ def _build_commands(state: AgentState) -> List[CommandHint]:
         # 无执行进度，显示execute选项
         commands.append(CommandHint(
             command="/execute_opt",
-            description="执行RNA-seq流水线（支持选择执行模式）",
+            description="执行分析（支持选择执行模式）",
             icon="⚡"
         ))
         # 添加YOLO自动模式选项
         commands.append(CommandHint(
             command="/yolo",
-            description="YOLO自动模式（全程自动执行分析流程）",
+            description="YOLO 自动执行",
             icon="🎯"
         ))
     
@@ -353,8 +353,15 @@ def _build_commands(state: AgentState) -> List[CommandHint]:
     # 通用命令
     commands.extend([
         CommandHint(command="/modify", description="修改配置", icon="🔧"),
-        CommandHint(command="/cancel", description="取消分析返回普通模式", icon="❌"),
+        CommandHint(command="/cancel", description="取消分析", icon="❌"),
         CommandHint(command="/quit", description="退出程序", icon="🚪"),
     ])
+    
+    # 为所有可用命令分配数字索引 (从1开始)
+    index = 1
+    for cmd in commands:
+        if cmd.available:
+            cmd.index = index
+            index += 1
     
     return commands

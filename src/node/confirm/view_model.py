@@ -13,6 +13,7 @@ class CommandHint(BaseModel):
     description: str                # 命令描述 (如 "继续到下一步")
     icon: str = ""                  # 图标 (如 "➡️")
     available: bool = True          # 是否可用
+    index: Optional[int] = None     # 数字索引 (用于纯数字选择模式)
 
 
 class ParamItem(BaseModel):
@@ -105,3 +106,10 @@ class ConfirmDecision(BaseModel):
     @property
     def is_control_command(self) -> bool:
         return self.decision in {'modify', 'cancel', 'quit', 'restart'}
+
+    # 添加需要二次输入检测的属性
+    @property
+    def needs_modify_content(self) -> bool:
+        """检查是否需要采集修改内容"""
+        return (self.decision == 'modify' and 
+                self.payload.get('needs_modify_content', False))

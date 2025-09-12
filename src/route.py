@@ -8,6 +8,9 @@ def route_from_user_communication(state: AgentState) -> str:
     if routing_decision == "plan":
         print("🚀 进入检测流程")
         return "detect"
+    elif routing_decision == "execute":  # 新增execute模式支持
+        print("🚀 进入执行模式检测流程")
+        return "detect"
     elif routing_decision == "normal":
         print("🧠 进入意图分析")
         return "normal"

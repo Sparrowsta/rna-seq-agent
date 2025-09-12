@@ -162,8 +162,9 @@ def _render_commands(commands: List[CommandHint]) -> List[str]:
     lines = [f"\n🔄 **请选择下一步操作:**"]
     
     for cmd in commands:
-        if cmd.available:
-            icon_part = f" - {cmd.icon}" if cmd.icon else ""
-            lines.append(f"   {cmd.command:16}{icon_part} {cmd.description}")
+        if cmd.available and cmd.index is not None:
+            # 使用数字索引格式渲染
+            icon_part = f" {cmd.icon}" if cmd.icon else ""
+            lines.append(f"    {cmd.index}) {cmd.description}{icon_part}")
     
     return lines

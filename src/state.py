@@ -15,7 +15,7 @@ class AgentState(BaseModel):
     status: str = Field(default="normal", description="系统状态: normal/plan/confirm/execute")
     
     # === Normal模式字段 ===
-    routing_decision: str = Field(default="", description="路由决策: normal/plan/end")
+    routing_decision: str = Field(default="", description="路由决策: normal/execute/end (execute替代旧的plan)")
     query_response: str = Field(default="", description="查询响应内容")
     user_requirements: Dict[str, Any] = Field(default={}, description="从用户输入中提取的结构化配置需求")
     
