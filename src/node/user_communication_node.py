@@ -3,6 +3,7 @@ from ..state import AgentState
 
 async def user_communication_node(state: AgentState) -> Dict[str, Any]:
     """User Communication节点 - 用户交互入口"""
+    
     print(f"\n{'='*60}")
     print(f"🔬 RNA-seq智能分析助手 - 本地FASTQ数据分析工具")
     print(f"{'='*60}")

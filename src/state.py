@@ -41,7 +41,7 @@ class AgentState(BaseModel):
     confirmation_message: str = Field(default="", description="确认界面展示信息")
 
     # === 执行模式（用于路由与展示） ===
-    execution_mode: str = Field(default="single", description="执行模式: single/optimized/batch_optimize")
+    execution_mode: str = Field(default="single", description="执行模式: single/optimized/batch_optimize/yolo")
     current_step: str = Field(default="", description="当前执行步骤: fastp/star/featurecounts/analysis")
     completed_steps: List[str] = Field(default=[], description="已完成的步骤列表")
     pipeline_progress: Dict[str, Any] = Field(default={}, description="流水线执行进度跟踪")

@@ -335,6 +335,12 @@ def _build_commands(state: AgentState) -> List[CommandHint]:
             description="执行RNA-seq流水线（支持选择执行模式）",
             icon="⚡"
         ))
+        # 添加YOLO自动模式选项
+        commands.append(CommandHint(
+            command="/yolo",
+            description="YOLO自动模式（全程自动执行分析流程）",
+            icon="🎯"
+        ))
     
     # 二次优化选项
     if current_step in {"fastp", "star", "featurecounts"}:

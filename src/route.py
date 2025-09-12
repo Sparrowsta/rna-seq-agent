@@ -74,7 +74,10 @@ def route_after_fastp(state: AgentState) -> str:
         print(f"   [DEBUG] fastp_results keys: {list(fastp_results.keys())}")
         return "user_confirm"
 
-    if mode == 'optimized':
+    if mode == 'yolo':
+        print("🎯 [ROUTE] YOLO模式：FastP完成后自动进入STAR比对")
+        return "star"
+    elif mode == 'optimized':
         print("🔁 [ROUTE] 优化执行模式：FastP 完成后返回确认进行参数微调")
         return "user_confirm"
     elif mode == 'batch_optimize':
@@ -100,7 +103,10 @@ def route_after_star(state: AgentState) -> str:
     
     # 检查STAR是否成功完成
     if star_success:
-        if mode == 'optimized':
+        if mode == 'yolo':
+            print("🎯 [ROUTE] YOLO模式：STAR完成后自动进入FeatureCount定量")
+            return "featurecounts"
+        elif mode == 'optimized':
             print("🔁 [ROUTE] 优化执行模式：STAR完成后返回确认进行参数微调")
             return "user_confirm"
         else:  # single 或 batch_optimize 等
@@ -127,7 +133,10 @@ def route_after_featurecount(state: AgentState) -> str:
 
     # 检查FeatureCounts是否成功完成
     if fc_success:
-        if mode == 'optimized':
+        if mode == 'yolo':
+            print("🎯 [ROUTE] YOLO模式：FeatureCount完成后自动进入综合分析")
+            return "analysis"
+        elif mode == 'optimized':
             print("🔁 [ROUTE] 优化执行模式：FeatureCount完成后返回确认进行参数微调")
             return "user_confirm"
         elif mode == 'batch_optimize':
@@ -165,14 +174,20 @@ def route_to_analysis(state: AgentState) -> str:
 
 def route_after_analysis(state: AgentState) -> str:
     """Analysis节点后的路由：
-    - 无论成功失败，都返回用户确认界面
+    - YOLO模式：直接结束
+    - 其他模式：返回用户确认界面
     """
     # 读取节点顶层success字段，符合success-first约定
     analysis_success = getattr(state, 'success', False)
+    mode = (getattr(state, 'execution_mode', 'single') or 'single').lower()
     
     if analysis_success:
-        print("✅ [ROUTE] 分析完成，返回用户确认界面")
-        return "user_confirm"
+        if mode == 'yolo':
+            print("🎯 [ROUTE] YOLO模式：分析完成，流程结束")
+            return END
+        else:
+            print("✅ [ROUTE] 分析完成，返回用户确认界面")
+            return "user_confirm"
     else:
         print("❌ [ROUTE] 分析失败，返回用户确认界面")
         return "user_confirm"

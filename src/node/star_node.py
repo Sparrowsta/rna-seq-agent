@@ -134,6 +134,45 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
                 f"⚡ **优化详情**: {optimization_reasoning}"
             )
             return result
+            
+        elif execution_mode == "yolo":
+            # YOLO模式：与optimized相同的执行逻辑，但会自动进入下一步
+            star_response = await _call_star_optimization_agent(state)
+
+            # 立即更新执行参数
+            optimized_params = star_response.star_params
+            optimization_reasoning = star_response.star_optimization_suggestions
+            optimization_params_changes = star_response.star_optimization_params
+
+            # 透传Agent返回的results（results_dir, per_sample_outputs）
+            agent_results = getattr(star_response, 'results', None)
+            star_results = {
+                "success": True,
+                "status": "success",
+            }
+            if agent_results and isinstance(agent_results, dict):
+                star_results.update(agent_results)
+            
+            # 确保BAM文件路径信息完整（根据路径契约要求）
+            star_results = _ensure_bam_paths_from_per_sample(star_results)
+
+            result = {
+                "success": True,
+                "status": "star_completed",
+                "current_step": "star",
+                "completed_steps": completed_steps,
+                "star_params": optimized_params,
+                "star_optimization_suggestions": optimization_reasoning,
+                "star_optimization_params": optimization_params_changes,
+                "star_results": star_results,
+            }
+
+            optimization_count = len(optimization_params_changes or {})
+            result["response"] = (
+                "🎯 STAR比对完成（YOLO自动模式）\n\n"
+                f"⚡ **优化执行**: 已应用{optimization_count}个优化参数，自动进入下一步"
+            )
+            return result
 
         elif execution_mode == "batch_optimize":
             # 批次优化：执行+解析+收集优化，不应用

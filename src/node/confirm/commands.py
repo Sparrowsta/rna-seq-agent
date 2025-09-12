@@ -16,6 +16,11 @@ COMMAND_ALIASES = {
     '/执行': 'execute',
     '/运行': 'execute',
     
+    # YOLO 系列 - 新增
+    '/yolo': 'yolo',
+    '/自动': 'yolo',
+    '/全自动': 'yolo',
+    
     # continue 系列
     '/continue': 'continue',
     '/继续': 'continue',
@@ -127,6 +132,14 @@ def _build_decision(
     if command == 'execute':
         return _handle_execute_command(context, raw_input)
     
+    elif command == 'yolo':
+        # YOLO自动模式 - 新增
+        return ConfirmDecision(
+            decision='execute',
+            execution_mode='yolo',
+            payload={'mode_description': '🎯 YOLO自动模式：全程自动执行分析流程', 'raw_input': raw_input}
+        )
+    
     elif command == 'continue':
         return _handle_continue_command(completed_steps, current_step)
     
@@ -159,6 +172,8 @@ def _handle_execute_command(context: Dict[str, Any], raw_input: str) -> ConfirmD
     处理execute命令，可能需要弹出模式选择
     这里返回基础决策，具体的模式选择由调用方处理
     """
+    # 使用context参数避免未使用警告
+    _ = context  
     return ConfirmDecision(
         decision='execute',
         execution_mode=None,  # 需要进一步选择模式
@@ -168,6 +183,8 @@ def _handle_execute_command(context: Dict[str, Any], raw_input: str) -> ConfirmD
 
 def _handle_continue_command(completed_steps: List[str], current_step: str) -> ConfirmDecision:
     """处理continue命令，根据进度确定具体的continue类型"""
+    # 使用current_step参数避免未使用警告
+    _ = current_step
     
     if not completed_steps:
         # 没有进度，无法continue
@@ -236,6 +253,7 @@ def get_available_commands(context: Dict[str, Any]) -> List[str]:
         commands.append('/restart')
     else:
         commands.append('/execute_opt')
+        commands.append('/yolo')  # 新增YOLO命令
     
     # 二次优化
     if current_step in {"fastp", "star", "featurecounts"}:

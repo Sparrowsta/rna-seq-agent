@@ -148,6 +148,58 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
                 }
             }
         
+    elif execution_mode == "yolo":
+        # YOLO模式：与optimized相同的执行逻辑，但会自动进入下一步
+        print("🎯 [YOLO] YOLO模式，自动优化执行...")
+        
+        try:
+            # 调用FastP优化Agent（与optimized相同的逻辑）
+            agent_response = await _call_fastp_optimization_agent(state)
+
+            # 立即更新执行参数
+            optimized_params = agent_response.fastp_params
+            optimization_reasoning = agent_response.fastp_optimization_suggestions
+            optimization_params_changes = agent_response.fastp_optimization_params
+
+            result["fastp_params"] = optimized_params
+            result["fastp_optimization_suggestions"] = optimization_reasoning
+            result["fastp_optimization_params"] = optimization_params_changes
+
+            try:
+                if getattr(agent_response, 'results', None):
+                    agent_results = agent_response.results or {}
+                    result["fastp_results"].update({
+                        "results_dir": agent_results.get("results_dir"),
+                        "per_sample_outputs": agent_results.get("per_sample_outputs") or []
+                    })
+            except Exception:
+                result["success"] = False
+                result["status"] = "fastp_failed"
+                result["fastp_results"]["success"] = False
+                result["fastp_results"]["status"] = "failed"
+
+            result["response"] = (
+                "🎯 FastP质控完成（YOLO自动模式）\n\n"
+                "⚡ **优化执行**: 已应用智能参数优化，自动进入下一步"
+            )
+
+            print(f"✅ [YOLO] FastP自动优化完成: {len(optimized_params)}个参数")
+
+        except Exception as e:
+            print(f"❌ [YOLO] FastP自动优化失败: {str(e)}")
+            return {
+                "success": False,
+                "status": "fastp_failed",
+                "response": f"❌ FastP自动优化失败: {str(e)}",
+                "current_step": "fastp",
+                "completed_steps": completed_steps,
+                "fastp_results": {
+                    "success": False,
+                    "status": "failed", 
+                    "error": str(e)
+                }
+            }
+        
     elif execution_mode == "batch_optimize":
         # 批次优化模式：收集Agent优化参数
         print("📦 [BATCH] FastP批次优化模式，调用Agent收集优化参数...")

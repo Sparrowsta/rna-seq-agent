@@ -147,6 +147,51 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
                 
             return result
             
+        elif execution_mode == "yolo":
+            # YOLO模式：与optimized相同的执行逻辑，但会自动进入下一步
+            fc_response = await _call_featurecounts_optimization_agent(state)
+            
+            # 立即更新执行参数
+            optimized_params = fc_response.featurecounts_params
+            optimization_reasoning = fc_response.featurecounts_optimization_suggestions
+            optimization_params_changes = fc_response.featurecounts_optimization_params
+            
+            # 透传Agent返回的results
+            agent_results = getattr(fc_response, 'results', None)
+            fc_results = {
+                "success": True,
+                "status": "success",
+            }
+            if agent_results and isinstance(agent_results, dict):
+                fc_results.update(agent_results)
+            
+            result = {
+                "success": True,
+                "status": "featurecounts_completed",
+                "current_step": "featurecounts",
+                "completed_steps": completed_steps,
+                "featurecounts_params": optimized_params,
+                "featurecounts_optimization_suggestions": optimization_reasoning,
+                "featurecounts_optimization_params": optimization_params_changes,
+                "featurecounts_results": fc_results,
+            }
+            
+            optimization_count = len(optimization_params_changes or {})
+            result["response"] = (
+                "🎯 FeatureCounts定量完成（YOLO自动模式）\n\n"
+                f"⚡ **优化执行**: 已应用{optimization_count}个优化参数，自动进入下一步"
+            )
+            
+            # 同时聚合到跨节点 results 字段，便于统一读取
+            try:
+                aggregated_results = dict(getattr(state, 'results', {}) or {})
+                aggregated_results["featurecounts"] = result.get("featurecounts_results", {})
+                result["results"] = aggregated_results
+            except Exception:
+                pass
+                
+            return result
+            
         elif execution_mode == "batch_optimize":
             # 批次优化：执行+解析+收集优化，不应用
             fc_response = await _call_featurecounts_optimization_agent(state)
