@@ -1597,6 +1597,448 @@ def _extract_metric(text: str, pattern: str) -> float:
     return 0.0
 
 
+@tool
+def run_nextflow_hisat2(
+    hisat2_params: Dict[str, Any],
+    fastp_results: Dict[str, Any],
+    genome_info: Dict[str, Any],
+    results_timestamp: Optional[str] = None
+) -> Dict[str, Any]:
+    """执行 HISAT2 比对（精简版，与 run_nextflow_star 等价）
+
+    约束（与路径契约一致）:
+    - 仅在 fastp_results.success 为真且包含 per_sample_outputs 时放行
+    - 统一复用 FastP 的 results_dir 作为运行根目录
+    - HISAT2 索引优先使用 genome_info.hisat2_index_dir；否则由 genome_info.fasta_path 推导
+    - sample_inputs 仅来源于 fastp_results.per_sample_outputs（不再扫描目录）
+    - per_sample_outputs 路径与 hisat2.nf 产出一致（样本子目录 + 默认文件名）
+    """
+    try:
+        tools_config = get_tools_config()
+
+        # 1) 校验 FastP 结果与运行根目录
+        if not (fastp_results and fastp_results.get("success")):
+            return {"success": False, "error": "FastP结果无效，无法执行HISAT2比对"}
+
+        fastp_results_dir = fastp_results.get("results_dir")
+        if not fastp_results_dir:
+            return {"success": False, "error": "FastP结果缺少results_dir"}
+
+        per_sample = fastp_results.get("per_sample_outputs") or []
+        if not per_sample:
+            return {"success": False, "error": "FastP结果缺少per_sample_outputs"}
+
+        # 2) 运行根目录与工作目录
+        timestamp = results_timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+        results_dir = Path(fastp_results_dir)
+        run_id = results_dir.name or timestamp
+        work_dir = tools_config.settings.data_dir / "work" / f"hisat2_{run_id}"
+        results_dir.mkdir(parents=True, exist_ok=True)
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        # 3) 解析 HISAT2 索引目录
+        def _resolve(p: str) -> Path:
+            pp = Path(p)
+            return pp if pp.is_absolute() else (tools_config.settings.project_root / pp)
+
+        hisat2_index_prefix = ""
+        if isinstance(genome_info, dict):
+            hisat2_index_dir = genome_info.get("hisat2_index_dir") or genome_info.get("index_dir") or ""
+            if hisat2_index_dir:
+                hisat2_index_prefix = str(_resolve(hisat2_index_dir) / "genome")
+            else:
+                fasta_path = genome_info.get("fasta_path") or genome_info.get("fasta")
+                if fasta_path:
+                    hisat2_index_prefix = str(tools_config.get_hisat2_index_dir(_resolve(fasta_path)) / "genome")
+
+        if not hisat2_index_prefix:
+            return {"success": False, "error": "缺少HISAT2索引目录（genome_info.hisat2_index_dir 或 fasta_path 必须提供）"}
+
+        # 检查索引文件是否存在
+        index_files = list(Path(hisat2_index_prefix).parent.glob(f"{Path(hisat2_index_prefix).name}.*.ht2"))
+        if not index_files:
+            return {"success": False, "error": f"HISAT2索引文件不存在: {hisat2_index_prefix}.*.ht2"}
+
+        # 4) 构造 sample_inputs（仅使用 FastP 返回的结构）
+        sample_inputs: List[Dict[str, Any]] = []
+        for i, fp in enumerate(per_sample):
+            sid = fp.get("sample_id", f"sample_{i+1}")
+            r1 = fp.get("trimmed_single") or fp.get("trimmed_r1")
+            r2 = fp.get("trimmed_r2")
+            if not r1:
+                continue
+            sample_inputs.append({
+                "sample_id": sid,
+                "is_paired": bool(r2),
+                "read1": r1,
+                **({"read2": r2} if r2 else {})
+            })
+        if not sample_inputs:
+            return {"success": False, "error": "未从FastP结果构造到任何样本输入"}
+
+        # 5) 组装 Nextflow 参数
+        cleaned_params: Dict[str, Any] = {}
+        for k, v in (hisat2_params or {}).items():
+            if v is None or k in {"hisat2_cpus", "threads", "p"}:
+                continue
+            cleaned_params[k.lstrip('-')] = v
+
+        nf_params = {
+            "sample_inputs": json.dumps(sample_inputs, ensure_ascii=False),
+            "hisat2_index": hisat2_index_prefix,
+            "results_dir": str(results_dir),
+            "work_dir": str(work_dir),
+            **cleaned_params,
+        }
+
+        # 保存参数文件到hisat2子目录
+        hisat2_dir = results_dir / "hisat2"
+        hisat2_dir.mkdir(parents=True, exist_ok=True)
+        params_file = hisat2_dir / "hisat2_params.json"
+        with open(params_file, "w", encoding="utf-8") as f:
+            json.dump(nf_params, f, indent=2, ensure_ascii=False)
+
+        # 6) 定位并执行 Nextflow
+        nf_candidates = [
+            tools_config.settings.project_root / "src" / "nextflow" / "hisat2.nf",
+            Path("/src/nextflow/hisat2.nf"),
+        ]
+        nextflow_script = next((p for p in nf_candidates if p.exists()), None)
+        if nextflow_script is None:
+            return {"success": False, "error": "未找到 hisat2.nf 脚本，请检查 /src/nextflow/hisat2.nf 路径", "searched": [str(p) for p in nf_candidates]}
+
+        print(f"执行HISAT2比对 - 参数文件: {params_file}")
+        print(f"HISAT2索引: {nf_params['hisat2_index']}")
+        cmd = [
+            "nextflow", "run", str(nextflow_script),
+            "-params-file", str(params_file),
+            "-work-dir", str(work_dir),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200, cwd=tools_config.settings.project_root)
+
+        # 7) 组装每样本输出路径（与 hisat2.nf publishDir 对齐）
+        hisat2_out = results_dir / "hisat2"
+        per_sample_outputs: List[Dict[str, Any]] = []
+        for item in sample_inputs:
+            sid = item["sample_id"]
+            sdir = hisat2_out / sid
+            entry = {
+                "sample_id": sid,
+                "aligned_bam": str(sdir / f"{sid}.hisat2.bam"),
+                "align_summary": str(sdir / f"{sid}.align_summary.txt"),
+                "bam_index": str(sdir / f"{sid}.hisat2.bam.bai"),
+            }
+            per_sample_outputs.append(entry)
+
+        payload = {
+            "success": result.returncode == 0,
+            "results_dir": str(results_dir),
+            "work_dir": str(work_dir),
+            "params_file": str(params_file),
+            "sample_count": len(sample_inputs),
+            "per_sample_outputs": per_sample_outputs,
+        }
+        if get_tools_config().settings.debug_mode:
+            payload.update({"stdout": result.stdout, "stderr": result.stderr, "cmd": " ".join(cmd)})
+        return payload
+
+    except Exception as e:
+        return {"success": False, "error": f"执行HISAT2比对失败: {str(e)}"}
+
+
+@tool
+def build_hisat2_index(
+    genome_id: str,
+    p: Optional[int] = None,
+    force_rebuild: bool = False,
+    results_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """构建 HISAT2 索引（等价 build_star_index）"""
+    try:
+        tools_config = get_tools_config()
+
+        # 1) 从基因组配置获取基因组信息
+        genome_configs = tools_config.get_genome_configs()
+        if genome_id not in genome_configs:
+            return {"success": False, "error": f"基因组ID '{genome_id}' 未找到，可用ID: {list(genome_configs.keys())}"}
+        
+        genome_config = genome_configs[genome_id]
+        fasta_path = genome_config.get("fasta_path")
+        gtf_path = genome_config.get("gtf_path", "")  # GTF可选
+        
+        if not fasta_path:
+            return {"success": False, "error": f"基因组 '{genome_id}' 配置缺少fasta_path"}
+
+        # 2) 解析路径
+        def _resolve(p: str) -> Path:
+            pp = Path(p)
+            return pp if pp.is_absolute() else (tools_config.settings.project_root / pp)
+
+        fasta_file = _resolve(fasta_path)
+        if not fasta_file.exists():
+            return {"success": False, "error": f"FASTA文件不存在: {fasta_file}"}
+
+        # 3) 确定索引目录
+        index_dir = tools_config.get_hisat2_index_dir(fasta_file)
+        index_dir.mkdir(parents=True, exist_ok=True)
+
+        # 4) 检查是否需要重建
+        index_files = list(index_dir.glob("genome.*.ht2"))
+        if index_files and not force_rebuild:
+            return {
+                "success": True,
+                "hisat2_index_dir": str(index_dir),
+                "status": "已存在",
+                "index_files": [str(f) for f in index_files],
+                "message": f"HISAT2索引已存在，跳过构建: {index_dir}"
+            }
+
+        # 5) 执行索引构建
+        work_dir_name = f"hisat2_index_{genome_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        work_dir = tools_config.settings.data_dir / "work" / work_dir_name
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        nf_params = {
+            "genome_fasta": str(fasta_file),
+            "genome_gtf": str(_resolve(gtf_path)) if gtf_path else "",
+            "hisat2_index_dir": str(index_dir),
+            "index_basename": "genome",
+            "p": p or 4,
+        }
+
+        params_file = work_dir / "build_hisat2_index_params.json"
+        with open(params_file, "w", encoding="utf-8") as f:
+            json.dump(nf_params, f, indent=2, ensure_ascii=False)
+
+        # 6) 定位并执行 Nextflow
+        nf_candidates = [
+            tools_config.settings.project_root / "src" / "nextflow" / "build_hisat2_index.nf",
+            Path("/src/nextflow/build_hisat2_index.nf"),
+        ]
+        nextflow_script = next((p for p in nf_candidates if p.exists()), None)
+        if nextflow_script is None:
+            return {"success": False, "error": "未找到 build_hisat2_index.nf 脚本"}
+
+        print(f"构建HISAT2索引 - 基因组: {genome_id}")
+        print(f"FASTA: {fasta_file}")
+        print(f"索引目录: {index_dir}")
+        
+        cmd = [
+            "nextflow", "run", str(nextflow_script),
+            "-params-file", str(params_file),
+            "-work-dir", str(work_dir),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=14400, cwd=tools_config.settings.project_root)
+
+        # 7) 检查结果
+        final_index_files = list(index_dir.glob("genome.*.ht2"))
+        success = result.returncode == 0 and len(final_index_files) > 0
+
+        payload = {
+            "success": success,
+            "hisat2_index_dir": str(index_dir),
+            "genome_id": genome_id,
+            "index_files": [str(f) for f in final_index_files],
+            "work_dir": str(work_dir),
+            "params_file": str(params_file),
+        }
+
+        if success:
+            payload["status"] = "构建成功"
+            payload["message"] = f"HISAT2索引构建完成: {index_dir}"
+        else:
+            payload["status"] = "构建失败"
+            payload["error"] = f"HISAT2索引构建失败，returncode: {result.returncode}"
+
+        if get_tools_config().settings.debug_mode:
+            payload.update({"stdout": result.stdout, "stderr": result.stderr, "cmd": " ".join(cmd)})
+
+        return payload
+
+    except Exception as e:
+        return {"success": False, "error": f"构建HISAT2索引失败: {str(e)}"}
+
+
+@tool
+def parse_hisat2_metrics(results_directory: str) -> Dict[str, Any]:
+    """解析HISAT2比对结果文件，提取比对指标
+    
+    Args:
+        results_directory: HISAT2结果目录路径
+        
+    Returns:
+        Dict: 包含样本指标和整体统计的结果
+    """
+    try:
+        results_path = Path(results_directory)
+        
+        if not results_path.exists():
+            return {"success": False, "error": f"结果目录不存在: {results_directory}"}
+        
+        # 查找HISAT2结果子目录
+        hisat2_dir = results_path / "hisat2"
+        if not hisat2_dir.exists():
+            return {"success": False, "error": f"HISAT2子目录不存在: {hisat2_dir}"}
+        
+        sample_metrics = []
+        overall_stats = {
+            "total_input_reads": 0,
+            "total_mapped_reads": 0,
+            "total_uniquely_mapped": 0,
+            "total_multi_mapped": 0,
+            "mapping_rates": [],
+            "unique_mapping_rates": [],
+            "multi_mapping_rates": []
+        }
+        
+        # 扫描样本目录
+        sample_dirs = [d for d in hisat2_dir.iterdir() if d.is_dir()]
+        total_samples = len(sample_dirs)
+        
+        if total_samples == 0:
+            return {"success": False, "error": "未找到任何样本目录"}
+        
+        for sample_dir in sample_dirs:
+            sample_id = sample_dir.name
+            summary_file = sample_dir / f"{sample_id}.align_summary.txt"
+            
+            if not summary_file.exists():
+                continue
+            
+            # 解析HISAT2比对摘要
+            with open(summary_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # HISAT2输出格式解析
+            metrics = _parse_hisat2_summary(content, sample_id)
+            if metrics:
+                sample_metrics.append(metrics)
+                
+                # 累积整体统计
+                overall_stats["total_input_reads"] += metrics["input_reads"]
+                overall_stats["total_mapped_reads"] += metrics["mapped_reads"]
+                overall_stats["total_uniquely_mapped"] += metrics.get("uniquely_mapped", 0)
+                overall_stats["total_multi_mapped"] += metrics.get("multi_mapped", 0)
+                overall_stats["mapping_rates"].append(metrics["mapping_rate"])
+                overall_stats["unique_mapping_rates"].append(metrics.get("unique_mapping_rate", 0))
+                overall_stats["multi_mapping_rates"].append(metrics.get("multi_mapping_rate", 0))
+        
+        # 计算整体比率
+        if overall_stats["total_input_reads"] > 0:
+            overall_mapping_rate = overall_stats["total_mapped_reads"] / overall_stats["total_input_reads"]
+            overall_unique_rate = overall_stats["total_uniquely_mapped"] / overall_stats["total_input_reads"]
+            overall_multi_rate = overall_stats["total_multi_mapped"] / overall_stats["total_input_reads"]
+        else:
+            overall_mapping_rate = overall_unique_rate = overall_multi_rate = 0
+        
+        # 质量评估
+        quality_assessment = {
+            "overall_quality": "good" if overall_mapping_rate > 0.85 else "moderate" if overall_mapping_rate > 0.7 else "poor",
+            "unique_mapping_status": "good" if overall_unique_rate > 0.8 else "moderate" if overall_unique_rate > 0.6 else "poor",
+            "multi_mapping_status": "good" if overall_multi_rate < 0.2 else "moderate" if overall_multi_rate < 0.3 else "high"
+        }
+        
+        return {
+            "success": True,
+            "total_samples": total_samples,
+            "results_directory": results_directory,
+            "sample_metrics": sample_metrics,
+            "overall_statistics": {
+                "total_input_reads": overall_stats["total_input_reads"],
+                "total_mapped_reads": overall_stats["total_mapped_reads"],
+                "total_uniquely_mapped": overall_stats["total_uniquely_mapped"],
+                "total_multi_mapped": overall_stats["total_multi_mapped"],
+                "overall_mapping_rate": round(overall_mapping_rate, 4),
+                "overall_unique_mapping_rate": round(overall_unique_rate, 4),
+                "overall_multi_mapping_rate": round(overall_multi_rate, 4),
+            },
+            "quality_assessment": quality_assessment
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"解析HISAT2结果失败: {str(e)}"
+        }
+
+
+def _parse_hisat2_summary(content: str, sample_id: str) -> Dict[str, Any]:
+    """解析HISAT2比对摘要内容"""
+    try:
+        lines = content.strip().split('\n')
+        metrics = {"sample_id": sample_id}
+        
+        for line in lines:
+            line = line.strip()
+            
+            # HISAT2输出格式示例:
+            # "25000000 reads; of these:"
+            # "  23500000 (94.00%) aligned concordantly exactly 1 time"
+            # "  1200000 (4.80%) aligned concordantly >1 times"
+            # "  300000 (1.20%) aligned concordantly 0 times"
+            
+            # 提取总read数
+            if " reads; of these:" in line:
+                total_reads = int(line.split()[0])
+                metrics["input_reads"] = total_reads
+            
+            # 提取比对统计（双端测序）
+            elif "aligned concordantly exactly 1 time" in line:
+                unique_count = _extract_reads_count(line)
+                metrics["uniquely_mapped"] = unique_count
+            elif "aligned concordantly >1 times" in line:
+                multi_count = _extract_reads_count(line)
+                metrics["multi_mapped"] = multi_count
+            elif "aligned concordantly 0 times" in line:
+                unaligned_count = _extract_reads_count(line)
+                # 对于单端测序的情况
+            elif "aligned exactly 1 time" in line and "concordantly" not in line:
+                unique_count = _extract_reads_count(line)
+                metrics["uniquely_mapped"] = unique_count
+            elif "aligned >1 times" in line and "concordantly" not in line:
+                multi_count = _extract_reads_count(line)  
+                metrics["multi_mapped"] = multi_count
+        
+        # 计算派生指标
+        if "input_reads" in metrics:
+            total_reads = metrics["input_reads"]
+            uniquely_mapped = metrics.get("uniquely_mapped", 0)
+            multi_mapped = metrics.get("multi_mapped", 0)
+            mapped_reads = uniquely_mapped + multi_mapped
+            
+            metrics["mapped_reads"] = mapped_reads
+            metrics["unmapped_reads"] = total_reads - mapped_reads
+            
+            if total_reads > 0:
+                metrics["mapping_rate"] = round(mapped_reads / total_reads, 4)
+                metrics["unique_mapping_rate"] = round(uniquely_mapped / total_reads, 4)
+                metrics["multi_mapping_rate"] = round(multi_mapped / total_reads, 4)
+                metrics["unmapped_rate"] = round((total_reads - mapped_reads) / total_reads, 4)
+            else:
+                metrics.update({
+                    "mapping_rate": 0.0,
+                    "unique_mapping_rate": 0.0,
+                    "multi_mapping_rate": 0.0,
+                    "unmapped_rate": 0.0
+                })
+        
+        return metrics if "input_reads" in metrics else None
+        
+    except Exception as e:
+        print(f"解析HISAT2摘要失败 (样本 {sample_id}): {e}")
+        return None
+
+
+def _extract_reads_count(line: str) -> int:
+    """从HISAT2输出行中提取reads数量"""
+    import re
+    # 匹配数字模式，例如: "23500000 (94.00%) aligned..."
+    match = re.search(r'(\d+)\s+\([\d.]+%\)', line.strip())
+    if match:
+        return int(match.group(1))
+    return 0
+
+
 # ==================== FeatureCounts 专用工具函数 ====================
 
 @tool
@@ -1606,15 +2048,17 @@ def run_nextflow_featurecounts(
     genome_info: Dict[str, Any],
     results_timestamp: Optional[str] = None,
     base_results_dir: Optional[str] = None,
+    hisat2_results: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """执行Nextflow FeatureCounts定量流程
 
     Args:
         featurecounts_params: FeatureCounts参数字典（可包含 -T/-s/-p/-M 等风格键）
-        star_results: STAR节点结果，需包含 per_sample_outputs 中的 BAM 路径
+        star_results: STAR节点结果（可为空），需包含 per_sample_outputs 中的 BAM 路径
         genome_info: 基因组信息（需提供 GTF 路径，如 gtf_path）
         results_timestamp: 可选的时间戳，优先用于结果目录
         base_results_dir: 可选的基底结果目录（来自Detect节点）
+        hisat2_results: HISAT2节点结果（可为空），与 star_results 二选一
 
     Returns:
         执行结果字典，包含状态、输出路径、样本输出等
@@ -1639,12 +2083,18 @@ def run_nextflow_featurecounts(
             return s
 
         # 校验依赖输入
-        if not (star_results and star_results.get("success")):
-            return {"success": False, "error": "STAR结果无效，无法执行FeatureCounts"}
+        # 选择可用的比对结果（STAR/HISAT2）
+        align_results = None
+        if star_results and star_results.get("success"):
+            align_results = star_results
+        elif hisat2_results and hisat2_results.get("success"):
+            align_results = hisat2_results
+        else:
+            return {"success": False, "error": "比对结果无效（STAR/HISAT2），无法执行FeatureCounts"}
 
-        per_sample = star_results.get("per_sample_outputs") or []
+        per_sample = align_results.get("per_sample_outputs") or []
         if not per_sample:
-            return {"success": False, "error": "STAR结果缺少 per_sample_outputs 信息"}
+            return {"success": False, "error": "比对结果缺少 per_sample_outputs 信息"}
 
         # 环境检查：允许本地与容器环境，路径规范化在下方处理
 
@@ -1664,9 +2114,9 @@ def run_nextflow_featurecounts(
                 "error": f"GTF文件不存在: {gtf_file}",
             }
 
-        # 运行根目录（results_dir）：复用 STAR 的 results_dir，保持同一运行根目录
+        # 运行根目录（results_dir）：复用比对步骤的 results_dir，保持同一运行根目录
         timestamp = results_timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_root = Path(star_results.get("results_dir") or base_results_dir or tools_config.results_dir / f"{timestamp}")
+        run_root = Path(align_results.get("results_dir") or base_results_dir or tools_config.results_dir / f"{timestamp}")
         # 容器路径规范（如需）
         run_root = Path(_to_container_path(str(run_root)))
         results_dir = run_root
@@ -1900,7 +2350,7 @@ def parse_featurecounts_metrics(results_directory: str) -> Dict[str, Any]:
                     if s.endswith(ext):
                         s = s[: -len(ext)]
                         break
-                # 去除STAR常见后缀（点/下划线变体）
+                # 去除常见后缀（STAR/HISAT2 的命名后缀，点/下划线变体）
                 star_suffixes = [
                     ".Aligned.sortedByCoord.out",
                     ".Aligned.out",
@@ -1908,6 +2358,8 @@ def parse_featurecounts_metrics(results_directory: str) -> Dict[str, Any]:
                     "_Aligned.sortedByCoord.out",
                     "_Aligned.out",
                     "_Aligned",
+                    ".hisat2",  # 来自 HISAT2 的常见后缀（在移除 .bam 后可能残留）
+                    "_hisat2",
                 ]
                 for suf in star_suffixes:
                     if s.endswith(suf):

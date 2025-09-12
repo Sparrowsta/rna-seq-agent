@@ -52,17 +52,20 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
     # 获取执行模式
     execution_mode = state.execution_mode
     
-    if not state.star_results or not state.star_results.get("success"):
+    # 允许基于 STAR 或 HISAT2 的比对结果进行定量
+    has_star = bool(getattr(state, 'star_results', {}) or {}) and bool(state.star_results.get("success"))
+    has_hisat2 = bool(getattr(state, 'hisat2_results', {}) or {}) and bool(state.hisat2_results.get("success"))
+    if not (has_star or has_hisat2):
         return {
             "success": False,
             "status": "featurecounts_failed",
-            "response": "❌ FeatureCounts执行失败：缺少有效的STAR比对结果，请先完成STAR比对",
+            "response": "❌ FeatureCounts执行失败：缺少有效的比对结果（STAR/HISAT2），请先完成比对",
             "current_step": "featurecounts",
             "completed_steps": completed_steps,
             "featurecounts_results": {
                 "success": False,
                 "status": "failed",
-                "error": "STAR结果不可用或未成功"
+                "error": "比对结果不可用或未成功"
             }
         }
     
@@ -301,6 +304,7 @@ async def _call_featurecounts_optimization_agent(state: AgentState) -> Featureco
     user_context = {
         "execution_mode": state.execution_mode,
         "star_results": state.star_results,
+        "hisat2_results": getattr(state, 'hisat2_results', {}),
         "nextflow_config": state.nextflow_config,
         "current_featurecounts_params": state.featurecounts_params,
         "genome_version": state.nextflow_config.get("genome_version", ""),
@@ -320,7 +324,7 @@ async def _call_featurecounts_optimization_agent(state: AgentState) -> Featureco
         mode_instructions = (
             "本次执行模式为 single（单次执行）。\n"
             "- 仅执行 FeatureCounts 定量，不进行任何参数优化。\n"
-            "- 必须基于 STAR 比对后的 BAM 文件进行定量。\n"
+            "- 必须基于比对器（STAR/HISAT2）产生的坐标排序 BAM 文件进行定量。\n"
             "- 保持 current_featurecounts_params 原样返回（featurecounts_params 可与输入相同），featurecounts_optimization_params 必须为空对象。\n"
             "- 必须调用 run_nextflow_featurecounts 执行，并可调用 parse_featurecounts_metrics 提取关键指标。\n"
             "- 请在结果中返回 results 字段（包含 results_dir、matrix_path 与 per_sample_outputs），便于下游使用。\n"

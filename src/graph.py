@@ -8,6 +8,7 @@ from .node.user_confirm_node import user_confirm_node
 from .node.fastp_node import fastp_node
 from .node.modify_node import modify_node
 from .node.star_node import star_node
+from .node.hisat2_node import hisat2_node
 from .node.featurecounts_node import featurecounts_node
 from .node.analysis_node import analysis_node
 from .route import (
@@ -15,12 +16,13 @@ from .route import (
     route_after_confirm, 
     route_after_fastp,
     route_after_star,
+    route_after_hisat2,
     route_after_featurecount,
     route_after_analysis
 )
 
 def create_agent():
-    """创建LangGraph Agent - 支持STAR-FeatureCount-Analysis完整流程"""
+    """创建LangGraph Agent - 支持STAR/HISAT2双比对器的完整RNA-seq流程"""
     
     # 创建状态图
     workflow = StateGraph(AgentState)
@@ -33,6 +35,7 @@ def create_agent():
     workflow.add_node("user_confirm", user_confirm_node)
     workflow.add_node("fastp", fastp_node)
     workflow.add_node("star", star_node)
+    workflow.add_node("hisat2", hisat2_node)
     workflow.add_node("featurecounts", featurecounts_node)
     workflow.add_node("analysis", analysis_node)
     workflow.add_node("modify", modify_node)
@@ -66,9 +69,11 @@ def create_agent():
         {
             "fastp": "fastp",                     # 开始FastP处理
             "star": "star",                       # 继续STAR比对
+            "hisat2": "hisat2",                   # 继续HISAT2比对
             "featurecounts": "featurecounts",     # 继续FeatureCounts定量
             "analysis": "analysis",               # 继续综合分析
             "continue_star": "star",              # /continue命令：继续到STAR
+            "continue_hisat2": "hisat2",          # /continue命令：继续到HISAT2
             "continue_featurecounts": "featurecounts",  # /continue命令：继续到FeatureCounts
             "continue_analysis": "analysis",      # /continue命令：继续到Analysis
             "modify": "modify",                   # 修改配置路由
@@ -81,13 +86,14 @@ def create_agent():
     # Modify节点完成后直接返回User Confirm节点
     workflow.add_edge("modify", "user_confirm")
     
-    # FastP节点完成后的路由：根据mode决定下一步
+    # FastP节点完成后的路由：根据配置和mode决定进入STAR或HISAT2
     workflow.add_conditional_edges(
         "fastp",
         route_after_fastp,
         {
-            "star": "star",                   # 继续STAR比对
-            "user_confirm": "user_confirm",   # 回到确认（优化模式）
+            "star": "star",                       # 进入STAR比对
+            "hisat2": "hisat2",                   # 进入HISAT2比对
+            "user_confirm": "user_confirm",       # 回到确认（优化模式）
         }
     )
     
@@ -98,6 +104,16 @@ def create_agent():
         {
             "featurecounts": "featurecounts",   # 继续FeatureCount定量
             "user_confirm": "user_confirm",   # 回到确认（优化模式或错误） 
+        }
+    )
+    
+    # HISAT2节点完成后的路由
+    workflow.add_conditional_edges(
+        "hisat2",
+        route_after_hisat2,
+        {
+            "featurecounts": "featurecounts",   # 继续FeatureCount定量
+            "user_confirm": "user_confirm",   # 回到确认（优化模式或错误）
         }
     )
     
@@ -125,5 +141,6 @@ def create_agent():
     
     print("🤖 RNA-seq智能分析助手已启动")
     print("   架构: User Communication → Normal → Detect → Prepare → Confirm")
-    print("   流程: (Modify →) FastP → STAR → FeatureCount → Analysis → (END/Confirm)")
+    print("   流程: (Modify →) FastP → STAR/HISAT2 → FeatureCount → Analysis → (END/Confirm)")
+    print("   比对器: 支持STAR和HISAT2双比对器选择")
     return app

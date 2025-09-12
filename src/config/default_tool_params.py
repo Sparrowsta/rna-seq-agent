@@ -170,3 +170,76 @@ DEFAULT_FEATURECOUNTS_PARAMS = {
     "--byReadGroup": None,                     # 按read group分别计数
     "--extraAttributes": None,                 # 输出额外的特征属性
 }
+
+# HISAT2 默认参数 - 使用 Python 风格命名
+DEFAULT_HISAT2_PARAMS = {
+    # 注意：线程数-p由Nextflow resource_config统一管理，不在这里重复定义
+    
+    # 基础RNA-seq参数
+    "rna_strandness": "unstranded",            # 链特异性: unstranded/RF/FR
+    "dta": True,                               # 启用下游转录本组装模式
+    
+    # 比对质量控制参数
+    "score_min": "L,0,-0.2",                   # 最小比对得分函数
+    "mp": "6,2",                               # 错配惩罚: max,min
+    "sp": "2,1",                               # 软剪切惩罚: max,min
+    "np": 1,                                   # N碱基惩罚
+    "rdg": "5,3",                              # read gap开放和延伸惩罚
+    "rfg": "5,3",                              # 参考基因组gap开放和延伸惩罚
+    
+    # 内含子长度控制
+    "max_intronlen": 500000,                   # 最大内含子长度
+    "min_intronlen": 20,                       # 最小内含子长度
+    
+    # 比对控制参数
+    "no_mixed": False,                         # 允许混合比对（单端+成对）
+    "no_discordant": False,                    # 允许不一致比对
+    "k": 5,                                    # 最多报告k个比对结果
+    "a": False,                                # 报告所有比对（与-k冲突）
+    "n_ceil": "L,0,0.15",                      # N碱基数量上限函数
+    
+    # 种子和扩展参数
+    "i": "S,1,1.15",                           # 种子间隔函数
+    "L": 20,                                   # 种子长度
+    "N": 0,                                    # 每个种子最多错配数
+    "D": 15,                                   # 扩展尝试次数
+    "R": 2,                                    # 重新播种次数
+    
+    # 输出控制参数
+    "no_unal": False,                          # 不输出未比对reads
+    "no_hd": False,                            # 不输出SAM头部
+    "no_sq": False,                            # 不输出SQ行
+    "rg_id": None,                             # Read Group ID
+    "rg": None,                                # Read Group标签
+    
+    # 性能优化参数
+    "mm": False,                               # 使用内存映射文件
+    "qc_filter": False,                        # 跳过质控失败的reads
+    "skip": None,                              # 跳过前N个reads
+    "upto": None,                              # 最多处理N个reads
+    "trim5": None,                             # 修剪5'端碱基数
+    "trim3": None,                             # 修剪3'端碱基数
+    
+    # 高级参数（RNA-seq专用）
+    "novel_splicesite_outfile": None,          # 新剪接位点输出文件
+    "novel_splicesite_infile": None,           # 新剪接位点输入文件
+    "no_temp_splicesite": False,               # 不使用临时剪接位点
+    "no_spliced_alignment": False,             # 不进行剪接比对
+    "transcriptome_mapping_only": False,       # 仅转录组比对模式
+    
+    # 压缩文件支持
+    "phred33": None,                           # 输入质量为Phred+33
+    "phred64": None,                           # 输入质量为Phred+64
+    "int_quals": None,                         # 质量值为空格分隔整数
+    
+    # 其他输出选项
+    "met_file": None,                          # 比对统计输出文件
+    "met_stderr": False,                       # 比对统计输出到stderr
+    "new_summary": False,                      # 使用新的统计格式
+    "summary_file": None,                      # 统计摘要输出文件
+    "quiet": False,                            # 安静模式
+    "un": None,                                # 未比对reads输出文件前缀
+    "al": None,                                # 已比对reads输出文件前缀
+    "un_conc": None,                           # 未比对配对reads输出前缀
+    "al_conc": None,                           # 已比对配对reads输出前缀
+}

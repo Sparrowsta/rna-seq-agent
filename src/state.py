@@ -1,7 +1,7 @@
 
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
-from .config.default_tool_params import DEFAULT_FASTP_PARAMS, DEFAULT_STAR_PARAMS, DEFAULT_FEATURECOUNTS_PARAMS
+from .config.default_tool_params import DEFAULT_FASTP_PARAMS, DEFAULT_STAR_PARAMS, DEFAULT_FEATURECOUNTS_PARAMS, DEFAULT_HISAT2_PARAMS
 
 # ==================== 统一Agent状态 ====================
 
@@ -55,26 +55,31 @@ class AgentState(BaseModel):
     # === 工具执行结果（保留这些字段，它们不是参数管理字段） ===
     fastp_results: Dict[str, Any] = Field(default={}, description="FastP执行结果数据")
     star_results: Dict[str, Any] = Field(default={}, description="STAR比对结果数据")  
+    hisat2_results: Dict[str, Any] = Field(default={}, description="HISAT2比对结果数据")
     featurecounts_results: Dict[str, Any] = Field(default={}, description="FeatureCounts定量结果数据")
 
     # === 当前工具参数（仅保留当前参数，删除历史和版本管理） ===
     fastp_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_FASTP_PARAMS.copy(), description="当前FastP运行参数")
     star_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_STAR_PARAMS.copy(), description="当前STAR比对参数")
+    hisat2_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_HISAT2_PARAMS.copy(), description="当前HISAT2比对参数")
     featurecounts_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_FEATURECOUNTS_PARAMS.copy(), description="当前FeatureCounts定量参数")
 
     # === 工具优化字段 ===
     fastp_optimization: Dict[str, Any] = Field(default={}, description="FastP优化结果")
     star_optimization: Dict[str, Any] = Field(default={}, description="STAR优化结果")
+    hisat2_optimization: Dict[str, Any] = Field(default={}, description="HISAT2优化结果")
     featurecounts_optimization: Dict[str, Any] = Field(default={}, description="FeatureCounts优化结果")
 
     # === 工具优化参数变更字段（供跨节点引用优化历史） ===
     fastp_optimization_params: Dict[str, Any] = Field(default={}, description="FastP优化参数变更记录（仅包含改动项）")
     star_optimization_params: Dict[str, Any] = Field(default={}, description="STAR优化参数变更记录（仅包含改动项）")
+    hisat2_optimization_params: Dict[str, Any] = Field(default={}, description="HISAT2优化参数变更记录（仅包含改动项）")
     featurecounts_optimization_params: Dict[str, Any] = Field(default={}, description="FeatureCounts优化参数变更记录（仅包含改动项）")
 
     # === 工具优化建议字段 ===
     fastp_optimization_suggestions: str = Field(default="", description="FastP优化建议")
     star_optimization_suggestions: str = Field(default="", description="STAR优化建议")
+    hisat2_optimization_suggestions: str = Field(default="", description="HISAT2优化建议")
     featurecounts_optimization_suggestions: str = Field(default="", description="FeatureCounts优化建议")
     
     # === 工作流集成字段 ===
@@ -135,3 +140,10 @@ class FeaturecountsResponse(BaseModel):
     featurecounts_optimization_suggestions: str = Field(description="详细的优化理由、数据支撑和预期效果")
     featurecounts_optimization_params: Dict[str, Any] = Field(default={}, description="仅包含改变了的优化参数")
     results: Dict[str, Any] = Field(default={}, description="FeatureCounts执行产生的输出与摘要；遵循Prompt约定")
+
+class Hisat2Response(BaseModel):
+    """HISAT2节点的Agent响应格式"""
+    hisat2_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_HISAT2_PARAMS.copy(), description="优化后的HISAT2参数")
+    hisat2_optimization_suggestions: str = Field(description="详细的优化理由、数据支撑和预期效果")
+    hisat2_optimization_params: Dict[str, Any] = Field(default={}, description="仅包含改变了的优化参数")
+    results: Dict[str, Any] = Field(default={}, description="HISAT2执行产生的输出与摘要；遵循Prompt约定")

@@ -41,6 +41,9 @@ def route_after_confirm(state: AgentState) -> str:
     elif user_decision == "continue_star":
         print("🎯 [ROUTE] 继续到STAR比对")
         return "star"
+    elif user_decision == "continue_hisat2":
+        print("🎯 [ROUTE] 继续到HISAT2比对")
+        return "hisat2"
     elif user_decision == "continue_featurecounts":
         print("📊 [ROUTE] 继续到FeatureCounts定量")
         return "featurecounts"
@@ -62,9 +65,10 @@ def route_after_confirm(state: AgentState) -> str:
 
 def route_after_fastp(state: AgentState) -> str:
     """FastP节点后的路由：
-    - 单次执行（single）：继续STAR比对
+    - 检查配置中的比对器选择（align_tool/aligner: star 或 hisat2）
+    - 单次执行（single）：根据配置进入相应比对
     - 优化执行（optimized）：回到用户确认进行参数微调
-    - 批次优化（batch_optimize）：继续STAR比对（收集优化建议但不中断）
+    - 批次优化（batch_optimize）：根据配置进入相应比对（收集优化建议但不中断）
     - 错误情况：回到用户确认
     """
     mode = (getattr(state, 'execution_mode', 'single') or 'single').lower()
@@ -77,18 +81,40 @@ def route_after_fastp(state: AgentState) -> str:
         print(f"   [DEBUG] fastp_results keys: {list(fastp_results.keys())}")
         return "user_confirm"
 
+    # 选择比对器 - 优先级：配置 > 用户需求 > 默认(star)
+    # 支持两种键名：align_tool（首选）与 aligner（兼容旧字段）
+    aligner = "star"  # 默认使用STAR
+    if hasattr(state, 'nextflow_config') and state.nextflow_config:
+        cfg = state.nextflow_config
+        aligner = (cfg.get('align_tool')
+                   or cfg.get('aligner')
+                   or 'star')
+    elif hasattr(state, 'user_requirements') and state.user_requirements:
+        req = state.user_requirements
+        aligner = (req.get('align_tool')
+                   or req.get('aligner')
+                   or 'star')
+    
+    # 确保比对器名称标准化
+    aligner = aligner.lower()
+    if aligner not in ['star', 'hisat2']:
+        print(f"⚠️ [ROUTE] 未知比对器 '{aligner}'，使用默认STAR")
+        aligner = 'star'
+
+    print(f"🧬 [ROUTE] 选择的比对器: {aligner.upper()}")
+
     if mode == 'yolo':
-        print("🎯 [ROUTE] YOLO模式：FastP完成后自动进入STAR比对")
-        return "star"
+        print(f"🎯 [ROUTE] YOLO模式：FastP完成后自动进入{aligner.upper()}比对")
+        return aligner
     elif mode == 'optimized':
         print("🔁 [ROUTE] 优化执行模式：FastP 完成后返回确认进行参数微调")
         return "user_confirm"
     elif mode == 'batch_optimize':
-        print("📊 [ROUTE] 批次优化模式：FastP 完成后继续STAR比对（收集优化建议）")
-        return "star"
+        print(f"📊 [ROUTE] 批次优化模式：FastP 完成后继续{aligner.upper()}比对（收集优化建议）")
+        return aligner
     else:  # single 及其他
-        print("🧬 [ROUTE] 单次执行模式：FastP 完成后继续STAR比对")
-        return "star"
+        print(f"🧬 [ROUTE] 单次执行模式：FastP 完成后继续{aligner.upper()}比对")
+        return aligner
 
 
 def route_after_star(state: AgentState) -> str:
@@ -119,6 +145,35 @@ def route_after_star(state: AgentState) -> str:
         print("❌ [ROUTE] star执行失败，返回确认界面")
         return "user_confirm"
        
+
+def route_after_hisat2(state: AgentState) -> str:
+    """HISAT2节点后的路由：
+    - 单次执行：继续FeatureCount定量
+    - 优化执行：回到用户确认进行参数微调
+    - 批次优化模式：继续FeatureCount（收集优化建议但不中断）
+    - 其他错误：回到用户确认
+    """
+    mode = (getattr(state, 'execution_mode', 'single') or 'single').lower()
+    hisat2_results = getattr(state, 'hisat2_results', {}) or {}
+
+    hisat2_success = hisat2_results.get('success', False)
+    print(f"\n🔎 [ROUTE-HISAT2] mode={mode}, success={hisat2_success}")
+    
+    # 检查HISAT2是否成功完成
+    if hisat2_success:
+        if mode == 'yolo':
+            print("🎯 [ROUTE] YOLO模式：HISAT2完成后自动进入FeatureCount定量")
+            return "featurecounts"
+        elif mode == 'optimized':
+            print("🔁 [ROUTE] 优化执行模式：HISAT2完成后返回确认进行参数微调")
+            return "user_confirm"
+        else:  # single 或 batch_optimize 等
+            print("🧬 [ROUTE] HISAT2比对成功，继续FeatureCount定量")
+            return "featurecounts"
+    else:
+        print("❌ [ROUTE] hisat2执行失败，返回确认界面")
+        return "user_confirm"
+
 
 
 def route_after_featurecount(state: AgentState) -> str:
