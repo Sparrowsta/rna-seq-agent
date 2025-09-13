@@ -45,7 +45,10 @@ async def normal_node(state: AgentState) -> Dict[str, Any]:
     
     try:
         agent_executor = create_normal_agent()
-        messages_input = {"messages": state.messages}
+        # 统一输入格式：若上游未提供消息历史，则使用 state.input 兜底构造一条用户消息
+        fallback_message = [{"role": "user", "content": state.input}] if getattr(state, 'input', None) else []
+        messages_list = state.messages if state.messages else fallback_message
+        messages_input = {"messages": messages_list}
         
         result = await agent_executor.ainvoke(messages_input)
         

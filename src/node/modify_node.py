@@ -176,7 +176,7 @@ FeatureCounts参数：
         ]
         
         print(f"\n🤖 正在解析修改需求...")
-        modify_request = llm_with_structure.invoke(messages)
+        modify_request = await llm_with_structure.ainvoke(messages)
         
         # 应用修改
         updated_nextflow = current_nextflow.copy()

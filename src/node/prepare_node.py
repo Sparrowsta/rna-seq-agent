@@ -48,13 +48,12 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
     
     # 获取核心信息
     detection_results = state.query_results or {}
-    current_config = state.nextflow_config or {}
     initial_requirements = state.user_requirements or {}
     
     if not detection_results:
         return {
             "success": False,
-            "nextflow_config": current_config,
+            "nextflow_config": {},
             "resource_config": {},
             "config_reasoning": "未获取到检测数据，无法进行智能配置分析",
             "response": "⚠️ 缺少检测数据，无法进行智能配置分析",
@@ -73,10 +72,6 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
         # 添加检测数据
         context_parts.append(f"=== 📊 系统检测数据 ===")
         context_parts.append(json.dumps(detection_results, indent=2, ensure_ascii=False))
-        
-        # 添加当前配置状态（包含时间戳信息）
-        context_parts.append(f"=== ⚙️ 当前配置状态 ===")
-        context_parts.append(json.dumps(current_config, indent=2, ensure_ascii=False))
         
         detection_context = "\n".join(context_parts)
         
@@ -119,7 +114,7 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
         print(f"❌ 配置生成失败: {str(e)}")
         return {
             "success": False,
-            "nextflow_config": current_config,
+            "nextflow_config": {},
             "resource_config": {},
             "config_reasoning": f"配置生成失败: {str(e)}",
             "response": f"❌ 配置生成失败: {str(e)}",

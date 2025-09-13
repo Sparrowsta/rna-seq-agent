@@ -325,39 +325,7 @@ async def _call_fastp_optimization_agent(state: AgentState) -> FastpResponse:
         },
     }
 
-    # 根据执行模式，给Agent明确的运行指令，统一走同一个Agent
-    mode = (state.execution_mode or "single").lower()
-    if mode == "single":
-        mode_instructions = (
-            "本次执行模式为 single（单次执行）。\n"
-            "- 仅执行 FastP 质量控制，不进行任何参数优化。\n"
-            "- 保持 current_fastp_params 原样返回（fastp_params 可与输入相同），fastp_optimization_params 必须为空对象。\n"
-            "- 必须调用 run_nextflow_fastp 执行，并可调用 parse_fastp_results 解析关键质量指标。\n"
-            "- 请在结果中返回 results 字段（包含 results_dir 与 per_sample_outputs），便于下游 STAR 使用。\n"
-            "- 仍需返回 FastpResponse 结构化结果。\n"
-        )
-    elif mode == "batch_optimize":
-        mode_instructions = (
-            "本次执行模式为 batch_optimize（批次优化）。\n"
-            "- 执行 FastP 并解析结果，生成优化建议，但不要在当前节点应用这些参数。\n"
-            "- fastp_params 请给出“建议后的完整参数字典”，fastp_optimization_params 仅包含改动的键值对。\n"
-            "- 返回 results（results_dir, per_sample_outputs）供下游使用。\n"
-        )
-    else:  # optimized
-        mode_instructions = (
-            "本次执行模式为 optimized（精细优化）。\n"
-            "- 执行 FastP、解析结果并生成优化建议。\n"
-            "- fastp_params 请返回“应用优化后的完整参数字典”，fastp_optimization_params 仅包含改动项。\n"
-            "- 返回 results（results_dir, per_sample_outputs）供下游使用。\n"
-        )
-
-    user_prompt = (
-        "请依据系统提示中的标准流程与指导原则执行本次任务。\n\n"
-        + mode_instructions
-        + "以下为本次任务的上下文数据（JSON）：\n\n"
-        + json.dumps(user_context, ensure_ascii=False, indent=2)
-        + "\n\n请基于上述数据完成必要的工具调用，并按系统提示要求返回结构化结果（FastpResponse）。"
-    )
+    user_prompt = json.dumps(user_context, ensure_ascii=False, indent=2)
     
     # 创建并调用Agent
     agent_executor = create_fastp_agent()

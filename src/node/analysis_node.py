@@ -11,6 +11,7 @@ Analysis节点  - 基于设计文档的综合分析实现
 
 import json
 import time
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
@@ -26,7 +27,7 @@ from ..tools import (
 from ..core import get_shared_llm
 
 
-def analysis_node(state: AgentState) -> Dict[str, Any]:
+async def analysis_node(state: AgentState) -> Dict[str, Any]:
     """
     Analysis节点  - 综合分析实现
     
@@ -94,7 +95,7 @@ def analysis_node(state: AgentState) -> Dict[str, Any]:
         
         # 6. LLM智能总结（可选但推荐）
         print("🤖 执行LLM智能分析...")
-        llm_result = _execute_llm_analysis(base_report)
+        llm_result = await _execute_llm_analysis(base_report)
         
         # 将LLM结果合并到报告中，并增强可观测性
         if llm_result["success"]:
@@ -123,17 +124,17 @@ def analysis_node(state: AgentState) -> Dict[str, Any]:
         return _create_error_response(f"分析节点执行异常: {str(e)}")
 
 
-def _invoke_llm_langgraph(structured_llm, messages: List[Dict[str, Any]]):
-    """以 LangGraph 风格优先的方式调用 LLM（结构化输出）。
+async def _invoke_llm_langgraph(structured_llm, messages: List[Dict[str, Any]]):
+    """以 LangGraph 风格优先的方式异步调用 LLM（结构化输出）。
 
     优先尝试传入 {"messages": [...]}；
     若模型不接受该输入格式，则回退为纯列表 [...]
     """
     try:
-        return structured_llm.invoke({"messages": messages})
+        return await structured_llm.ainvoke({"messages": messages})
     except Exception:
         # 回退为直接传列表
-        return structured_llm.invoke(messages)
+        return await structured_llm.ainvoke(messages)
 
 
 def _validate_input_results(state: AgentState) -> Dict[str, Any]:
@@ -511,7 +512,7 @@ def _generate_basic_recommendations(assessment_result: Dict) -> List[Dict[str, s
     return recommendations
 
 
-def _execute_llm_analysis(base_report: Dict[str, Any]) -> Dict[str, Any]:
+async def _execute_llm_analysis(base_report: Dict[str, Any]) -> Dict[str, Any]:
     """执行LLM智能分析，包含退避和降级策略"""
     
     # 预定义变量避免UnboundLocalError
@@ -568,7 +569,7 @@ def _execute_llm_analysis(base_report: Dict[str, Any]) -> Dict[str, Any]:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message}
         ]
-        llm_response = _invoke_llm_langgraph(structured_llm, msgs)
+        llm_response = await _invoke_llm_langgraph(structured_llm, msgs)
         
         return {
             "success": True,
@@ -582,7 +583,7 @@ def _execute_llm_analysis(base_report: Dict[str, Any]) -> Dict[str, Any]:
         # 更精确的错误码识别
         if "429" in error_msg:  # 速率限制
             print("⏳ 遇到速率限制，等待20秒后重试...")
-            time.sleep(20)
+            await asyncio.sleep(20)
             try:
                 # 重新构造LLM和消息，避免引用未定义变量
                 if llm is None or structured_llm is None:
@@ -598,7 +599,7 @@ def _execute_llm_analysis(base_report: Dict[str, Any]) -> Dict[str, Any]:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
                 ]
-                llm_response = _invoke_llm_langgraph(structured_llm, msgs)
+                llm_response = await _invoke_llm_langgraph(structured_llm, msgs)
                 return {
                     "success": True,
                     "analysis": dict(llm_response)
@@ -612,7 +613,7 @@ def _execute_llm_analysis(base_report: Dict[str, Any]) -> Dict[str, Any]:
         # 更精确的5xx服务器错误识别
         elif any(code in error_msg for code in ["500", "502", "503", "504", "timeout"]):  # 服务器错误或超时
             print("⏳ 遇到服务器问题，等待2秒后重试...")
-            time.sleep(2)
+            await asyncio.sleep(2)
             try:
                 # 重新构造LLM和消息
                 if llm is None or structured_llm is None:
@@ -627,7 +628,7 @@ def _execute_llm_analysis(base_report: Dict[str, Any]) -> Dict[str, Any]:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
                 ]
-                llm_response = _invoke_llm_langgraph(structured_llm, msgs)
+                llm_response = await _invoke_llm_langgraph(structured_llm, msgs)
                 return {
                     "success": True,
                     "analysis": dict(llm_response)

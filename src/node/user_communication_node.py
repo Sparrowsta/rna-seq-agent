@@ -238,5 +238,7 @@ def _handle_free_query(user_input: str, state: AgentState) -> Dict[str, Any]:
         "response": f"正在分析您的需求: {user_input}",
         "input": user_input,
         "status": "normal",
-        "routing_decision": "normal"
+        "routing_decision": "normal",
+        # 统一对话输入格式：始终以消息列表形式提供给Agent
+        "messages": [{"role": "user", "content": user_input}]
     }
