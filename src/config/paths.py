@@ -24,16 +24,7 @@ class PathManager:
         """
         return self.settings.data_dir / relative_path
     
-    def resolve_config_path(self, relative_path: Union[str, Path]) -> Path:
-        """解析配置文件路径
-        
-        Args:
-            relative_path: 相对于配置目录的路径
-            
-        Returns:
-            完整的绝对路径
-        """
-        return self.settings.config_dir / relative_path
+
     
     def resolve_fastq_path(self, filename: str) -> Path:
         """解析FASTQ文件路径"""

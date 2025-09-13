@@ -69,23 +69,16 @@ WORKDIR /data
 COPY main.py /
 COPY src/ /src/
 
-# 12. 复制静态配置文件到镜像
-# genomes.json已移动到src目录下，无需单独复制
-
-# data目录和.env文件将通过volume映射和环境变量传入
-
-# 文件权限将由运行时的 --user 参数控制
-
-# 13. 设置环境变量
+# 12. 设置环境变量
 ENV HOME=/data \
     NXF_HOME=/data/.nextflow \
     NXF_WORK=/data/work \
     NXF_TEMP=/data/tmp \
     PYTHONPATH=/src \
     NXF_OFFLINE=1
-# 14. 健康检查
+# 13. 健康检查
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python3 -c "import sys; sys.exit(0)"
 
-# 15. 启动命令
+# 14. 启动命令
 CMD ["python3", "-u", "/main.py"]

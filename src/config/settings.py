@@ -17,15 +17,9 @@ class Settings(BaseModel):
     @property
     def is_container_environment(self) -> bool:
         """检测是否在容器环境中运行"""
-        return Path("/config").exists() and Path("/data").exists()
+        # 不使用环境变量；仅基于常见路径特征判断
+        return Path("/data").exists() or Path("/.dockerenv").exists() or Path("/src").exists()
     
-    @property
-    def config_dir(self) -> Path:
-        """配置文件目录"""
-        if self.is_container_environment:
-            return Path("/config")
-        else:
-            return self.project_root / "config"
     
     @property 
     def data_dir(self) -> Path:
@@ -58,29 +52,11 @@ class Settings(BaseModel):
     @property
     def genomes_config_path(self) -> Path:
         """基因组配置文件路径"""
-        # 新位置：genomes.json已移动到src目录下
-        if self.is_container_environment:
-            return Path("/src") / "genomes.json"
-        else:
-            return self.project_root / "src" / "genomes.json"
+        return Path("/src/genomes.json")
     
-    @property
-    def runtime_config_path(self) -> Path:
-        """运行时配置文件路径"""
-        return self.config_dir / "runtime_config.json"
+    # runtime_config_path 与 nextflow_config_path 已废弃
     
-    @property
-    def nextflow_config_path(self) -> Path:
-        """Nextflow配置文件路径"""
-        return self.config_dir / "nextflow.config"
-    
-    @property
-    def templates_dir(self) -> Path:
-        """模板文件目录 - Docker环境兼容"""
-        if self.is_container_environment:
-            return Path("/src/templates")  # Docker中的绝对路径
-        else:
-            return self.project_root / "src" / "templates"  # 本地开发路径
+    # 模板目录已废弃
     
     def validate_environment(self) -> tuple[bool, list[str]]:
         """验证环境配置"""
@@ -90,10 +66,12 @@ class Settings(BaseModel):
         if not self.deepseek_api_key:
             errors.append("DEEPSEEK_API_KEY环境变量未设置")
         
-        # 检查关键目录
-        if not self.config_dir.exists():
-            errors.append(f"配置目录不存在: {self.config_dir}")
+        # 检查关键文件：genomes.json（新的统一位置）
+        gpath = self.genomes_config_path
+        if not gpath.exists():
+            errors.append(f"基因组配置文件不存在: {gpath}")
         
+        # 检查关键目录（config 目录已废弃，不再校验）
         if not self.data_dir.exists():
             errors.append(f"数据目录不存在: {self.data_dir}")
         

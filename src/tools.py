@@ -341,8 +341,7 @@ def list_analysis_history() -> Dict[str, Any]:
                     }
                     
                     # 检查各类文件
-                    for file_name in ["analysis_report.json", "analysis_summary.md", 
-                                    "runtime_config.json", "execution_log.txt"]:
+                    for file_name in ["analysis_report.json", "analysis_summary.md", "execution_log.txt"]:
                         file_path = item / file_name
                         if file_path.exists():
                             analysis_info["files"][file_name] = {
@@ -351,16 +350,6 @@ def list_analysis_history() -> Dict[str, Any]:
                             }
                         else:
                             analysis_info["files"][file_name] = {"exists": False}
-                    
-                    # 尝试读取配置信息
-                    runtime_config = item / "runtime_config.json"
-                    if runtime_config.exists():
-                        try:
-                            with open(runtime_config, 'r', encoding='utf-8') as f:
-                                config_data = json.load(f)
-                            analysis_info["config"] = config_data.get("nextflow_params", {})
-                        except Exception:
-                            analysis_info["config"] = {}
                     
                     # 计算总大小
                     total_size = sum(f.stat().st_size for f in item.rglob("*") if f.is_file())
@@ -450,86 +439,72 @@ def check_tool_availability(tool_name: str) -> Dict[str, Any]:
 
 
 @tool
-def add_genome_config(user_input: str) -> Dict[str, Any]:
-    """智能解析用户输入并添加基因组配置
-    
-    Args:
-        user_input: 包含基因组信息和URL的用户输入
+def add_genome_config(genome_info: Dict[str, Any]) -> Dict[str, Any]:
+    """添加基因组配置到 genomes.json（不在工具内调用LLM）。
+
+    期望输入（由 Normal 节点的 LLM 已解析好并传入）：
+    {
+      "genome_id": "如 hg38/mm39/...",
+      "species": "如 human/mouse/...",
+      "version": "通常与 genome_id 相同",
+      "fasta_url": "FASTA 完整下载 URL",
+      "gtf_url": "GTF 完整下载 URL",
+      // 可选：当需要自定义时可传入以下两项；否则自动按规范路径生成
+      "fasta_path": "genomes/<species>/<version>/<version>.fa",
+      "gtf_path": "genomes/<species>/<version>/<version>.gtf"
+    }
     """
     try:
-        if not user_input.strip():
-            return {
-                "success": False,
-                "error": "请提供基因组信息，包含FASTA和GTF文件的URL"
-            }
-        
-        # 使用LLM解析用户输入
-        from .core import get_shared_llm
-        
-        llm = get_shared_llm()
-        
-        system_prompt = """你是基因组信息解析专家。用户会提供包含FASTA和GTF文件URL的文本，你需要提取信息并返回JSON格式：
+        # 兼容：若传入字符串，尝试按 JSON 解析
+        if isinstance(genome_info, str):
+            try:
+                genome_info = json.loads(genome_info)
+            except Exception:
+                return {"success": False, "error": "genome_info 需为对象或可解析为JSON的字符串"}
 
-{
-  "genome_id": "基因组标识符(如hg38,mm39,ce11)",
-  "species": "物种名称(如human,mouse,caenorhabditis_elegans)", 
-  "version": "版本号(通常与genome_id相同)",
-  "fasta_url": "FASTA文件完整URL",
-  "gtf_url": "GTF文件完整URL"
-}
+        if not genome_info or not isinstance(genome_info, dict):
+            return {"success": False, "error": "参数 genome_info 不能为空，且需为对象"}
 
-要求：
-1. 从URL中智能识别基因组版本和物种
-2. 常见映射：hg->human, mm->mouse, ce->caenorhabditis_elegans, dm->drosophila, rn->rat
-3. 如果无法确定，根据生物信息学常识合理推断
-4. 只返回有效的JSON，不要其他解释"""
-
-        # 解析用户输入
-        response = llm.invoke(f"System: {system_prompt}\n\nHuman: 请解析：{user_input}")
-        parsed_content = str(response.content).strip()
-        
-        # 提取JSON内容
-        try:
-            genome_info = json.loads(parsed_content)
-        except json.JSONDecodeError:
-            json_match = re.search(r'\{.*\}', parsed_content, re.DOTALL)
-            if not json_match:
-                return {"success": False, "error": f"LLM解析失败：{parsed_content}"}
-            genome_info = json.loads(json_match.group())
-        
         # 验证必需字段
-        required_fields = ['genome_id', 'species', 'version', 'fasta_url', 'gtf_url']
-        missing_fields = [field for field in required_fields if not genome_info.get(field)]
+        required_fields = ["genome_id", "species", "version", "fasta_url", "gtf_url"]
+        missing_fields = [f for f in required_fields if not genome_info.get(f)]
         if missing_fields:
             return {"success": False, "error": f"缺少字段：{missing_fields}"}
-        
-        # 构建配置
-        genome_id = genome_info['genome_id']
-        species = genome_info['species']
-        version = genome_info['version']
-        
-        fasta_path = f"genomes/{species}/{version}/{version}.fa"
-        gtf_path = f"genomes/{species}/{version}/{version}.gtf"
-        
+
+        genome_id = str(genome_info["genome_id"]).strip()
+        species = str(genome_info["species"]).strip()
+        version = str(genome_info["version"]).strip()
+        if not genome_id or not species or not version:
+            return {"success": False, "error": "genome_id/species/version 不能为空"}
+
+        # 规范化本地存放路径（允许外部覆盖）
+        fasta_path = genome_info.get("fasta_path") or f"genomes/{species}/{version}/{version}.fa"
+        gtf_path = genome_info.get("gtf_path") or f"genomes/{species}/{version}/{version}.gtf"
+
         new_genome_config = {
             "species": species,
             "version": version,
             "fasta_path": fasta_path,
             "gtf_path": gtf_path,
-            "fasta_url": genome_info['fasta_url'],
-            "gtf_url": genome_info['gtf_url']
+            "fasta_url": genome_info["fasta_url"],
+            "gtf_url": genome_info["gtf_url"]
         }
-        
+
         # 读取现有配置并添加
         config = get_tools_config()
         genomes_file = config.genomes_config_path
-        
+
+        # 如文件不存在，初始化为空对象（尽量自愈）
         if genomes_file.exists():
-            with open(genomes_file, 'r', encoding='utf-8') as f:
-                genomes_data = json.load(f)
+            with open(genomes_file, "r", encoding="utf-8") as f:
+                try:
+                    genomes_data = json.load(f) or {}
+                except json.JSONDecodeError:
+                    genomes_data = {}
         else:
+            genomes_file.parent.mkdir(parents=True, exist_ok=True)
             genomes_data = {}
-        
+
         # 检查重复
         if genome_id in genomes_data:
             return {
@@ -537,26 +512,23 @@ def add_genome_config(user_input: str) -> Dict[str, Any]:
                 "error": f"基因组 {genome_id} 已存在",
                 "existing_config": genomes_data[genome_id]
             }
-        
+
         # 保存配置
         genomes_data[genome_id] = new_genome_config
-        config.path_manager.ensure_directory(config.settings.config_dir)
-        
-        with open(genomes_file, 'w', encoding='utf-8') as f:
+
+        with open(genomes_file, "w", encoding="utf-8") as f:
             json.dump(genomes_data, f, indent=2, ensure_ascii=False)
-        
+
         return {
             "success": True,
             "genome_id": genome_id,
             "config": new_genome_config,
+            "config_path": str(genomes_file),
             "message": f"成功添加基因组配置：{genome_id}"
         }
-        
+
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"添加基因组配置时出错：{str(e)}"
-        }
+        return {"success": False, "error": f"添加基因组配置时出错：{str(e)}"}
 
 
 @tool

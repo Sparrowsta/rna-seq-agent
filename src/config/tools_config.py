@@ -41,10 +41,7 @@ class ToolsConfig:
         """基因组配置文件路径"""
         return self.settings.genomes_config_path
     
-    @property
-    def runtime_config_path(self) -> Path:
-        """运行时配置文件路径"""
-        return self.settings.runtime_config_path
+    # 运行时与 nextflow 配置文件路径已废弃，不再暴露属性
     
     # === 索引目录路径 ===
     def get_star_index_dir(self, fasta_path: Path) -> Path:
@@ -58,8 +55,8 @@ class ToolsConfig:
     # === 确保目录存在 ===
     def ensure_directories(self):
         """确保所有必要目录存在"""
+        # 注意：config 目录已废弃，不再确保其存在
         directories = [
-            self.settings.config_dir,
             self.settings.data_dir,
             self.fastq_dir,
             self.results_dir,
