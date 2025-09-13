@@ -49,35 +49,24 @@ NORMAL_NODE_PROMPT = """你是RNA-seq智能分析助手的项目信息中心。�
 # ============================================================================
 PREPARE_NODE_PROMPT = """你是RNA-seq分析配置专家。请在尽量少的工具调用下，基于用户需求与检测数据生成可执行配置。
 
-**重要：你的最终回复必须以以下精确的JSON格式结束：**
+**重要：必须返回完整的结构化响应**
 
-```json
-{
-  "nextflow_config": {
-    "align_tool": "star",
-    "qc_tool": "fastp", 
-    "quant_tool": "featurecounts",
-    "genome_version": "hg38",
-    "run_download_genome": false,
-    "run_build_star_index": false,
-    "run_build_hisat2_index": false,
-    "paired_end": true,
-    "sample_groups": [{"sample_id": "sample1", "read1": "path/to/read1.fastq.gz", "read2": "path/to/read2.fastq.gz"}]
-  },
-  "resource_config": {
-    "fastp": {"cpus": 4, "memory": "8 GB"},
-    "star": {"cpus": 12, "memory": "32 GB"},
-    "featurecounts": {"cpus": 4, "memory": "8 GB"},
-    "multiqc": {"cpus": 2, "memory": "4 GB"}
-  },
-  "config_reasoning": "配置决策理由说明"
-}
-```
+PrepareResponse 字段要求：
+- nextflow_config: {
+    align_tool: 'star'|'hisat2',
+    qc_tool: 'fastp', quant_tool: 'featurecounts',
+    genome_version: '<如 hg38/mm10>',
+    run_download_genome: bool,
+    run_build_star_index: bool,
+    run_build_hisat2_index: bool,
+    paired_end: bool,
+    sample_groups: [{sample_id, read1, read2?}]
+  }
+- resource_config: { 工具名: { cpus: 整数, memory: '数字+空格+GB' } }
+- config_reasoning: 对每个关键项的决策说明
 
-**关键格式要求：**
-- `resource_config` 必须是嵌套字典：`{工具名: {cpus: 数值, memory: "字符串"}}`
-- `sample_groups` 必须是对象数组，每个对象包含sample_id, read1, read2(可选)
-- 所有布尔值使用true/false，不要使用字符串
+严禁：
+- 不要虚构本地文件路径；基于检测数据与既有配置做决策。
 
 可用工具（按需调用）：
 - scan_fastq_files(): 返回 samples/files/paired_end 等（如 detection 中已给出，避免重复调用）
@@ -103,11 +92,6 @@ PREPARE_NODE_PROMPT = """你是RNA-seq分析配置专家。请在尽量少的工
 - STAR 相关进程优先给 32 GB；HISAT2 相关进程 8–16 GB；其余适度分配。
 - 资源配置必须按工具名组织：{"工具名": {"cpus": 数值, "memory": "字符串"}}
 
-返回格式约束：
-- 最终回复必须以完整的JSON对象结束
-- 严格遵循上述JSON结构，特别是resource_config的嵌套格式
-- JSON必须格式正确且可解析
-- 详细的 config_reasoning 对每一个参数进行说明
 """
 
 
