@@ -6,6 +6,7 @@ from typing import Dict, Any, List
 from datetime import datetime
 from pydantic import BaseModel, Field
 from ..state import AgentState
+from ..logging_bootstrap import get_logger, log_llm_preview
 from ..core import get_shared_llm
 import json
 
@@ -58,10 +59,8 @@ async def modify_node(state: AgentState) -> Dict[str, Any]:
     - Prepare Node 只在初始配置时使用一次
     - 所有后续修改都通过 Modify Node 完成
     """
-    
-    print(f"\n{'='*60}")
-    print(f"🔧 **配置修改节点**")
-    print(f"{'='*60}")
+    logger = get_logger("rna.nodes.modify")
+    logger.info("配置修改节点启动")
     
     # 获取修改需求
     modify_requirements = state.modify_requirements or {}
@@ -74,13 +73,11 @@ async def modify_node(state: AgentState) -> Dict[str, Any]:
     current_star = state.star_params or {}
     current_featurecounts = state.featurecounts_params or {}
     
-    print(f"\n📝 用户修改需求: {raw_input}")
-    print(f"\n📋 当前配置概览:")
-    print(f"   - Nextflow配置: {len(current_nextflow)} 项")
-    print(f"   - 资源配置: {len(current_resource)} 个进程")
-    print(f"   - FastP参数: {len(current_fastp)} 项")
-    print(f"   - STAR参数: {len(current_star)} 项")
-    print(f"   - FeatureCounts参数: {len(current_featurecounts)} 项")
+    logger.info(f"用户修改需求: {raw_input}")
+    logger.debug(
+        "当前配置概览 | nextflow=%d 资源进程=%d fastp=%d star=%d featurecounts=%d",
+        len(current_nextflow), len(current_resource), len(current_fastp), len(current_star), len(current_featurecounts)
+    )
     
     # 构建LLM提示
     system_prompt = """你是RNA-seq分析配置专家。请解析用户的修改需求，将其转换为具体的参数修改。
@@ -175,8 +172,12 @@ FeatureCounts参数：
             {"role": "user", "content": user_prompt}
         ]
         
-        print(f"\n🤖 正在解析修改需求...")
+        logger.info("解析修改需求（调用LLM）...")
         modify_request = await llm_with_structure.ainvoke(messages)
+        try:
+            log_llm_preview(logger, "modify", modify_request)
+        except Exception:
+            pass
         
         # 应用修改
         updated_nextflow = current_nextflow.copy()
@@ -187,26 +188,26 @@ FeatureCounts参数：
         
         # 应用Nextflow配置修改
         if modify_request.nextflow_changes:
-            print(f"\n📦 应用Nextflow配置修改:")
+            logger.info("应用Nextflow配置修改")
             for key, value in modify_request.nextflow_changes.items():
                 old_value = updated_nextflow.get(key, "未设置")
                 updated_nextflow[key] = value
-                print(f"   - {key}: {old_value} → {value}")
+                logger.debug(f"nextflow.{key}: {old_value} → {value}")
         
         # 应用资源配置修改
         if modify_request.resource_changes:
-            print(f"\n💻 应用资源配置修改:")
+            logger.info("应用资源配置修改")
             for process, changes in modify_request.resource_changes.items():
                 if process not in updated_resource:
                     updated_resource[process] = {}
                 for key, value in changes.items():
                     old_value = updated_resource[process].get(key, "未设置")
                     updated_resource[process][key] = value
-                    print(f"   - {process}.{key}: {old_value} → {value}")
+                    logger.debug(f"{process}.{key}: {old_value} → {value}")
         
         # 应用FastP参数修改（统一键名策略：仅接受精确键名，忽略未知键）
         if modify_request.fastp_changes:
-            print(f"\n🧬 应用FastP参数修改:")
+            logger.info("应用FastP参数修改")
 
             allowed_keys = {
                 "qualified_quality_phred", "unqualified_percent_limit", "n_base_limit", "length_required",
@@ -232,7 +233,7 @@ FeatureCounts参数：
 
             for key, value in modify_request.fastp_changes.items():
                 if key not in allowed_keys:
-                    print(f"   - 跳过未知键: {key}")
+                    logger.warning(f"跳过未知FastP键: {key}")
                     continue
                 if key in {
                     "adapter_trimming", "quality_filtering", "length_filtering",
@@ -244,11 +245,11 @@ FeatureCounts参数：
                     value = _to_bool(value)
                 old_value = updated_fastp.get(key, "未设置")
                 updated_fastp[key] = value
-                print(f"   - {key}: {old_value} → {value}")
+                logger.debug(f"fastp.{key}: {old_value} → {value}")
         
         # 应用STAR参数修改
         if modify_request.star_changes:
-            print(f"\n⭐ 应用STAR参数修改:")
+            logger.info("应用STAR参数修改")
             
             star_allowed_keys = {
                 "outSAMtype", "outSAMunmapped", "outSAMattributes",
@@ -263,15 +264,15 @@ FeatureCounts参数：
             
             for key, value in modify_request.star_changes.items():
                 if key not in star_allowed_keys:
-                    print(f"   - 跳过未知STAR键: {key}")
+                    logger.warning(f"跳过未知STAR键: {key}")
                     continue
                 old_value = updated_star.get(key, "未设置")
                 updated_star[key] = value
-                print(f"   - {key}: {old_value} → {value}")
+                logger.debug(f"star.{key}: {old_value} → {value}")
         
         # 应用FeatureCounts参数修改
         if modify_request.featurecounts_changes:
-            print(f"\n📊 应用FeatureCounts参数修改:")
+            logger.info("应用FeatureCounts参数修改")
             
             fc_allowed_keys = {
                 "-s", "-p", "-B", "-C", "-t", "-g", "-M", "-O", "--fraction", "-Q",
@@ -284,7 +285,7 @@ FeatureCounts参数：
             
             for key, value in modify_request.featurecounts_changes.items():
                 if key not in fc_allowed_keys:
-                    print(f"   - 跳过未知FeatureCounts键: {key}")
+                    logger.warning(f"跳过未知FeatureCounts键: {key}")
                     continue
                 # 处理布尔类型参数
                 if key in {"-p", "-B", "-C", "-M", "-O", "--fraction", "-f", "-J", 
@@ -292,13 +293,12 @@ FeatureCounts参数：
                     value = _to_bool(value)
                 old_value = updated_featurecounts.get(key, "未设置")
                 updated_featurecounts[key] = value
-                print(f"   - {key}: {old_value} → {value}")
+                logger.debug(f"featurecounts.{key}: {old_value} → {value}")
         
         # 显示验证提示
         if modify_request.validation_notes:
-            print(f"\n⚠️ 参数验证提示:")
             for note in modify_request.validation_notes:
-                print(f"   - {note}")
+                logger.warning(f"参数验证提示: {note}")
         
         # 记录修改历史
         modification_history = getattr(state, 'modification_history', []) or []
@@ -316,9 +316,9 @@ FeatureCounts参数：
         }
         modification_history.append(modification_record)
         
-        print(f"\n✅ 配置修改完成！")
-        print(f"💭 修改原因: {modify_request.modification_reason}")
-        print(f"\n🔄 返回到确认节点查看更新后的配置...")
+        logger.info("配置修改完成")
+        logger.info(f"修改原因: {modify_request.modification_reason}")
+        logger.info("返回到确认节点查看更新后的配置")
         
         # 返回更新后的状态
         return {
@@ -355,8 +355,8 @@ FeatureCounts参数：
         }
         
     except Exception as e:
-        print(f"\n❌ 修改解析失败: {str(e)}")
-        print(f"🔄 返回到用户确认节点...")
+        logger.error(f"修改解析失败: {str(e)}", exc_info=True)
+        logger.info("返回到用户确认节点")
         
         return {
             "success": False,

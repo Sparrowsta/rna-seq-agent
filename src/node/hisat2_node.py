@@ -8,7 +8,10 @@ from ..state import AgentState, Hisat2Response
 from ..core import get_shared_llm
 from ..prompts import HISAT2_OPTIMIZATION_PROMPT
 from ..tools import download_genome_assets, build_hisat2_index, run_nextflow_hisat2, parse_hisat2_metrics, scan_genome_files
+from ..logging_bootstrap import get_logger, log_llm_preview
 import json
+
+logger = get_logger("rna.nodes.hisat2")
 
 
 def create_hisat2_agent():
@@ -43,7 +46,7 @@ async def hisat2_node(state: AgentState) -> Dict[str, Any]:
     - 生成比对统计
     - 更新状态信息
     """
-    print("\n🎯 HISAT2比对节点开始执行...")
+    logger.info("HISAT2比对节点开始执行")
 
     # 更新执行进度
     completed_steps = state.completed_steps.copy() if state.completed_steps else []
@@ -68,11 +71,15 @@ async def hisat2_node(state: AgentState) -> Dict[str, Any]:
         }
 
     try:
-        print(f"⚡ [AGENT] 使用HISAT2 Agent进行比对与资源管理 (模式: {execution_mode})")
+        logger.info(f"[AGENT] 使用HISAT2 Agent进行比对与资源管理 (模式: {execution_mode})")
 
         if execution_mode == "single":
             # 单次执行：仅执行比对，不做参数优化
             hisat2_response = await _call_hisat2_optimization_agent(state)
+            try:
+                log_llm_preview(logger, "hisat2", hisat2_response)
+            except Exception:
+                pass
 
             # 透传Agent返回的results（results_dir, per_sample_outputs）
             agent_results = getattr(hisat2_response, 'results', None)
@@ -89,7 +96,7 @@ async def hisat2_node(state: AgentState) -> Dict[str, Any]:
             result = {
                 "success": True,
                 "status": "hisat2_completed",
-                "response": "✅ HISAT2比对完成（单次执行模式）\n\n🚀 **执行详情**: 已完成比对，保持原有参数配置",
+                "response": "✅ HISAT2比对完成（单次执行模式）\n\n🚀 执行详情: 已完成比对，保持原有参数配置",
                 "current_step": "hisat2",
                 "completed_steps": completed_steps,
                 "hisat2_results": hisat2_results,
@@ -99,6 +106,10 @@ async def hisat2_node(state: AgentState) -> Dict[str, Any]:
         elif execution_mode == "optimized":
             # 精细优化：执行+解析+应用优化
             hisat2_response = await _call_hisat2_optimization_agent(state)
+            try:
+                log_llm_preview(logger, "hisat2", hisat2_response)
+            except Exception:
+                pass
 
             # 立即更新执行参数
             optimized_params = hisat2_response.hisat2_params
@@ -131,13 +142,17 @@ async def hisat2_node(state: AgentState) -> Dict[str, Any]:
             optimization_count = len(optimization_params_changes or {})
             result["response"] = (
                 f"✅ HISAT2比对完成并已优化\n- 比对状态: 成功完成\n- 参数优化: 应用了{optimization_count}个优化参数\n\n"
-                f"⚡ **优化详情**: {optimization_reasoning}"
+                f"⚡ 优化详情: {optimization_reasoning}"
             )
             return result
             
         elif execution_mode == "yolo":
             # YOLO模式：与optimized相同的执行逻辑，但会自动进入下一步
             hisat2_response = await _call_hisat2_optimization_agent(state)
+            try:
+                log_llm_preview(logger, "hisat2", hisat2_response)
+            except Exception:
+                pass
 
             # 立即更新执行参数
             optimized_params = hisat2_response.hisat2_params
@@ -170,13 +185,17 @@ async def hisat2_node(state: AgentState) -> Dict[str, Any]:
             optimization_count = len(optimization_params_changes or {})
             result["response"] = (
                 "🎯 HISAT2比对完成（YOLO自动模式）\n\n"
-                f"⚡ **优化执行**: 已应用{optimization_count}个优化参数，自动进入下一步"
+                f"⚡ 优化执行: 已应用{optimization_count}个优化参数，自动进入下一步"
             )
             return result
 
         elif execution_mode == "batch_optimize":
             # 批次优化：执行+解析+收集优化，不应用
             hisat2_response = await _call_hisat2_optimization_agent(state)
+            try:
+                log_llm_preview(logger, "hisat2", hisat2_response)
+            except Exception:
+                pass
 
             # 立即更新参数以供批次收集使用
             optimized_params = hisat2_response.hisat2_params
@@ -225,8 +244,12 @@ async def hisat2_node(state: AgentState) -> Dict[str, Any]:
 
         else:
             # 未知模式：按 single 处理
-            print(f"ℹ️ 未知执行模式 '{execution_mode}'，按 single 处理")
+            logger.warning(f"未知执行模式 '{execution_mode}'，按 single 处理")
             hisat2_response = await _call_hisat2_optimization_agent(state)
+            try:
+                log_llm_preview(logger, "hisat2", hisat2_response)
+            except Exception:
+                pass
             agent_results = getattr(hisat2_response, 'results', None)
             hisat2_results = {
                 "success": True,
@@ -238,14 +261,14 @@ async def hisat2_node(state: AgentState) -> Dict[str, Any]:
             return {
                 "success": True,
                 "status": "hisat2_completed",
-                "response": "✅ HISAT2比对完成（按single处理）\n\n🚀 **执行详情**: 已完成比对，保持原有参数配置",
+                "response": "✅ HISAT2比对完成（按single处理）\n\n🚀 执行详情: 已完成比对，保持原有参数配置",
                 "current_step": "hisat2",
                 "completed_steps": completed_steps,
                 "hisat2_results": hisat2_results,
             }
 
     except Exception as e:
-        print(f"❌ HISAT2节点执行失败: {str(e)}")
+        logger.error(f"HISAT2节点执行失败: {str(e)}", exc_info=True)
         return {
             "success": False,
             "status": "hisat2_failed",
@@ -314,6 +337,14 @@ async def _call_hisat2_optimization_agent(state: AgentState) -> Hisat2Response:
     agent = create_hisat2_agent()
     messages = [{"role": "user", "content": user_prompt}]
     result = await agent.ainvoke({"messages": messages})
+    try:
+        structured = result.get("structured_response") if isinstance(result, dict) else None
+        if structured:
+            log_llm_preview(logger, "hisat2", structured)
+        else:
+            log_llm_preview(logger, "hisat2.raw", {"keys": list(result.keys())[:10]})
+    except Exception:
+        pass
 
     # 提取结构化响应
     structured = result.get("structured_response") if isinstance(result, dict) else None
@@ -357,7 +388,7 @@ def _ensure_bam_paths_from_per_sample(hisat2_results: Dict[str, Any]) -> Dict[st
             enhanced["bam_files_verified"] = False
     
     except Exception as e:
-        print(f"⚠️ 提取BAM路径时出错: {e}")
+        logger.warning(f"提取BAM路径时出错: {e}")
         enhanced["bam_files_verified"] = False
         enhanced.setdefault("error", str(e))
     

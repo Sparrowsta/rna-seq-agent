@@ -20,12 +20,8 @@ def render_confirm(view: ConfirmView) -> List[str]:
     """
     lines = []
     
-    # 页面标题
-    lines.extend([
-        f"\n{'='*60}",
-        f"🎯 **分析配置确认**",
-        f"{'='*60}"
-    ])
+    # 页面标题（轻量版样式，无首行空白）
+    lines.extend(["-" * 60, "🎯 分析配置确认", "-" * 60])
     
     # 配置摘要
     lines.extend(_render_summary(view.summary))
@@ -40,10 +36,9 @@ def render_confirm(view: ConfirmView) -> List[str]:
     
     # 配置理由
     if view.config_reasoning:
-        lines.extend([
-            f"\n💭 **配置理由:**",
-            f"   {view.config_reasoning}"
-        ])
+        lines.append("")
+        lines.append("💭 配置理由:")
+        lines.append(f"   {view.config_reasoning}")
     
     # 执行进度信息
     lines.extend(_render_progress(view))
@@ -51,7 +46,8 @@ def render_confirm(view: ConfirmView) -> List[str]:
     # 命令提示
     lines.extend(_render_commands(view.commands))
     
-    lines.append(f"{'='*60}")
+    # 结尾细分割线
+    lines.append("-" * 60)
     
     return lines
 
@@ -59,9 +55,9 @@ def render_confirm(view: ConfirmView) -> List[str]:
 def _render_summary(summary_items: List[SummaryItem]) -> List[str]:
     """渲染配置摘要"""
     if not summary_items:
-        return [f"\n📋 **配置摘要:** ⚠️ 无配置信息"]
+        return ["", "📋 配置摘要: ⚠️ 无配置信息"]
     
-    lines = [f"\n📋 **配置摘要:**"]
+    lines = ["", "📋 配置摘要"]
     
     for item in summary_items:
         if not item.visible:
@@ -80,9 +76,9 @@ def _render_summary(summary_items: List[SummaryItem]) -> List[str]:
 def _render_resources(resource_items: List[ResourceItem]) -> List[str]:
     """渲染资源配置"""
     if not resource_items:
-        return [f"\n🖥️ **资源配置:** 使用默认设置"]
+        return ["", "🖥️ 资源配置: 使用默认设置"]
     
-    lines = [f"\n🖥️ **资源配置:**"]
+    lines = ["", "🖥️ 资源配置"]
     
     for item in resource_items:
         lines.append(f"   {item.display_name}: {item.cpus}核, {item.memory}")
@@ -97,7 +93,7 @@ def _render_section(section: Section) -> List[str]:
     if not section.visible:
         return []
     
-    lines = [f"\n{section.icon} **{section.title}**"]
+    lines = ["", f"{section.icon} {section.title}"]
     
     # Effective（当前生效）
     if section.effective:
@@ -107,26 +103,34 @@ def _render_section(section: Section) -> List[str]:
     
     # User Mods（用户修改）
     if section.user_mods:
-        lines.append(f"\n   ✏️ 用户修改（Mods）:")
+        lines.append("")
+        lines.append(f"   ✏️ 用户修改（Mods）：")
         for item in section.user_mods:
             # 这里需要显示变化，但我们在ParamItem中没有old_value
             # 暂时只显示当前值
             lines.append(f"     - {item.key}: {item.value}")
     else:
-        lines.append(f"\n   ✏️ 用户修改（Mods）: 无")
+        lines.append("")
+        lines.append(f"   ✏️ 用户修改（Mods）： 无")
     
     # Optimizations（优化建议）
     if section.optimizations:
-        lines.append(f"\n   ⚙️ 优化建议（Opt）:")
+        lines.append("")
+        lines.append(f"   ⚙️ 优化建议（Opt）：")
         for item in section.optimizations:
-            status_tag = " [applied]" if item.applied_optimization else ""
-            lines.append(f"     - {item.key}: {item.value} (已应用优化){status_tag}")
+            if getattr(item, 'applied_optimization', False):
+                suffix = " (已应用优化)"
+            else:
+                suffix = ""
+            lines.append(f"     - {item.key}: {item.value}{suffix}")
     else:
-        lines.append(f"\n   ⚙️ 优化建议（Opt）: 无")
+        lines.append("")
+        lines.append(f"   ⚙️ 优化建议（Opt）： 无")
     
     # 优化理由
     if section.reasoning_text:
-        lines.append(f"\n   📝 优化理由：")
+        lines.append("")
+        lines.append(f"   📝 优化理由：")
         for line in section.reasoning_text.splitlines():
             if line.strip():
                 lines.append(f"     {line.strip()}")
@@ -140,16 +144,16 @@ def _render_progress(view: ConfirmView) -> List[str]:
     
     # 批次优化完成提示
     if view.batch_optimization_complete and view.batch_optimizations_count > 0:
-        lines.append(f"\n✅ **批次优化完成**: 已收集{view.batch_optimizations_count}个工具的优化参数并应用")
+        lines.append("")
+        lines.append(f"✅ 批次优化完成: 已收集{view.batch_optimizations_count}个工具的优化参数并应用")
     
     # 执行进度
     if view.completed_steps:
-        lines.extend([
-            f"\n📊 **执行进度**: {' -> '.join(view.completed_steps)}"
-        ])
+        lines.append("")
+        lines.append(f"📊 执行进度: {' -> '.join(view.completed_steps)}")
         
         if view.current_step:
-            lines.append(f"   🔄 **当前步骤**: {view.current_step}")
+            lines.append(f"   🔄 当前步骤: {view.current_step}")
     
     return lines
 
@@ -159,7 +163,7 @@ def _render_commands(commands: List[CommandHint]) -> List[str]:
     if not commands:
         return []
     
-    lines = [f"\n🔄 **请选择下一步操作:**"]
+    lines = ["", "🔄 请选择下一步操作:"]
     
     for cmd in commands:
         if cmd.available and cmd.index is not None:

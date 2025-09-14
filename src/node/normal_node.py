@@ -3,15 +3,17 @@ from ..state import AgentState, NormalResponse
 from ..tools import (
     scan_fastq_files,
     scan_genome_files, 
-    get_help,
     add_genome_config,
     get_project_overview,
     list_analysis_history
 )
 from ..core import get_shared_llm
 from ..prompts import NORMAL_NODE_PROMPT
+from ..logging_bootstrap import get_logger, log_llm_preview
 
 from langgraph.prebuilt import create_react_agent
+
+logger = get_logger("rna.nodes.normal")
 
 def create_normal_agent():
     """创建Normal节点的React Agent - 支持结构化输出"""
@@ -28,7 +30,6 @@ def create_normal_agent():
         scan_fastq_files,
         scan_genome_files,
         add_genome_config,
-        get_help
     ]
     
     # 使用LangGraph预构件，使用精简的响应格式
@@ -54,6 +55,13 @@ async def normal_node(state: AgentState) -> Dict[str, Any]:
         
         # LangGraph的create_react_agent使用response_format时，结构化输出在result["structured_response"]中
         structured_response = result.get("structured_response")
+        try:
+            if structured_response:
+                log_llm_preview(logger, "normal", structured_response)
+            else:
+                log_llm_preview(logger, "normal.raw", {"keys": list(result.keys())[:10]})
+        except Exception:
+            pass
         
         if not structured_response:
             # 如果没有结构化响应，返回失败状态
@@ -77,9 +85,7 @@ async def normal_node(state: AgentState) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        print(f"❌ Normal节点处理出错: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Normal节点处理出错: {str(e)}", exc_info=True)
         
         return {
             "success": False,

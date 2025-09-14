@@ -1,24 +1,27 @@
 from langgraph.graph import END
 from .state import AgentState
+from .logging_bootstrap import get_logger
+
+logger = get_logger("rna.route")
 
 def route_from_user_communication(state: AgentState) -> str:
     """User Communication节点后的路由决策"""
     routing_decision = state.routing_decision
     
     if routing_decision == "plan":
-        print("🚀 进入检测流程")
+        logger.info("进入检测流程")
         return "detect"
     elif routing_decision == "execute":  # 新增execute模式支持
-        print("🚀 进入执行模式检测流程")
+        logger.info("进入执行模式检测流程")
         return "detect"
     elif routing_decision == "normal":
-        print("🧠 进入意图分析")
+        logger.info("进入意图分析")
         return "normal"
     elif routing_decision == "end":
-        print("🔚 会话结束")
+        logger.info("会话结束")
         return "end"
     else:
-        print(f"⚠️ 未知路由决策: {routing_decision}，请重新输入")
+        logger.warning(f"未知路由决策: {routing_decision}，请重新输入")
         return "normal"
 
 
@@ -26,41 +29,41 @@ def route_after_confirm(state: AgentState) -> str:
     """用户确认后的路由决策"""
     user_decision = state.user_decision.lower() if state.user_decision else ""
     
-    print(f"\n🔍 [DEBUG] 路由决策分析:")
-    print(f"   用户决策: '{state.user_decision}'")
-    print(f"   标准化后: '{user_decision}'")
+    logger.debug(f"[DEBUG] 路由决策分析:")
+    logger.debug(f"用户决策: '{state.user_decision}'")
+    logger.debug(f"标准化后: '{user_decision}'")
     
     if user_decision == "execute":
-        print("🚀 [ROUTE] 用户选择执行分析")
-        print("🧬 [ROUTE] 统一路由到FastP节点处理")
+        logger.info("[ROUTE] 用户选择执行分析")
+        logger.info("[ROUTE] 统一路由到FastP节点处理")
         return "fastp"
     elif user_decision in {"fastp", "star", "featurecounts"}:
         # 直接回到指定步骤对应的Agent（用于 /re_opt 二次优化等）
-        print(f"♻️ [ROUTE] 返回到当前步骤进行二次优化: {user_decision}")
+        logger.info(f"[ROUTE] 返回到当前步骤进行二次优化: {user_decision}")
         return user_decision
     elif user_decision == "continue_star":
-        print("🎯 [ROUTE] 继续到STAR比对")
+        logger.info("[ROUTE] 继续到STAR比对")
         return "star"
     elif user_decision == "continue_hisat2":
-        print("🎯 [ROUTE] 继续到HISAT2比对")
+        logger.info("[ROUTE] 继续到HISAT2比对")
         return "hisat2"
     elif user_decision == "continue_featurecounts":
-        print("📊 [ROUTE] 继续到FeatureCounts定量")
+        logger.info("[ROUTE] 继续到FeatureCounts定量")
         return "featurecounts"
     elif user_decision == "continue_analysis":
-        print("📈 [ROUTE] 继续到综合分析")
+        logger.info("[ROUTE] 继续到综合分析")
         return "analysis"
     elif user_decision == "modify":
-        print("🔧 [ROUTE] 用户选择修改配置")
+        logger.info("[ROUTE] 用户选择修改配置")
         return "modify"
     elif user_decision == "cancel":
-        print("❌ [ROUTE] 用户选择取消分析")
+        logger.info("[ROUTE] 用户选择取消分析")
         return "cancel"
     elif user_decision == "quit":
-        print("🚪 [ROUTE] 用户选择退出程序")
+        logger.info("[ROUTE] 用户选择退出程序")
         return "quit"
     else:
-        print(f"⚠️ [ROUTE] 未识别的决策 '{user_decision}'，请重新选择")
+        logger.warning(f"[ROUTE] 未识别的决策 '{user_decision}'，请重新选择")
         return "user_confirm"
 
 def route_after_fastp(state: AgentState) -> str:
@@ -75,10 +78,10 @@ def route_after_fastp(state: AgentState) -> str:
     fastp_results = getattr(state, 'fastp_results', {}) or {}
 
     fastp_success = fastp_results.get('success', False)
-    print(f"\n🔎 [ROUTE-FASTP] mode={mode}, success={fastp_success}")
+    logger.debug(f"[ROUTE-FASTP] mode={mode}, success={fastp_success}")
     if not fastp_success:
-        print("❌ [ROUTE] FastP未成功或结果缺失，返回确认界面")
-        print(f"   [DEBUG] fastp_results keys: {list(fastp_results.keys())}")
+        logger.info("[ROUTE] FastP未成功或结果缺失，返回确认界面")
+        logger.debug(f"[DEBUG] fastp_results keys: {list(fastp_results.keys())}")
         return "user_confirm"
 
     # 选择比对器 - 优先级：配置 > 用户需求 > 默认(star)
@@ -98,22 +101,22 @@ def route_after_fastp(state: AgentState) -> str:
     # 确保比对器名称标准化
     aligner = aligner.lower()
     if aligner not in ['star', 'hisat2']:
-        print(f"⚠️ [ROUTE] 未知比对器 '{aligner}'，使用默认STAR")
+        logger.warning(f"[ROUTE] 未知比对器 '{aligner}'，使用默认STAR")
         aligner = 'star'
 
-    print(f"🧬 [ROUTE] 选择的比对器: {aligner.upper()}")
+    logger.info(f"[ROUTE] 选择的比对器: {aligner.upper()}")
 
     if mode == 'yolo':
-        print(f"🎯 [ROUTE] YOLO模式：FastP完成后自动进入{aligner.upper()}比对")
+        logger.info(f"[ROUTE] YOLO模式：FastP完成后自动进入{aligner.upper()}比对")
         return aligner
     elif mode == 'optimized':
-        print("🔁 [ROUTE] 优化执行模式：FastP 完成后返回确认进行参数微调")
+        logger.info("[ROUTE] 优化执行模式：FastP 完成后返回确认进行参数微调")
         return "user_confirm"
     elif mode == 'batch_optimize':
-        print(f"📊 [ROUTE] 批次优化模式：FastP 完成后继续{aligner.upper()}比对（收集优化建议）")
+        logger.info(f"[ROUTE] 批次优化模式：FastP 完成后继续{aligner.upper()}比对（收集优化建议）")
         return aligner
     else:  # single 及其他
-        print(f"🧬 [ROUTE] 单次执行模式：FastP 完成后继续{aligner.upper()}比对")
+        logger.info(f"[ROUTE] 单次执行模式：FastP 完成后继续{aligner.upper()}比对")
         return aligner
 
 
@@ -128,21 +131,21 @@ def route_after_star(state: AgentState) -> str:
     star_results = getattr(state, 'star_results', {}) or {}
 
     star_success = star_results.get('success', False)
-    print(f"\n🔎 [ROUTE-STAR] mode={mode}, success={star_success}")
+    logger.debug(f"[ROUTE-STAR] mode={mode}, success={star_success}")
     
     # 检查STAR是否成功完成
     if star_success:
         if mode == 'yolo':
-            print("🎯 [ROUTE] YOLO模式：STAR完成后自动进入FeatureCount定量")
+            logger.info("[ROUTE] YOLO模式：STAR完成后自动进入FeatureCount定量")
             return "featurecounts"
         elif mode == 'optimized':
-            print("🔁 [ROUTE] 优化执行模式：STAR完成后返回确认进行参数微调")
+            logger.info("[ROUTE] 优化执行模式：STAR完成后返回确认进行参数微调")
             return "user_confirm"
         else:  # single 或 batch_optimize 等
-            print("🧬 [ROUTE] STAR比对成功，继续FeatureCount定量")
+            logger.info("[ROUTE] STAR比对成功，继续FeatureCount定量")
             return "featurecounts"
     else:
-        print("❌ [ROUTE] star执行失败，返回确认界面")
+        logger.info("[ROUTE] star执行失败，返回确认界面")
         return "user_confirm"
        
 
@@ -157,21 +160,21 @@ def route_after_hisat2(state: AgentState) -> str:
     hisat2_results = getattr(state, 'hisat2_results', {}) or {}
 
     hisat2_success = hisat2_results.get('success', False)
-    print(f"\n🔎 [ROUTE-HISAT2] mode={mode}, success={hisat2_success}")
+    logger.debug(f"[ROUTE-HISAT2] mode={mode}, success={hisat2_success}")
     
     # 检查HISAT2是否成功完成
     if hisat2_success:
         if mode == 'yolo':
-            print("🎯 [ROUTE] YOLO模式：HISAT2完成后自动进入FeatureCount定量")
+            logger.info("[ROUTE] YOLO模式：HISAT2完成后自动进入FeatureCount定量")
             return "featurecounts"
         elif mode == 'optimized':
-            print("🔁 [ROUTE] 优化执行模式：HISAT2完成后返回确认进行参数微调")
+            logger.info("[ROUTE] 优化执行模式：HISAT2完成后返回确认进行参数微调")
             return "user_confirm"
         else:  # single 或 batch_optimize 等
-            print("🧬 [ROUTE] HISAT2比对成功，继续FeatureCount定量")
+            logger.info("[ROUTE] HISAT2比对成功，继续FeatureCount定量")
             return "featurecounts"
     else:
-        print("❌ [ROUTE] hisat2执行失败，返回确认界面")
+        logger.info("[ROUTE] hisat2执行失败，返回确认界面")
         return "user_confirm"
 
 
@@ -187,24 +190,24 @@ def route_after_featurecount(state: AgentState) -> str:
     featurecounts_results = getattr(state, 'featurecounts_results', {}) or {}
 
     fc_success = featurecounts_results.get('success', False)
-    print(f"\n🔎 [ROUTE-FEATURECOUNTS] mode={mode}, success={fc_success}")
+    logger.debug(f"[ROUTE-FEATURECOUNTS] mode={mode}, success={fc_success}")
 
     # 检查FeatureCounts是否成功完成
     if fc_success:
         if mode == 'yolo':
-            print("🎯 [ROUTE] YOLO模式：FeatureCount完成后自动进入综合分析")
+            logger.info("[ROUTE] YOLO模式：FeatureCount完成后自动进入综合分析")
             return "analysis"
         elif mode == 'optimized':
-            print("🔁 [ROUTE] 优化执行模式：FeatureCount完成后返回确认进行参数微调")
+            logger.info("[ROUTE] 优化执行模式：FeatureCount完成后返回确认进行参数微调")
             return "user_confirm"
         elif mode == 'batch_optimize':
-            print("📊 [ROUTE] 批量优化模式：FeatureCount完成，返回确认界面显示优化建议")
+            logger.info("[ROUTE] 批量优化模式：FeatureCount完成，返回确认界面显示优化建议")
             return "user_confirm"
         else:  # single 或其他
-            print("🧬 [ROUTE] FeatureCount定量成功，进入综合分析")
+            logger.info("[ROUTE] FeatureCount定量成功，进入综合分析")
             return "analysis"
     else:
-        print("❌ [ROUTE] FeatureCount定量失败，返回确认界面")
+        logger.info("[ROUTE] FeatureCount定量失败，返回确认界面")
         return "user_confirm"
 
 
@@ -223,10 +226,10 @@ def route_to_analysis(state: AgentState) -> str:
         featurecounts_results = getattr(state, 'featurecounts_results', {})
         
         if fastp_results or star_results or featurecounts_results:
-            print("🧬 [ROUTE] 满足分析条件，进入综合分析")
+            logger.info("[ROUTE] 满足分析条件，进入综合分析")
             return "analysis"
     
-    print("❌ [ROUTE] 不满足分析条件，返回确认界面")
+    logger.info("[ROUTE] 不满足分析条件，返回确认界面")
     return "user_confirm"
 
 
@@ -241,11 +244,11 @@ def route_after_analysis(state: AgentState) -> str:
     
     if analysis_success:
         if mode == 'yolo':
-            print("🎯 [ROUTE] YOLO模式：分析完成，流程结束")
+            logger.info("[ROUTE] YOLO模式：分析完成，流程结束")
             return END
         else:
-            print("✅ [ROUTE] 分析完成，返回用户确认界面")
+            logger.info("[ROUTE] 分析完成，返回用户确认界面")
             return "user_confirm"
     else:
-        print("❌ [ROUTE] 分析失败，返回用户确认界面")
+        logger.info("[ROUTE] 分析失败，返回用户确认界面")
         return "user_confirm"

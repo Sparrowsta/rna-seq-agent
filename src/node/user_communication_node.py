@@ -16,9 +16,9 @@ async def user_communication_node(state: AgentState) -> Dict[str, Any]:
     
     # 检查并显示来自normal节点的结果
     if hasattr(state, 'query_response') and state.query_response:
-        print()
+        print("")
         print(f"🎯 {state.query_response}")
-        print()
+        print("")
     
     # 获取用户输入并解析
     try:
@@ -42,24 +42,24 @@ async def user_communication_node(state: AgentState) -> Dict[str, Any]:
 
 
 def _display_main_menu():
-    """显示主入口菜单"""
-    print(f"\n{'='*60}")
-    print(f"🔬 RNA-seq智能分析助手 - 本地FASTQ数据分析工具")
-    print(f"{'='*60}")
-    print()
-    print("请选择操作:")
-    print("    1) 进入执行模式 (Execute Mode)")
-    print("    2) 浏览 FASTQ 文件")
-    print("    3) 检查/管理基因组配置 (仅添加)")
-    print("    4) 查看帮助")
-    print("    5) 退出程序")
-    print()
-    print("💡 **使用提示:**")
-    print("   • 数字选择：输入对应数字进行操作")
-    print("   • 自由查询：直接输入问题进行智能分析")
-    print("   • 支持中文自然语言交互")
-    print("   • 基于Docker容器化，确保分析环境一致性")
-    print(f"{'='*60}")
+    """显示主入口菜单（使用新样式组件）"""
+    lines = []
+    lines += ["-" * 60, "🔬 RNA‑seq 智能分析助手", "-" * 60]
+    lines.append("📋 请选择操作")
+    lines += [
+        "  1) 执行分析",
+        "  2) 浏览 FASTQ 文件",
+        "  3) 基因组配置（仅添加）",
+        "  4) 帮助",
+        "  5) 退出",
+        "",
+        "💡 使用提示:",
+        "  • 数字选择：输入对应数字进行操作",
+        "  • 自由查询：直接输入问题进行智能分析",
+        "  • 支持中文自然语言交互",
+        "  • 基于Docker容器化，确保分析环境一致性",
+    ]
+    print("\n" + "\n".join(lines))
 
 
 def _parse_main_menu_input(user_input: str, state: AgentState) -> Dict[str, Any]:
@@ -125,14 +125,11 @@ def _handle_numeric_choice(choice: int, state: AgentState) -> Dict[str, Any]:
 def _handle_execute_mode_entry(state: AgentState) -> Dict[str, Any]:
     """处理执行模式入口"""
     
-    print("\n" + "="*50)
-    print("🚀 执行向导")
-    print("="*50)
+    print("\n" + "\n".join(["-" * 50, "🚀 执行向导", "-" * 50]))
     print("请选择执行方式:")
     print("    1) 直接开始执行 (不预填需求)")
     print("    2) 先输入执行需求 (如物种、基因组、工具偏好等)")
     print("    0) 返回上级菜单")
-    print("="*50)
     
     try:
         exec_choice = input("请选择: ").strip()
@@ -178,10 +175,10 @@ def _handle_execute_mode_entry(state: AgentState) -> Dict[str, Any]:
 def _handle_requirements_input(state: AgentState) -> Dict[str, Any]:
     """处理执行需求输入"""
     
-    print("\n💡 **执行需求输入指南:**")
+    print("\n💡 执行需求输入指南:")
     print("   可以描述：物种、基因组版本、测序类型、工具偏好等")
     print("   示例：使用hg38、双端测序、STAR比对、FeatureCounts定量")
-    print()
+    print("")
     
     try:
         requirements_text = input("请输入执行需求: ").strip()

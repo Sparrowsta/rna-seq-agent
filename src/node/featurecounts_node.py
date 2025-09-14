@@ -8,6 +8,7 @@ from ..state import AgentState, FeaturecountsResponse
 from ..core import get_shared_llm
 from ..prompts import FEATURECOUNTS_OPTIMIZATION_PROMPT
 from ..tools import run_nextflow_featurecounts, parse_featurecounts_metrics, scan_genome_files
+from ..logging_bootstrap import get_logger, log_llm_preview
 import json
 
 
@@ -42,7 +43,8 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
     - 更新状态信息
     - 根据模式进行参数优化
     """
-    print("\n🧬 FeatureCounts定量节点开始执行...")
+    logger = get_logger("rna.nodes.featurecounts")
+    logger.info("FeatureCounts定量节点开始执行")
     
     # 更新执行进度
     completed_steps = state.completed_steps.copy() if state.completed_steps else []
@@ -70,7 +72,7 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
         }
     
     try:
-        print(f"⚡ [AGENT] 使用FeatureCounts Agent进行定量分析 (模式: {execution_mode})")
+        logger.info(f"[AGENT] 使用FeatureCounts Agent进行定量分析 (模式: {execution_mode})")
         
         if execution_mode == "single":
             # 单次执行：仅执行定量，不做参数优化
@@ -89,7 +91,7 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
             result = {
                 "success": True,
                 "status": "featurecounts_completed",
-                "response": "✅ FeatureCounts定量完成（单次执行模式）\n\n🚀 **执行详情**: 已完成基因定量，保持原有参数配置",
+                "response": "✅ FeatureCounts定量完成（单次执行模式）\n\n🚀 执行详情: 已完成基因定量，保持原有参数配置",
                 "current_step": "featurecounts",
                 "completed_steps": completed_steps,
                 "featurecounts_results": fc_results,
@@ -137,7 +139,7 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
             optimization_count = len(optimization_params_changes or {})
             result["response"] = (
                 f"✅ FeatureCounts定量完成并已优化\n- 定量状态: 成功完成\n- 参数优化: 应用了{optimization_count}个优化参数\n\n"
-                f"⚡ **优化详情**: {optimization_reasoning}"
+                f"⚡ 优化详情: {optimization_reasoning}"
             )
             
             # 同时聚合到跨节点 results 字段，便于统一读取
@@ -182,7 +184,7 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
             optimization_count = len(optimization_params_changes or {})
             result["response"] = (
                 "🎯 FeatureCounts定量完成（YOLO自动模式）\n\n"
-                f"⚡ **优化执行**: 已应用{optimization_count}个优化参数，自动进入下一步"
+                f"⚡ 优化执行: 已应用{optimization_count}个优化参数，自动进入下一步"
             )
             
             # 同时聚合到跨节点 results 字段，便于统一读取
@@ -237,7 +239,7 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
             optimization_count = len(optimization_params_changes or {})
             result["response"] = (
                 f"✅ FeatureCounts定量完成\n- 定量状态: 成功完成\n- 优化收集: {optimization_count}个参数优化建议已收集\n\n"
-                f"📦 **收集的优化建议**: {optimization_reasoning}"
+                f"📦 收集的优化建议: {optimization_reasoning}"
             )
             
             # 同时聚合到跨节点 results 字段，便于统一读取
@@ -252,7 +254,7 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
             
         else:
             # 未知模式：按 single 处理
-            print(f"ℹ️ 未知执行模式 '{execution_mode}'，按 single 处理")
+            logger.warning(f"未知执行模式 '{execution_mode}'，按 single 处理")
             fc_response = await _call_featurecounts_optimization_agent(state)
             agent_results = getattr(fc_response, 'results', None)
             fc_results = {
@@ -265,7 +267,7 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
             result = {
                 "success": True,
                 "status": "featurecounts_completed",
-                "response": "✅ FeatureCounts定量完成（按single处理）\n\n🚀 **执行详情**: 已完成基因定量，保持原有参数配置",
+                "response": "✅ FeatureCounts定量完成（按single处理）\n\n🚀 执行详情: 已完成基因定量，保持原有参数配置",
                 "current_step": "featurecounts",
                 "completed_steps": completed_steps,
                 "featurecounts_results": fc_results,
@@ -282,7 +284,7 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
             return result
             
     except Exception as e:
-        print(f"❌ FeatureCounts节点执行失败: {str(e)}")
+        logger.error(f"FeatureCounts节点执行失败: {str(e)}", exc_info=True)
         return {
             "success": False,
             "status": "featurecounts_failed",
@@ -366,6 +368,13 @@ async def _call_featurecounts_optimization_agent(state: AgentState) -> Featureco
     
     # 提取结构化响应
     structured_response = result.get("structured_response")
+    try:
+        if structured_response:
+            log_llm_preview(logger, "featurecounts", structured_response)
+        else:
+            log_llm_preview(logger, "featurecounts.raw", {"keys": list(result.keys())[:10]})
+    except Exception:
+        pass
     if not structured_response:
         raise ValueError("Agent返回的结构化响应为空")
     

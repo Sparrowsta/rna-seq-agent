@@ -7,6 +7,7 @@
 import os
 from typing import Dict, Any
 from ..state import AgentState
+"""交互输出统一使用标准 print，避免额外封装"""
 from .confirm import (
     build_confirm_view, render_confirm, 
     parse_numeric_selection, get_execution_mode_selection, parse_execution_mode_selection

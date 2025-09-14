@@ -8,7 +8,10 @@ from ..state import AgentState, FastpResponse
 from ..core import get_shared_llm
 from ..prompts import FASTP_OPTIMIZATION_PROMPT
 from ..tools import run_nextflow_fastp, parse_fastp_results
+from ..logging_bootstrap import get_logger, log_llm_preview
 import json
+
+logger = get_logger("rna.nodes.fastp")
 
 
 def create_fastp_agent():
@@ -44,7 +47,7 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
     - 更新状态信息
     - 支持批次优化模式
     """
-    print("\n🧹 FastP质控节点开始执行...")
+    logger.info("FastP质控节点开始执行...")
     
     # 更新执行进度
     completed_steps = state.completed_steps.copy() if state.completed_steps else []
@@ -66,7 +69,7 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
     
     if execution_mode == "single":
         # 单次执行：统一通过Agent执行，但不做参数优化
-        print("🚀 [SINGLE] 单次执行模式：统一通过Agent执行FastP（不应用优化）")
+        logger.info("[SINGLE] 单次执行模式：统一通过Agent执行FastP（不应用优化）")
         try:
             agent_response = await _call_fastp_optimization_agent(state)
 
@@ -85,7 +88,7 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
 
             result["response"] = (
                 "✅ FastP质控完成（单次执行模式）\n\n"
-                "🚀 **执行详情**: 已完成质量控制，保持原有参数配置"
+                "🚀 执行详情: 已完成质量控制，保持原有参数配置"
             )
         except Exception as e:
             return {
@@ -103,7 +106,7 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
     
     elif execution_mode == "optimized":
         # 精细优化模式：调用Agent进行智能优化
-        print("⚡ [OPTIMIZED] 精细优化模式，调用Agent进行智能优化...")
+        logger.info("[OPTIMIZED] 精细优化模式，调用Agent进行智能优化...")
         
         try:
             # 调用FastP优化Agent
@@ -131,10 +134,10 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
                 result["fastp_results"]["success"] = False
                 result["fastp_results"]["status"] = "failed"
 
-            print(f"✅ [OPTIMIZED] FastP智能优化完成: {len(optimized_params)}个参数")
+            logger.info(f"[OPTIMIZED] FastP智能优化完成: {len(optimized_params)}个参数")
 
         except Exception as e:
-            print(f"❌ [OPTIMIZED] FastP优化失败: {str(e)}")
+            logger.error(f"[OPTIMIZED] FastP优化失败: {str(e)}")
             return {
                 "success": False,
                 "status": "fastp_failed",
@@ -150,7 +153,7 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
         
     elif execution_mode == "yolo":
         # YOLO模式：与optimized相同的执行逻辑，但会自动进入下一步
-        print("🎯 [YOLO] YOLO模式，自动优化执行...")
+        logger.info("[YOLO] YOLO模式，自动优化执行...")
         
         try:
             # 调用FastP优化Agent（与optimized相同的逻辑）
@@ -180,13 +183,13 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
 
             result["response"] = (
                 "🎯 FastP质控完成（YOLO自动模式）\n\n"
-                "⚡ **优化执行**: 已应用智能参数优化，自动进入下一步"
+                "⚡ 优化执行: 已应用智能参数优化，自动进入下一步"
             )
 
-            print(f"✅ [YOLO] FastP自动优化完成: {len(optimized_params)}个参数")
+            logger.info(f"[YOLO] FastP自动优化完成: {len(optimized_params)}个参数")
 
         except Exception as e:
-            print(f"❌ [YOLO] FastP自动优化失败: {str(e)}")
+            logger.error(f"[YOLO] FastP自动优化失败: {str(e)}")
             return {
                 "success": False,
                 "status": "fastp_failed",
@@ -202,7 +205,7 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
         
     elif execution_mode == "batch_optimize":
         # 批次优化模式：收集Agent优化参数
-        print("📦 [BATCH] FastP批次优化模式，调用Agent收集优化参数...")
+        logger.info("[BATCH] FastP批次优化模式，调用Agent收集优化参数...")
         
         try:
             # 调用FastP优化Agent
@@ -226,7 +229,7 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
             batch_optimizations["fastp"] = fastp_optimization
 
             result["batch_optimizations"] = batch_optimizations
-            result["response"] = (result.get("response", "") + "\n\n📦 **智能优化参数已收集**: 已收集FastP优化参数")
+            result["response"] = (result.get("response", "") + "\n\n📦 智能优化参数已收集: 已收集FastP优化参数")
 
             try:
                 if getattr(agent_response, 'results', None):
@@ -241,10 +244,10 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
                 result["fastp_results"]["success"] = False
                 result["fastp_results"]["status"] = "failed"
 
-            print(f"✅ [BATCH] FastP智能优化参数收集完成: {len(optimized_params)}个参数")
+            logger.info(f"[BATCH] FastP智能优化参数收集完成: {len(optimized_params)}个参数")
 
         except Exception as e:
-            print(f"❌ [BATCH] FastP优化失败: {str(e)}")
+            logger.error(f"[BATCH] FastP优化失败: {str(e)}")
             return {
                 "success": False,
                 "status": "fastp_failed",
@@ -259,7 +262,7 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
             }
     else:
         # 未知模式：按 single 处理
-        print(f"ℹ️ 未知执行模式 '{execution_mode}'，按 single 处理")
+        logger.warning(f"未知执行模式 '{execution_mode}'，按 single 处理")
         try:
             agent_response = await _call_fastp_optimization_agent(state)
             try:
@@ -276,7 +279,7 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
                 result["fastp_results"]["status"] = "failed"
             result["response"] = (
                 "✅ FastP质控完成（按single处理）\n\n"
-                "🚀 **执行详情**: 已完成质量控制，保持原有参数配置"
+                "🚀 执行详情: 已完成质量控制，保持原有参数配置"
             )
         except Exception as e:
             return {
@@ -339,6 +342,13 @@ async def _call_fastp_optimization_agent(state: AgentState) -> FastpResponse:
     
     # 提取结构化响应
     structured_response = result.get("structured_response")
+    try:
+        if structured_response:
+            log_llm_preview(logger, "fastp", structured_response)
+        else:
+            log_llm_preview(logger, "fastp.raw", {"keys": list(result.keys())[:10]})
+    except Exception:
+        pass
     if not structured_response:
         raise ValueError("Agent返回的结构化响应为空")
     

@@ -22,6 +22,43 @@ from langchain_core.tools import tool
 
 # 导入配置模块
 from .config import get_tools_config
+from .logging_bootstrap import get_logger
+from .config.settings import Settings
+
+logger = get_logger("rna.tools")
+
+
+
+
+def enhance_tool_result_with_debug(result: dict, cmd: str = "", 
+                                  params_file: str = "", stdout: str = "", 
+                                  stderr: str = "") -> dict:
+    """在DEBUG模式下增强工具结果，添加调试信息
+    
+    Args:
+        result: 原始工具结果字典
+        cmd: 执行的命令
+        params_file: 参数文件路径  
+        stdout: 标准输出
+        stderr: 标准错误输出
+        
+    Returns:
+        增强后的结果字典
+    """
+    settings = Settings()
+    
+    if settings.debug_mode:
+        debug_info = {
+            "debug_mode": True,
+            "command": cmd,
+            "params_file": params_file,
+            "stdout": stdout[:2000] if stdout else "",  # 截断长输出
+            "stderr": stderr[:1000] if stderr else ""   # 截断错误信息
+        }
+        result["debug_info"] = debug_info
+        logger.debug(f"工具调试信息已添加: {len(debug_info)} 项")
+    
+    return result
 
 
 # ==================== 工具函数 (使用 @tool 装饰器) ====================
@@ -122,7 +159,7 @@ def scan_fastq_files() -> Dict[str, Any]:
     else:
         sequencing_type = "mixed"
     
-    return {
+    result = {
         "detection_status": "success",
         "search_roots": [str(p) for p in search_roots],
         "total_files": len(file_list),
@@ -135,6 +172,21 @@ def scan_fastq_files() -> Dict[str, Any]:
         "samples": samples,
         "scan_timestamp": time.time()
     }
+    # 日志：摘要与告警/调试
+    try:
+        if result["total_files"] == 0:
+            logger.warning(f"FASTQ扫描：未找到任何文件，roots={result['search_roots']}")
+        else:
+            logger.info(
+                f"FASTQ扫描：files={result['total_files']} samples={result['total_samples']} "
+                f"paired={result['paired_samples']} single={result['single_samples']} type={result['sequencing_type']}"
+            )
+            # 预览前5个样本名
+            sample_names = list(result["samples"].keys())[:5]
+            logger.debug(f"样本预览(前5)：{sample_names}")
+    except Exception:
+        pass
+    return result
 
 
 @tool
@@ -173,7 +225,7 @@ def scan_system_resources() -> Dict[str, Any]:
         except (AttributeError, OSError):
             load_info = {"error": "platform_not_supported"}
         
-        return {
+        result = {
             "detection_status": "success",
             "cpu": {
                 "physical_cores": cpu_count,
@@ -196,8 +248,22 @@ def scan_system_resources() -> Dict[str, Any]:
             "load": load_info,
             "timestamp": time.time()
         }
+        # 日志：资源摘要与低资源告警
+        try:
+            logger.info(
+                f"资源：CPU={cpu_count}核, Mem={result['memory']['available_gb']:.1f}/{result['memory']['total_gb']:.1f}GB可用, "
+                f"DiskFree={result['disk']['free_gb']:.1f}GB/{result['disk']['total_gb']:.1f}GB"
+            )
+            if available_gb < 8 or disk_free_gb < 20:
+                logger.warning(
+                    f"低资源告警：可用内存={available_gb:.1f}GB, 可用磁盘={disk_free_gb:.1f}GB"
+                )
+        except Exception:
+            pass
+        return result
         
     except ImportError:
+        logger.error("psutil 未安装，无法检测系统资源")
         return {
             "detection_status": "missing_dependency",
             "error": "psutil not installed",
@@ -222,6 +288,10 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
     
     if not genomes_file.exists():
         result = {"detection_status": "no_config_file"}
+        try:
+            logger.warning(f"基因组配置文件缺失: {genomes_file}")
+        except Exception:
+            pass
     else:
         try:
             with open(genomes_file, 'r', encoding='utf-8') as f:
@@ -284,6 +354,16 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
                     "genomes": genome_status,
                     "config_path": str(genomes_file)
                 }
+                try:
+                    logger.info(
+                        f"基因组配置：total={result['total_genomes']} available={result['available_genomes']} path={genomes_file}"
+                    )
+                    # 对缺失文件的基因组发出 warn
+                    missing = [gid for gid, g in genome_status.items() if not g["complete"]]
+                    if missing:
+                        logger.warning(f"基因组缺失文件：{missing[:5]}{'...' if len(missing)>5 else ''}")
+                except Exception:
+                    pass
         except Exception as e:
             result = {
                 "detection_status": "error",
@@ -317,6 +397,7 @@ def list_analysis_history() -> Dict[str, Any]:
     reports_dir = config.reports_dir
     
     if not reports_dir.exists():
+        logger.warning(f"历史分析目录不存在: {reports_dir}")
         return {
             "detection_status": "no_history",
             "total_analyses": 0,
@@ -362,12 +443,18 @@ def list_analysis_history() -> Dict[str, Any]:
     # 按时间排序（最新在前）
     analyses.sort(key=lambda x: x["timestamp"], reverse=True)
     
-    return {
+    result = {
         "detection_status": "success",
         "total_analyses": len(analyses),
         "latest_analysis": analyses[0] if analyses else None,
         "analyses": analyses
     }
+    try:
+        latest = result["latest_analysis"]["timestamp_str"] if result["latest_analysis"] else None
+        logger.info(f"历史分析：total={result['total_analyses']} latest={latest}")
+    except Exception:
+        pass
+    return result
 
 
 @tool
@@ -415,6 +502,13 @@ def check_tool_availability(tool_name: str) -> Dict[str, Any]:
             "available": result.returncode == 0
         })
             
+        # 日志
+        if result.returncode == 0:
+            logger.info(f"工具可用：{tool_name} (env={env_name})")
+        else:
+            stderr_snip = (result.stderr or '')[:200]
+            logger.warning(f"工具不可用：{tool_name} rc={result.returncode} stderr={stderr_snip}")
+        logger.debug(f"检测命令：{' '.join(full_cmd)}")
     except subprocess.TimeoutExpired:
         detection_data.update({
             "command_executed": False,
@@ -422,18 +516,21 @@ def check_tool_availability(tool_name: str) -> Dict[str, Any]:
             "timeout_seconds": 15,
             "available": False
         })
+        logger.warning(f"工具检测超时：{tool_name} (env={env_name}) 15s")
     except FileNotFoundError:
         detection_data.update({
             "command_executed": False,
             "error": "micromamba_not_found",
             "available": False
         })
+        logger.error("micromamba 未找到，无法检测工具可用性")
     except Exception as e:
         detection_data.update({
             "command_executed": False,
             "error": str(e),
             "available": False
         })
+        logger.error(f"工具检测异常：{tool_name} error={e}")
     
     return detection_data
 
@@ -507,6 +604,7 @@ def add_genome_config(genome_info: Dict[str, Any]) -> Dict[str, Any]:
 
         # 检查重复
         if genome_id in genomes_data:
+            logger.warning(f"重复的基因组ID：{genome_id}")
             return {
                 "success": False,
                 "error": f"基因组 {genome_id} 已存在",
@@ -519,6 +617,7 @@ def add_genome_config(genome_info: Dict[str, Any]) -> Dict[str, Any]:
         with open(genomes_file, "w", encoding="utf-8") as f:
             json.dump(genomes_data, f, indent=2, ensure_ascii=False)
 
+        logger.info(f"已添加基因组配置：{genome_id} -> {genomes_file}")
         return {
             "success": True,
             "genome_id": genome_id,
@@ -528,28 +627,11 @@ def add_genome_config(genome_info: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     except Exception as e:
+        logger.error(f"添加基因组配置失败：{e}")
         return {"success": False, "error": f"添加基因组配置时出错：{str(e)}"}
 
 
-@tool
-def get_help() -> Dict[str, Any]:
-    """获取系统帮助信息和功能说明"""
-    return {
-        "system_name": "RNA-seq智能分析助手",
-        "current_mode": "Normal模式 (项目信息中心)",
-        "core_tools": [
-            "项目概览 - 一键查看项目完整状态和健康度",
-            "历史分析记录 - 浏览已完成的分析和可复用配置",
-            "查看FASTQ文件 - 详细扫描所有测序数据文件",
-            "查看基因组信息 - 显示可用参考基因组状态",
-            "添加基因组配置 - 智能解析并添加新的参考基因组"
-        ],
-        "next_steps": [
-            "首次使用建议运行 '项目概览' 了解项目状态",
-            "输入 '/plan' 进入计划模式进行深度分析规划"
-        ],
-        "mode_description": "Normal模式专注快速信息查看和项目概览，Plan模式负责深度检测和分析方案制定"
-    }
+
 
 
 # ==================== FastP专用工具函数 ====================
@@ -605,7 +687,7 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
 
         except Exception:
             pass
-        print(f"📁 运行目录: base={base_data_path} work={work_dir} results={results_dir}")
+        logger.info(f"FastP启动：样本组={len(sample_info.get('sample_groups', {}))} 运行目录: base={base_data_path} work={work_dir} results={results_dir}")
         
         nextflow_params: Dict[str, Any] = {}
         for raw_key, value in (fastp_params or {}).items():
@@ -658,12 +740,14 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
             "-work-dir", str(work_dir),
             "--data", str(config.settings.data_dir)
         ]
-        
-        print(f"🚀 执行Nextflow FastP流水线...")
-        print(f"   参数文件: {params_file}")
+        # 记录可读命令串（供调试与回传）
+        cmd_str = " ".join(cmd)
+
+        logger.info("执行Nextflow FastP流水线...")
+        logger.info(f"参数文件: {params_file}")
         # 正确显示并使用本函数创建的 Nextflow 工作目录
-        print(f"   工作目录: {work_dir}")
-        print(f"   结果目录: {results_dir}")
+        logger.info(f"工作目录: {work_dir}")
+        logger.info(f"结果目录: {results_dir}")
         
         # 执行Nextflow流水线
         result = subprocess.run(
@@ -673,6 +757,7 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
             timeout=1800,  # 30分钟超时
             cwd=config.settings.project_root
         )
+        
         
         execution_time = time.time() - start_time
         
@@ -730,8 +815,21 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
                     })
             except Exception:
                 pass
+            
+            # 使用增强函数添加调试信息
+            try:
+                payload = enhance_tool_result_with_debug(
+                    payload, cmd_str, str(params_file), result.stdout, result.stderr
+                )
+            except Exception:
+                # 避免调试增强异常影响主流程
+                logger.debug("FastP调试信息增强失败，忽略并返回主体结果")
+            
+            logger.info(f"FastP完成：samples={sample_count} results={results_dir}")
             return payload
         else:
+            stderr_snip = (result.stderr or '')[:400]
+            logger.warning(f"FastP失败：rc={result.returncode} results={results_dir} stderr={stderr_snip}")
             payload = {
                 "success": False,
                 "error": f"Nextflow执行失败 (返回码: {result.returncode})",
@@ -754,6 +852,7 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
             "error": "Nextflow执行超时（30分钟）",
             "execution_time": time.time() - start_time
         }
+        logger.warning("FastP执行超时：30分钟")
         return payload
     except Exception as e:
         payload = {
@@ -761,6 +860,7 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
             "error": f"执行FastP流水线时发生错误: {str(e)}",
             "execution_time": 0
         }
+        logger.error(f"FastP异常：{e}")
         return payload
 
 
@@ -787,6 +887,7 @@ def parse_fastp_results(results_directory: str) -> Dict[str, Any]:
         json_files = list(results_dir.rglob("*.fastp.json"))
         
         if not json_files:
+            logger.warning(f"未找到FastP JSON报告文件：{results_directory}")
             return {
                 "success": False,
                 "error": "未找到FastP JSON报告文件"
@@ -903,7 +1004,7 @@ def parse_fastp_results(results_directory: str) -> Dict[str, Any]:
             "pass_rate_status": "good" if overall_read_pass_rate > 0.8 else "moderate" if overall_read_pass_rate > 0.6 else "poor"
         }
         
-        return {
+        result = {
             "success": True,
             "total_samples": total_samples,
             "results_directory": results_directory,
@@ -921,8 +1022,18 @@ def parse_fastp_results(results_directory: str) -> Dict[str, Any]:
             },
             "quality_assessment": quality_assessment
         }
+        try:
+            logger.info(
+                f"FastP结果: samples={result['total_samples']} pass_rate={result['overall_statistics']['overall_read_pass_rate']} avg_q30={result['overall_statistics']['average_q30_rate']}"
+            )
+            if sample_metrics:
+                logger.debug(f"样本指标预览：{sample_metrics[0]}")
+        except Exception:
+            pass
+        return result
         
     except Exception as e:
+        logger.error(f"解析FastP结果失败：{e}")
         return {
             "success": False,
             "error": f"解析FastP结果失败: {str(e)}"
@@ -1015,7 +1126,7 @@ def download_genome_assets(genome_id: str, force: bool = False) -> Dict[str, Any
                     url
                 ]
                 
-                print(f"下载 {file_type}...")
+                logger.info(f"下载 {file_type}...")
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)  # 1小时超时
                 
                 if result.returncode != 0:
@@ -1137,6 +1248,10 @@ def build_star_index(
         if index_dir.exists() and not force_rebuild:
             key_files = ["SA", "SAindex", "Genome"]
             if all((index_dir / f).exists() for f in key_files):
+                try:
+                    logger.info(f"STAR索引已存在，跳过构建: {index_dir}")
+                except Exception:
+                    pass
                 return {
                     "success": True,
                     "index_dir": str(index_dir),
@@ -1215,9 +1330,9 @@ def build_star_index(
             str(work_dir),
         ]
 
-        print("🚀 构建STAR索引 (Nextflow)…")
-        print(f"   参数文件: {params_file}")
-        print(f"   目标目录: {index_dir}")
+        logger.info("构建STAR索引 (Nextflow)")
+        logger.info(f"参数文件: {params_file}")
+        logger.info(f"目标目录: {index_dir}")
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -1241,11 +1356,27 @@ def build_star_index(
                 })
         except Exception:
             pass
+        # 记录结果日志
+        try:
+            if payload["success"]:
+                logger.info(f"STAR索引构建完成：{index_dir}")
+            else:
+                logger.warning(f"STAR索引构建失败：rc={result.returncode} stderr={(result.stderr or '')[:400]}")
+        except Exception:
+            pass
         return payload
 
     except subprocess.TimeoutExpired:
+        try:
+            logger.warning("STAR索引构建超时（120分钟）")
+        except Exception:
+            pass
         return {"success": False, "error": "STAR索引构建超时"}
     except Exception as e:
+        try:
+            logger.error(f"构建STAR索引异常：{e}")
+        except Exception:
+            pass
         return {"success": False, "error": f"构建STAR索引失败: {str(e)}"}
 
 
@@ -1287,6 +1418,7 @@ def run_nextflow_star(
         work_dir = tools_config.settings.data_dir / "work" / f"star_{run_id}"
         results_dir.mkdir(parents=True, exist_ok=True)
         work_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"STAR启动：samples={len(per_sample)} results={results_dir} work={work_dir}")
 
         # 3) 解析 STAR 索引目录
         def _resolve(p: str) -> Path:
@@ -1306,6 +1438,7 @@ def run_nextflow_star(
 
         star_index_path = _resolve(star_index_dir)
         if not star_index_path.exists():
+            logger.warning(f"STAR索引不存在: {star_index_path}")
             return {"success": False, "error": f"STAR索引不存在: {star_index_path}"}
 
         # 4) 构造 sample_inputs（仅使用 FastP 返回的结构）
@@ -1356,8 +1489,8 @@ def run_nextflow_star(
         if nextflow_script is None:
             return {"success": False, "error": "未找到 star.nf 脚本，请检查 /src/nextflow/star.nf 路径", "searched": [str(p) for p in nf_candidates]}
 
-        print(f"执行STAR比对 - 参数文件: {params_file}")
-        print(f"STAR索引: {nf_params['star_index']}")
+        logger.info(f"执行STAR比对 - 参数文件: {params_file}")
+        logger.info(f"STAR索引: {nf_params['star_index']}")
         cmd = [
             "nextflow", "run", str(nextflow_script),
             "-params-file", str(params_file),
@@ -1396,9 +1529,15 @@ def run_nextflow_star(
         }
         if get_tools_config().settings.debug_mode:
             payload.update({"stdout": result.stdout, "stderr": result.stderr, "cmd": " ".join(cmd)})
+        # 记录完成/失败日志
+        if payload["success"]:
+            logger.info(f"STAR完成：samples={len(sample_inputs)} results={results_dir}")
+        else:
+            logger.warning(f"STAR失败：rc={result.returncode} stderr={(result.stderr or '')[:400]}")
         return payload
 
     except Exception as e:
+        logger.error(f"STAR异常：{e}")
         return {"success": False, "error": f"执行STAR比对失败: {str(e)}"}
 
 
@@ -1443,6 +1582,10 @@ def parse_star_metrics(results_directory: str) -> Dict[str, Any]:
         # 查找STAR输出目录
         star_dir = results_path / "star"
         if not star_dir.exists():
+            try:
+                logger.warning(f"STAR输出目录不存在: {star_dir}")
+            except Exception:
+                pass
             return {
                 "success": False,
                 "error": f"STAR输出目录不存在: {star_dir}"
@@ -1533,7 +1676,7 @@ def parse_star_metrics(results_directory: str) -> Dict[str, Any]:
             "multi_mapping_status": "good" if overall_multi_rate < 0.2 else "moderate" if overall_multi_rate < 0.3 else "high"
         }
         
-        return {
+        result = {
             "success": True,
             "total_samples": total_samples,
             "results_directory": results_directory,
@@ -1550,8 +1693,22 @@ def parse_star_metrics(results_directory: str) -> Dict[str, Any]:
             },
             "quality_assessment": quality_assessment
         }
+        try:
+            logger.info(
+                f"STAR结果: samples={result['total_samples']} map={result['overall_statistics']['overall_mapping_rate']} "
+                f"unique={result['overall_statistics']['overall_unique_mapping_rate']} multi={result['overall_statistics']['overall_multi_mapping_rate']}"
+            )
+            if sample_metrics:
+                logger.debug(f"STAR样本预览：{sample_metrics[0]}")
+        except Exception:
+            pass
+        return result
         
     except Exception as e:
+        try:
+            logger.error(f"解析STAR结果失败：{e}")
+        except Exception:
+            pass
         return {
             "success": False,
             "error": f"解析STAR结果失败: {str(e)}"
@@ -1679,8 +1836,8 @@ def run_nextflow_hisat2(
         if nextflow_script is None:
             return {"success": False, "error": "未找到 hisat2.nf 脚本，请检查 /src/nextflow/hisat2.nf 路径", "searched": [str(p) for p in nf_candidates]}
 
-        print(f"执行HISAT2比对 - 参数文件: {params_file}")
-        print(f"HISAT2索引: {nf_params['hisat2_index']}")
+        logger.info(f"执行HISAT2比对 - 参数文件: {params_file}")
+        logger.info(f"HISAT2索引: {nf_params['hisat2_index']}")
         cmd = [
             "nextflow", "run", str(nextflow_script),
             "-params-file", str(params_file),
@@ -1791,9 +1948,9 @@ def build_hisat2_index(
         if nextflow_script is None:
             return {"success": False, "error": "未找到 build_hisat2_index.nf 脚本"}
 
-        print(f"构建HISAT2索引 - 基因组: {genome_id}")
-        print(f"FASTA: {fasta_file}")
-        print(f"索引目录: {index_dir}")
+        logger.info(f"构建HISAT2索引 - 基因组: {genome_id}")
+        logger.info(f"FASTA: {fasta_file}")
+        logger.info(f"索引目录: {index_dir}")
         
         cmd = [
             "nextflow", "run", str(nextflow_script),
@@ -1935,79 +2092,103 @@ def parse_hisat2_metrics(results_directory: str) -> Dict[str, Any]:
 
 
 def _parse_hisat2_summary(content: str, sample_id: str) -> Dict[str, Any]:
-    """解析HISAT2比对摘要内容"""
+    """解析HISAT2比对摘要内容（健壮版）
+
+    兼容数字包含千分位逗号、单端/双端输出差异，支持从 overall alignment rate 回退计算。
+    """
     try:
-        lines = content.strip().split('\n')
-        metrics = {"sample_id": sample_id}
-        
-        for line in lines:
-            line = line.strip()
-            
-            # HISAT2输出格式示例:
-            # "25000000 reads; of these:"
-            # "  23500000 (94.00%) aligned concordantly exactly 1 time"
-            # "  1200000 (4.80%) aligned concordantly >1 times"
-            # "  300000 (1.20%) aligned concordantly 0 times"
-            
-            # 提取总read数
-            if " reads; of these:" in line:
-                total_reads = int(line.split()[0])
-                metrics["input_reads"] = total_reads
-            
-            # 提取比对统计（双端测序）
-            elif "aligned concordantly exactly 1 time" in line:
-                unique_count = _extract_reads_count(line)
-                metrics["uniquely_mapped"] = unique_count
-            elif "aligned concordantly >1 times" in line:
-                multi_count = _extract_reads_count(line)
-                metrics["multi_mapped"] = multi_count
-            elif "aligned concordantly 0 times" in line:
-                unaligned_count = _extract_reads_count(line)
-                # 对于单端测序的情况
-            elif "aligned exactly 1 time" in line and "concordantly" not in line:
-                unique_count = _extract_reads_count(line)
-                metrics["uniquely_mapped"] = unique_count
-            elif "aligned >1 times" in line and "concordantly" not in line:
-                multi_count = _extract_reads_count(line)  
-                metrics["multi_mapped"] = multi_count
-        
+        lines = [ln.strip() for ln in (content or "").splitlines() if ln.strip()]
+        metrics: Dict[str, Any] = {"sample_id": sample_id}
+
+        # 工具函数：数字提取（支持1,234,567）
+        def _parse_int_token(tok: str) -> int:
+            try:
+                return int(str(tok).replace(",", "").strip())
+            except Exception:
+                return 0
+
+        # 提取总reads
+        # 例："25,000,000 reads; of these:" 或 "25000000 reads; of these:"
+        for ln in lines:
+            if "reads; of these:" in ln:
+                # 优先用正则
+                m = re.search(r"([\d,]+)\s+reads; of these:", ln)
+                if m:
+                    metrics["input_reads"] = _parse_int_token(m.group(1))
+                else:
+                    # 回退：取首个token
+                    parts = ln.split()
+                    if parts:
+                        metrics["input_reads"] = _parse_int_token(parts[0])
+                break
+
+        # 提取映射计数（双端优先匹配concordantly，单端匹配非concordantly）
+        for ln in lines:
+            if "aligned concordantly exactly 1 time" in ln:
+                metrics["uniquely_mapped"] = _extract_reads_count(ln)
+            elif "aligned concordantly >1 times" in ln:
+                metrics["multi_mapped"] = _extract_reads_count(ln)
+            elif ("aligned exactly 1 time" in ln) and ("concordantly" not in ln):
+                metrics["uniquely_mapped"] = _extract_reads_count(ln)
+            elif ("aligned >1 times" in ln) and ("concordantly" not in ln):
+                metrics["multi_mapped"] = _extract_reads_count(ln)
+
+        # 解析 overall alignment rate（百分比），作为映射率的兜底
+        overall_rate = None
+        for ln in lines[::-1]:
+            # 例："90.00% overall alignment rate"
+            if "overall alignment rate" in ln:
+                m = re.search(r"([\d.]+)%\s+overall alignment rate", ln)
+                if m:
+                    try:
+                        overall_rate = float(m.group(1)) / 100.0
+                    except Exception:
+                        overall_rate = None
+                break
+
         # 计算派生指标
         if "input_reads" in metrics:
-            total_reads = metrics["input_reads"]
-            uniquely_mapped = metrics.get("uniquely_mapped", 0)
-            multi_mapped = metrics.get("multi_mapped", 0)
+            total_reads = int(metrics.get("input_reads", 0) or 0)
+            uniquely_mapped = int(metrics.get("uniquely_mapped", 0) or 0)
+            multi_mapped = int(metrics.get("multi_mapped", 0) or 0)
             mapped_reads = uniquely_mapped + multi_mapped
-            
+
+            # 若unique+multi均未捕获，但有overall_rate，回退计算mapped_reads
+            if mapped_reads == 0 and overall_rate is not None and total_reads > 0:
+                mapped_reads = int(round(total_reads * overall_rate))
+
+            unmapped_reads = max(0, total_reads - mapped_reads)
             metrics["mapped_reads"] = mapped_reads
-            metrics["unmapped_reads"] = total_reads - mapped_reads
-            
+            metrics["unmapped_reads"] = unmapped_reads
+
             if total_reads > 0:
                 metrics["mapping_rate"] = round(mapped_reads / total_reads, 4)
-                metrics["unique_mapping_rate"] = round(uniquely_mapped / total_reads, 4)
-                metrics["multi_mapping_rate"] = round(multi_mapped / total_reads, 4)
-                metrics["unmapped_rate"] = round((total_reads - mapped_reads) / total_reads, 4)
+                metrics["unique_mapping_rate"] = round(uniquely_mapped / total_reads, 4) if uniquely_mapped else 0.0
+                metrics["multi_mapping_rate"] = round(multi_mapped / total_reads, 4) if multi_mapped else 0.0
+                metrics["unmapped_rate"] = round(unmapped_reads / total_reads, 4)
             else:
                 metrics.update({
                     "mapping_rate": 0.0,
                     "unique_mapping_rate": 0.0,
                     "multi_mapping_rate": 0.0,
-                    "unmapped_rate": 0.0
+                    "unmapped_rate": 0.0,
                 })
-        
+
         return metrics if "input_reads" in metrics else None
-        
+
     except Exception as e:
-        print(f"解析HISAT2摘要失败 (样本 {sample_id}): {e}")
+        logger.error(f"解析HISAT2摘要失败 (样本 {sample_id}): {e}")
         return None
 
 
 def _extract_reads_count(line: str) -> int:
-    """从HISAT2输出行中提取reads数量"""
-    import re
-    # 匹配数字模式，例如: "23500000 (94.00%) aligned..."
-    match = re.search(r'(\d+)\s+\([\d.]+%\)', line.strip())
+    """从HISAT2输出行中提取reads数量（支持千分位逗号）"""
+    match = re.search(r'([\d,]+)\s+\([\d.]+%\)', line.strip())
     if match:
-        return int(match.group(1))
+        try:
+            return int(match.group(1).replace(',', ''))
+        except Exception:
+            return 0
     return 0
 
 
@@ -2098,6 +2279,7 @@ def run_nextflow_featurecounts(
         results_dir.mkdir(parents=True, exist_ok=True)
         work_dir.mkdir(parents=True, exist_ok=True)
         (results_dir / "featurecounts").mkdir(parents=True, exist_ok=True)
+        logger.info(f"FeatureCounts启动：bam={len(per_sample)} results={results_dir} work={work_dir}")
 
         # 构建 Nextflow 参数（与 featurecounts.nf 对齐）
         # 将 STAR 输出的 BAM 列表转换为JSON字符串（Nextflow 端会 echo 后再解析）
@@ -2192,10 +2374,10 @@ def run_nextflow_featurecounts(
             str(work_dir),
         ]
 
-        print("🚀 执行Nextflow FeatureCounts流水线…")
-        print(f"   参数文件: {params_file}")
-        print(f"   工作目录: {work_dir}")
-        print(f"   结果目录: {results_dir}")
+        logger.info("执行Nextflow FeatureCounts流水线")
+        logger.info(f"参数文件: {params_file}")
+        logger.info(f"工作目录: {work_dir}")
+        logger.info(f"结果目录: {results_dir}")
 
         result = subprocess.run(
             cmd,
@@ -2249,14 +2431,20 @@ def run_nextflow_featurecounts(
                 payload.pop("nextflow_params", None)
         except Exception:
             pass
+        if payload["success"]:
+            logger.info(f"FeatureCounts完成：samples={sample_count} results={results_dir}")
+        else:
+            logger.warning(f"FeatureCounts失败：rc={result.returncode} stderr={(result.stderr or '')[:400]}")
         return payload
 
     except subprocess.TimeoutExpired:
+        logger.warning("FeatureCounts执行超时：30分钟")
         return {
             "success": False,
             "error": "Nextflow执行超时（30分钟）",
         }
     except Exception as e:
+        logger.error(f"FeatureCounts异常：{e}")
         return {
             "success": False,
             "error": f"执行FeatureCounts流水线失败: {str(e)}",
@@ -2543,6 +2731,7 @@ def write_analysis_markdown(
         file_size = output_path.stat().st_size
         line_count = markdown_content.count('\n') + 1
         
+        logger.info(f"写入Markdown报告：{output_path} bytes={file_size} lines={line_count}")
         return {
             "success": True,
             "path": str(output_path.absolute()),
@@ -2553,6 +2742,7 @@ def write_analysis_markdown(
         }
         
     except Exception as e:
+        logger.error(f"生成Markdown报告失败：{e}")
         return {
             "success": False,
             "error": f"生成Markdown报告失败: {str(e)}"

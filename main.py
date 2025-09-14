@@ -20,6 +20,16 @@ from src.config.settings import Settings
 from src.state import AgentState
 from src.graph import create_agent
 from src.core import test_llm_connection
+from src.logging_bootstrap import is_debug_enabled
+
+# 日志初始化
+try:
+    from src.logging_bootstrap import setup_logging, log_startup_info
+    setup_logging()
+    log_startup_info()
+except Exception as e:
+    print(f"⚠️ 日志系统初始化失败: {e}")
+    pass
 
 def initialize_application() -> Settings:
     """初始化应用程序配置"""
@@ -64,11 +74,7 @@ def validate_llm_connection() -> bool:
 
 async def run_interactive_session(agent, settings: Settings):
     """运行交互式会话"""
-    print("\n💬 RNA-seq智能分析助手启动")
-    print("🔹 系统将直接进入用户通信模式")
-    print("🔹 Agent将处理所有用户交互")
-    print(f"🔹 工作目录: {settings.project_root}")
-    print()
+    # 启动提示精简：移除冗长的交互提示
     
     # 创建初始状态
     initial_state = AgentState(status="normal")
@@ -89,10 +95,10 @@ async def run_interactive_session(agent, settings: Settings):
                     if status and status != "normal":
                         print(f"📊 状态更新: {status}")
         
-        print("🤖 会话正常结束")
+        # 结束提示精简
         
     except KeyboardInterrupt:
-        print("\n👋 收到中断信号，正在安全退出...")
+        print("\n👋 正在安全退出...")
     except Exception as e:
         print(f"❌ 运行时错误: {e}")
         if settings.debug_mode:

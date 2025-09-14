@@ -25,6 +25,9 @@ from ..tools import (
     write_analysis_markdown
 )
 from ..core import get_shared_llm
+from ..logging_bootstrap import get_logger, log_llm_preview
+
+logger = get_logger("rna.analysis")
 
 
 async def analysis_node(state: AgentState) -> Dict[str, Any]:
@@ -40,7 +43,7 @@ async def analysis_node(state: AgentState) -> Dict[str, Any]:
     6. 报告落盘 - JSON和Markdown
     7. 状态回填与清理
     """
-    print("\n📈 综合分析节点  开始执行...")
+    logger.info("综合分析节点开始执行")
     
     try:
         # 1. 前置校验
@@ -51,10 +54,10 @@ async def analysis_node(state: AgentState) -> Dict[str, Any]:
         results_dir = validation_result["results_dir"]
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        print(f"📁 分析结果目录: {results_dir}")
+        logger.info(f"分析结果目录: {results_dir}")
         
         # 2. 解析三步指标
-        print("🔍 解析 FastP/STAR/FeatureCounts 结果...")
+        logger.info("解析 FastP/STAR/FeatureCounts 结果...")
         parsing_result = _parse_pipeline_metrics(results_dir)
         
         if not parsing_result["success"]:
@@ -67,14 +70,14 @@ async def analysis_node(state: AgentState) -> Dict[str, Any]:
         parsing_errors = parsing_result.get("parsing_errors", {})
         
         # 3. 样本ID归一化和对齐
-        print("🔗 样本ID归一化和指标对齐...")
+        logger.debug("样本ID归一化和指标对齐...")
         alignment_result = _align_sample_metrics(
             state.nextflow_config.get("sample_groups", []),
             fastp_data, star_data, featurecounts_data
         )
         
         # 4. 指标合并与健康度评估
-        print("⚖️ 计算样本健康度和总体结论...")
+        logger.debug("计算样本健康度和总体结论...")
         assessment_result = _assess_sample_health(alignment_result)
         
         # 5. 构建基础报告结构
@@ -91,36 +94,36 @@ async def analysis_node(state: AgentState) -> Dict[str, Any]:
             if failed_steps:
                 base_report.setdefault("summary", {}).setdefault("key_findings", []).append(
                     f"⚠️ 解析失败的步骤: {', '.join(failed_steps)}")
-                print(f"⚠️ 部分解析失败: {failed_steps}")
+                logger.warning(f"部分解析失败: {failed_steps}")
         
         # 6. LLM智能总结（可选但推荐）
-        print("🤖 执行LLM智能分析...")
+        logger.info("执行LLM智能分析...")
         llm_result = await _execute_llm_analysis(base_report)
         
         # 将LLM结果合并到报告中，并增强可观测性
         if llm_result["success"]:
             base_report["llm"] = llm_result["analysis"]
-            print("✅ LLM智能分析完成")
+            logger.info("LLM智能分析完成")
         else:
             base_report["llm_error"] = llm_result["error"]
             # 在key_findings中添加LLM降级提示，提升用户可见性
             base_report.setdefault("summary", {}).setdefault("key_findings", []).insert(0, 
                 f"🤖 LLM智能分析不可用（降级）：{llm_result['error']}")
-            print(f"⚠️ LLM分析失败，使用规则分级结果: {llm_result['error']}")
+            logger.warning(f"LLM分析失败，使用规则分级结果: {llm_result['error']}")
         
         # 7. 报告落盘
-        print("💾 生成并保存分析报告...")
+        logger.info("生成并保存分析报告...")
         report_result = _save_reports(base_report, results_dir, timestamp)
         
         if not report_result["success"]:
-            print(f"⚠️ 报告保存失败: {report_result['error']}")
+            logger.error(f"报告保存失败: {report_result['error']}")
         
         # 8. 状态回填与清理
-        print("🧹 更新状态并清理...")
+        logger.debug("更新状态并清理...")
         return _create_success_response(base_report, report_result)
         
     except Exception as e:
-        print(f"❌ Analysis Node 执行异常: {str(e)}")
+        logger.error(f"Analysis Node 执行异常: {str(e)}", exc_info=True)
         return _create_error_response(f"分析节点执行异常: {str(e)}")
 
 
@@ -188,7 +191,7 @@ def _parse_pipeline_metrics(results_dir: str) -> Dict[str, Any]:
     
     try:
         # 调用解析器工具，分别捕获每个解析器的成功/失败状态
-        print("  - 解析FastP结果...")
+        logger.debug("解析FastP结果...")
         try:
             fastp_result = parse_fastp_results.invoke({"results_directory": results_dir})
             parsing_status["fastp"] = fastp_result.get("success", False)
@@ -198,7 +201,7 @@ def _parse_pipeline_metrics(results_dir: str) -> Dict[str, Any]:
             fastp_result = {"success": False, "error": f"FastP解析异常: {str(e)}"}
             parsing_errors["fastp"] = str(e)
             
-        print("  - 解析STAR结果...")
+        logger.debug("解析STAR结果...")
         try:
             star_result = parse_star_metrics.invoke({"results_directory": results_dir})
             parsing_status["star"] = star_result.get("success", False)
@@ -208,7 +211,7 @@ def _parse_pipeline_metrics(results_dir: str) -> Dict[str, Any]:
             star_result = {"success": False, "error": f"STAR解析异常: {str(e)}"}
             parsing_errors["star"] = str(e)
             
-        print("  - 解析FeatureCounts结果...")
+        logger.debug("解析FeatureCounts结果...")
         try:
             fc_result = parse_featurecounts_metrics.invoke({"results_directory": results_dir})
             parsing_status["featurecounts"] = fc_result.get("success", False)
@@ -222,9 +225,9 @@ def _parse_pipeline_metrics(results_dir: str) -> Dict[str, Any]:
         success_count = sum(parsing_status.values())
         total_count = len(parsing_status)
         
-        print(f"  - 解析完成: {success_count}/{total_count} 个步骤成功")
+        logger.info(f"解析完成: {success_count}/{total_count} 个步骤成功")
         if parsing_errors:
-            print(f"  - 解析错误: {list(parsing_errors.keys())}")
+            logger.warning(f"解析错误: {list(parsing_errors.keys())}")
         
         return {
             "success": True,
@@ -564,12 +567,16 @@ async def _execute_llm_analysis(base_report: Dict[str, Any]) -> Dict[str, Any]:
         # 调用LLM（带超时）
         structured_llm = llm.with_structured_output(LLMAnalysisModel)
         
-        print(f"🤖 调用LLM进行智能分析...")
+        logger.info("调用LLM进行智能分析...")
         msgs = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message}
         ]
         llm_response = await _invoke_llm_langgraph(structured_llm, msgs)
+        try:
+            log_llm_preview(logger, "analysis", llm_response)
+        except Exception:
+            pass
         
         return {
             "success": True,
@@ -582,7 +589,7 @@ async def _execute_llm_analysis(base_report: Dict[str, Any]) -> Dict[str, Any]:
         
         # 更精确的错误码识别
         if "429" in error_msg:  # 速率限制
-            print("⏳ 遇到速率限制，等待20秒后重试...")
+            logger.warning("遇到速率限制，等待20秒后重试...")
             await asyncio.sleep(20)
             try:
                 # 重新构造LLM和消息，避免引用未定义变量
@@ -600,6 +607,10 @@ async def _execute_llm_analysis(base_report: Dict[str, Any]) -> Dict[str, Any]:
                     {"role": "user", "content": user_message}
                 ]
                 llm_response = await _invoke_llm_langgraph(structured_llm, msgs)
+                try:
+                    log_llm_preview(logger, "analysis.retry429", llm_response)
+                except Exception:
+                    pass
                 return {
                     "success": True,
                     "analysis": dict(llm_response)
@@ -612,7 +623,7 @@ async def _execute_llm_analysis(base_report: Dict[str, Any]) -> Dict[str, Any]:
         
         # 更精确的5xx服务器错误识别
         elif any(code in error_msg for code in ["500", "502", "503", "504", "timeout"]):  # 服务器错误或超时
-            print("⏳ 遇到服务器问题，等待2秒后重试...")
+            logger.warning("遇到服务器问题，等待2秒后重试...")
             await asyncio.sleep(2)
             try:
                 # 重新构造LLM和消息
@@ -629,6 +640,10 @@ async def _execute_llm_analysis(base_report: Dict[str, Any]) -> Dict[str, Any]:
                     {"role": "user", "content": user_message}
                 ]
                 llm_response = await _invoke_llm_langgraph(structured_llm, msgs)
+                try:
+                    log_llm_preview(logger, "analysis.retry5xx", llm_response)
+                except Exception:
+                    pass
                 return {
                     "success": True,
                     "analysis": dict(llm_response)
@@ -700,19 +715,19 @@ def _create_success_response(report_data: Dict[str, Any], save_result: Dict[str,
     user_response = f"""
 🎉 RNA-seq综合分析完成！
 
-{status_emoji} **总体结论**: {status}
+{status_emoji} 总体结论: {status}
 
-📊 **样本统计**:
+📊 样本统计:
 - 总计：{samples_info.get('total', 0)} 个样本
 - 通过：{samples_info.get('pass', 0)} 个 ✅
 - 警告：{samples_info.get('warn', 0)} 个 ⚠️  
 - 失败：{samples_info.get('fail', 0)} 个 ❌
 
-📁 **分析报告**:
+📁 分析报告:
 - JSON详细报告: {save_result.get('json_path', '生成失败')}
 - Markdown摘要: {save_result.get('md_path', '生成失败')}
 
-💡 **后续建议**: 查看详细报告了解具体指标和建议
+💡 后续建议: 查看详细报告了解具体指标和建议
 """
 
     # 提取关键统计信息

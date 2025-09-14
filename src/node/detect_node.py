@@ -8,11 +8,14 @@ from ..tools import (
     check_tool_availability,
 )
 from ..config.settings import Settings
+from ..logging_bootstrap import get_logger
+
+logger = get_logger("rna.nodes.detect")
 
 
 async def detect_node(state: AgentState) -> Dict[str, Any]:
     """Detect节点 - 直接调用工具执行全面检测（不依赖Plan）"""
-    print("🔎 正在执行全面环境与数据检测…")
+    logger.info("正在执行全面环境与数据检测")
 
     # 生成时间戳和结果目录
     settings = Settings()
@@ -20,7 +23,7 @@ async def detect_node(state: AgentState) -> Dict[str, Any]:
     base_data_path = str(settings.data_dir)
     results_dir = f"{base_data_path}/results/{timestamp}"
     
-    print(f"📁 生成结果目录: {results_dir}")
+    logger.info(f"生成结果目录: {results_dir}")
 
     results: Dict[str, Any] = {}
     errors = []
@@ -70,7 +73,7 @@ async def detect_node(state: AgentState) -> Dict[str, Any]:
     if search_roots:
         sample_names = list((analyze_fastq_data.get("samples") or {}).keys())
         preview = ", ".join(sample_names[:3]) + ("..." if len(sample_names) > 3 else "")
-        print(f"🔍 FASTQ扫描: roots=[{search_roots}] files={fastq_total_files} samples={fastq_total_samples} preview=[{preview}]")
+        logger.info(f"FASTQ扫描: roots=[{search_roots}] files={fastq_total_files} samples={fastq_total_samples} preview=[{preview}]")
 
     # 汇总
     summary_parts = [
@@ -86,7 +89,7 @@ async def detect_node(state: AgentState) -> Dict[str, Any]:
         summary_parts.append(f"错误 {len(errors)}")
 
     query_summary = " | ".join(summary_parts)
-    print(f"✅ 检测完成: {query_summary}")
+    logger.info(f"检测完成: {query_summary}")
 
     return {
         "success": True,

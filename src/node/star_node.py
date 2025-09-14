@@ -8,7 +8,10 @@ from ..state import AgentState, StarResponse
 from ..core import get_shared_llm
 from ..prompts import STAR_OPTIMIZATION_PROMPT
 from ..tools import download_genome_assets, build_star_index, run_nextflow_star, parse_star_metrics, scan_genome_files
+from ..logging_bootstrap import get_logger, log_llm_preview
 import json
+
+logger = get_logger("rna.nodes.star")
 
 
 def create_star_agent():
@@ -43,7 +46,7 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
     - 生成比对统计
     - 更新状态信息
     """
-    print("\n🎯 STAR比对节点开始执行...")
+    logger.info("STAR比对节点开始执行...")
 
     # 更新执行进度
     completed_steps = state.completed_steps.copy() if state.completed_steps else []
@@ -68,7 +71,7 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
         }
 
     try:
-        print(f"⚡ [AGENT] 使用STAR Agent进行比对与资源管理 (模式: {execution_mode})")
+        logger.info(f"[AGENT] 使用STAR Agent进行比对与资源管理 (模式: {execution_mode})")
 
         if execution_mode == "single":
             # 单次执行：仅执行比对，不做参数优化
@@ -89,7 +92,7 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
             result = {
                 "success": True,
                 "status": "star_completed",
-                "response": "✅ STAR比对完成（单次执行模式）\n\n🚀 **执行详情**: 已完成比对，保持原有参数配置",
+                "response": "✅ STAR比对完成（单次执行模式）\n\n🚀 执行详情: 已完成比对，保持原有参数配置",
                 "current_step": "star",
                 "completed_steps": completed_steps,
                 "star_results": star_results,
@@ -131,7 +134,7 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
             optimization_count = len(optimization_params_changes or {})
             result["response"] = (
                 f"✅ STAR比对完成并已优化\n- 比对状态: 成功完成\n- 参数优化: 应用了{optimization_count}个优化参数\n\n"
-                f"⚡ **优化详情**: {optimization_reasoning}"
+                f"⚡ 优化详情: {optimization_reasoning}"
             )
             return result
             
@@ -170,7 +173,7 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
             optimization_count = len(optimization_params_changes or {})
             result["response"] = (
                 "🎯 STAR比对完成（YOLO自动模式）\n\n"
-                f"⚡ **优化执行**: 已应用{optimization_count}个优化参数，自动进入下一步"
+                f"⚡ 优化执行: 已应用{optimization_count}个优化参数，自动进入下一步"
             )
             return result
 
@@ -225,7 +228,7 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
 
         else:
             # 未知模式：按 single 处理
-            print(f"ℹ️ 未知执行模式 '{execution_mode}'，按 single 处理")
+            logger.warning(f"未知执行模式 '{execution_mode}'，按 single 处理")
             star_response = await _call_star_optimization_agent(state)
             agent_results = getattr(star_response, 'results', None)
             star_results = {
@@ -238,14 +241,14 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
             return {
                 "success": True,
                 "status": "star_completed",
-                "response": "✅ STAR比对完成（按single处理）\n\n🚀 **执行详情**: 已完成比对，保持原有参数配置",
+                "response": "✅ STAR比对完成（按single处理）\n\n🚀 执行详情: 已完成比对，保持原有参数配置",
                 "current_step": "star",
                 "completed_steps": completed_steps,
                 "star_results": star_results,
             }
 
     except Exception as e:
-        print(f"❌ STAR节点执行失败: {str(e)}")
+        logger.error(f"STAR节点执行失败: {str(e)}", exc_info=True)
         return {
             "success": False,
             "status": "star_failed",
@@ -317,6 +320,13 @@ async def _call_star_optimization_agent(state: AgentState) -> StarResponse:
 
     # 提取结构化响应
     structured = result.get("structured_response") if isinstance(result, dict) else None
+    try:
+        if structured:
+            log_llm_preview(logger, "star", structured)
+        else:
+            log_llm_preview(logger, "star.raw", {"keys": list(result.keys())[:10]})
+    except Exception:
+        pass
     if structured and isinstance(structured, StarResponse):
         return structured
 
@@ -357,9 +367,8 @@ def _ensure_bam_paths_from_per_sample(star_results: Dict[str, Any]) -> Dict[str,
             enhanced["bam_files_verified"] = False
     
     except Exception as e:
-        print(f"⚠️ 提取BAM路径时出错: {e}")
+        logger.warning(f"提取BAM路径时出错: {e}")
         enhanced["bam_files_verified"] = False
         enhanced.setdefault("error", str(e))
     
     return enhanced
-

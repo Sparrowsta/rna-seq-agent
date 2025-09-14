@@ -20,6 +20,9 @@ from .route import (
     route_after_featurecount,
     route_after_analysis
 )
+from .logging_bootstrap import get_logger, is_debug_enabled
+
+logger = get_logger("rna.graph")
 
 def create_agent():
     """创建LangGraph Agent - 支持STAR/HISAT2双比对器的完整RNA-seq流程"""
@@ -139,8 +142,8 @@ def create_agent():
     # 编译图
     app = workflow.compile()
     
-    print("🤖 RNA-seq智能分析助手已启动")
-    print("   架构: User Communication → Normal → Detect → Prepare → Confirm")
-    print("   流程: (Modify →) FastP → STAR/HISAT2 → FeatureCount → Analysis → (END/Confirm)")
-    print("   比对器: 支持STAR和HISAT2双比对器选择")
+    # 如果启用调试模式，记录调试信息
+    if is_debug_enabled():
+        logger.debug("调试模式已启用，支持LangGraph stream调试")
+        
     return app
