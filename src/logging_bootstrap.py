@@ -25,7 +25,7 @@ def setup_logging(
     """设置统一的日志配置
     
     Args:
-        data_dir: 数据目录路径，默认从环境变量DATA_DIR获取或使用./data
+        data_dir: 数据目录路径，默认使用Settings类的data_dir配置
         log_level: 日志级别，默认从环境变量LOG_LEVEL获取或INFO
         enable_console: 是否启用控制台输出
         enable_file: 是否启用文件输出
@@ -35,9 +35,15 @@ def setup_logging(
         log_level = os.getenv("LOG_LEVEL", "INFO").upper()
     level = getattr(logging, log_level, logging.INFO)
     
-    # 获取数据目录
+    # 获取数据目录 - 使用Settings类统一路径配置
     if data_dir is None:
-        data_dir = Path(os.getenv("DATA_DIR", Path.cwd() / "data"))
+        try:
+            from .config.settings import Settings
+            settings = Settings()
+            data_dir = settings.data_dir
+        except ImportError:
+            # 回退到原始逻辑，避免循环导入
+            data_dir = Path(os.getenv("DATA_DIR", Path.cwd() / "data"))
     
     # 创建日志目录
     logs_dir = data_dir / "logs"
