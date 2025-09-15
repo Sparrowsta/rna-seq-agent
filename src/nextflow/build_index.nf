@@ -38,14 +38,11 @@ process BUILD_STAR_INDEX {
     # 获取输入文件的完整路径，避免链接冲突
     FASTA_FILE=\$(readlink -f ${genome_fasta})
     GTF_FILE=\$(readlink -f ${genome_gtf})
-    
-    # 清理当前目录的输入文件软链接，让STAR可以直接使用当前目录
-    rm -f ${genome_fasta} ${genome_gtf}
+
     
     # STAR索引构建 - 直接在当前目录生成索引文件  
     micromamba run -n align_env STAR \\
         --runMode genomeGenerate \\
-        --runThreadN ${params.runThreadN} \\
         --genomeDir . \\
         --genomeFastaFiles \$FASTA_FILE \\
         --sjdbGTFfile \$GTF_FILE \\

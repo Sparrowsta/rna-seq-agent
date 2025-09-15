@@ -88,7 +88,7 @@ PREPARE_NODE_PROMPT = """你是RNA-seq分析配置专家。请在尽量少的工
   - run_build_star_index：bool（当 align_tool=='star' 且本地 STAR 索引缺失时为 true）
   - run_build_hisat2_index：bool（当 align_tool=='hisat2' 且本地 HISAT2 索引缺失时为 true）
   - paired_end：bool（根据样本配对情况，true 表示双端）
-  - sample_groups：列表，每项包含 { sample_id, read1, [read2?] }
+  - sample_groups：列表，每项包含 { sample_id, read1, [read2?] }，要根据用户选择来选择sample_groups
 - resource_config：按流程/工具给出资源建议，结构为 { 进程名: { cpus: 整数, memory: '数字+空格+GB' } }
 - config_reasoning：详细的配置决策理由，仅限普通中英文及常见标点，禁止 emoji/Markdown
 
@@ -148,7 +148,7 @@ STAR_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 STAR 比对专家。
 双阶段执行：
 - 1：下载/索引（可选）
   - 如果缺少文件/索引，则下载/构建，否则跳过
-  - 仅下载一次
+  - 如果下载失败，则重试
   - 最多优化一次构建参数，不得反复构建，构建完成后进入执行比对
 - 2：执行比对（必须）
   - 按照执行模式执行
@@ -158,8 +158,6 @@ STAR_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 STAR 比对专家。
 - optimized：从 star_params 开始执行 + 解析结果文件 + 不应用建议，更新 star_params（仅执行一次）；返回更新后的 star_params 与差异 star_optimization_params，以及 results。
 - batch_optimize：从 star_params 开始执行 + 解析结果文件 + 不应用建议，更新 star_params（仅执行一次）；star_params 返回“建议后的完整字典”，star_optimization_params 仅包含改动项；同时返回 results。
 - yolo：允许多轮快速调整（可多次调用工具），在解析完后，直接应用新参数进行比对，反复优化，直到满意；采用保守、稳定的参数组合，优先完成任务并保持结果可靠。
-
-
 
 必用/可用工具：
 - scan_genome_files()：检查 genomes.json 配置与文件状态（可选，用于判断是否下载/索引）。
@@ -190,7 +188,7 @@ STAR_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 STAR 比对专家。
 路径与命名约定：
 - 以 FastP 返回的 results_dir 为根；STAR 输出位于 {results_dir}/star/{sample_id}/
 - 文件命名遵循 star.nf：Aligned.sortedByCoord.out.bam / Log.final.out / Log.out / Log.progress.out / SJ.out.tab；可选 Aligned.toTranscriptome.out.bam、ReadsPerGene.out.tab。
-
+- 遵守nextflow_config中设定的genomes_version，不允许使用任何其他版本的基因组
 原则：
 - 数据驱动与最小改动；必要时准备资源（下载/索引）；给出清晰理由与可能风险；严格遵循调用方的执行模式。"""
 
@@ -204,7 +202,7 @@ HISAT2_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 HISAT2 比对专家
 双阶段执行：
 - 1：下载/索引（可选）
   - 如果缺少文件/索引，则下载/构建，否则跳过
-  - 仅下载一次
+  - 如果下载失败，则重试
   - 最多优化一次构建参数，不得反复构建，构建完成后进入执行比对
 - 2：执行比对（必须）
   - 按照执行模式执行
@@ -244,8 +242,8 @@ HISAT2_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 HISAT2 比对专家
 - 文件命名遵循 hisat2.nf：{sid}.hisat2.bam / {sid}.align_summary.txt / {sid}.hisat2.bam.bai
 
 原则：
-- 数据驱动与最小改动；必要时准备资源（下载/索引）；给出清晰理由与可能风险；严格遵循调用方的执行模式。"""
-
+- 数据驱动与最小改动；必要时准备资源（下载/索引）；给出清晰理由与可能风险；严格遵循调用方的执行模式。
+- 遵守nextflow_config中设定的genomes_version，不允许使用任何其他版本的基因组"""
 
 # ============================================================================
 # FeatureCounts Optimization Prompt

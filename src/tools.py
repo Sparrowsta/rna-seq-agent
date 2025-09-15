@@ -1043,7 +1043,7 @@ def parse_fastp_results(results_directory: str) -> Dict[str, Any]:
 # ==================== STAR工具函数 ====================
 
 @tool
-def download_genome_assets(genome_id: str, force: bool = False) -> Dict[str, Any]:
+def download_genome_assets(genome_id: str) -> Dict[str, Any]:
     """下载指定基因组的FASTA和GTF文件
     
     Args:
@@ -1099,87 +1099,92 @@ def download_genome_assets(genome_id: str, force: bool = False) -> Dict[str, Any
         gtf_path = project_root / gtf_relative
         
         downloaded = []
-        skipped = []
         errors = []
         
         # 创建目录
         fasta_path.parent.mkdir(parents=True, exist_ok=True)
         gtf_path.parent.mkdir(parents=True, exist_ok=True)
         
-        def download_file(url: str, target_path: Path, file_type: str) -> bool:
-            """下载单个文件的辅助函数"""
-            try:
-                # 检查文件是否已存在
-                if target_path.exists() and target_path.stat().st_size > 0 and not force:
-                    skipped.append(f"{file_type}: {target_path}")
-                    return True
-                
-                # 下载到临时文件
+        # 准备下载任务
+        download_info = [
+            (fasta_url, fasta_path, "FASTA"),
+            (gtf_url, gtf_path, "GTF")
+        ]
+        
+        # 并行下载 - 同时启动两个curl进程
+        processes = []
+        temp_paths = []
+        
+        for url, target_path, file_type in download_info:
+            # 确定临时文件路径
+            if url.endswith('.gz'):
+                temp_path = target_path.with_suffix('.gz.part')
+            else:
                 temp_path = target_path.with_suffix(target_path.suffix + '.part')
-                
-                # 构建curl下载命令
-                cmd = [
-                    "curl", "-L", "-fS", "--retry", "5", 
-                    "--retry-delay", "5", "--retry-connrefused",
-                    "-C", "-",  # 断点续传
-                    "-o", str(temp_path),
-                    url
-                ]
-                
-                logger.info(f"下载 {file_type}...")
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)  # 1小时超时
-                
-                if result.returncode != 0:
-                    errors.append(f"{file_type}下载失败: {result.stderr}")
-                    return False
-                
-                # 解压文件（如果是.gz格式）
-                if temp_path.suffix == '.gz':
-                    # 使用pigz优先，fallback到gzip
-                    decompress_cmd = ["pigz", "-d", "-c", str(temp_path)]
-                    decompress_result = subprocess.run(decompress_cmd, capture_output=True, timeout=1800)
-                    
-                    if decompress_result.returncode != 0:
-                        # fallback到gzip
-                        decompress_cmd = ["gzip", "-d", "-c", str(temp_path)]
-                        decompress_result = subprocess.run(decompress_cmd, capture_output=True, timeout=1800)
-                        
-                        if decompress_result.returncode != 0:
+            temp_paths.append((temp_path, target_path, file_type))
+            
+            # 启动下载进程
+            cmd = [
+                "curl", "-L", "-fS", "--retry", "5", 
+                "--retry-delay", "5", "--retry-connrefused",
+                "-C", "-", "--progress-bar",
+                "-o", str(temp_path), url
+            ]
+            process = subprocess.Popen(cmd)
+            processes.append(process)
+        
+        # 等待所有下载完成
+        download_results = [p.wait() for p in processes]
+        
+        # 处理下载结果和解压
+        success_flags = [False, False]  # [FASTA, GTF]
+        
+        for i, (return_code, (temp_path, target_path, file_type)) in enumerate(zip(download_results, temp_paths)):
+            if return_code != 0:
+                errors.append(f"{file_type}下载失败，返回码: {return_code}")
+                continue
+            
+            # 解压处理
+            original_name = temp_path.name.rstrip('.part')
+            if original_name.endswith('.gz'):
+                # 使用gzip解压到目标文件
+                try:
+                    with open(target_path, 'w', encoding='utf-8') as output_file:
+                        result = subprocess.run(
+                            ["gzip", "-dc", str(temp_path)], 
+                            stdout=output_file, 
+                            stderr=subprocess.PIPE,
+                            timeout=1800,
+                            text=True
+                        )
+                        if result.returncode != 0:
                             errors.append(f"{file_type}解压失败")
-                            return False
-                    
-                    # 写入解压内容到最终文件
-                    with open(target_path, 'wb') as f:
-                        f.write(decompress_result.stdout)
-                    
-                    # 删除临时压缩文件
-                    temp_path.unlink()
-                else:
-                    # 直接重命名
-                    temp_path.rename(target_path)
+                            continue
+                except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+                    errors.append(f"{file_type}解压异常: {str(e)}")
+                    continue
                 
-                downloaded.append(f"{file_type}: {target_path}")
-                return True
+                # 检查解压结果
+                if not target_path.exists() or target_path.stat().st_size == 0:
+                    errors.append(f"{file_type}解压后文件为空")
+                    continue
                 
-            except subprocess.TimeoutExpired:
-                errors.append(f"{file_type}下载超时")
-                return False
-            except Exception as e:
-                errors.append(f"{file_type}下载异常: {str(e)}")
-                return False
+                # 删除临时文件
+                temp_path.unlink()
+            else:
+                # 直接重命名
+                temp_path.rename(target_path)
+            
+            downloaded.append(f"{file_type}: {target_path}")
+            success_flags[i] = True  # 按索引标记成功
         
-        # 并行下载FASTA和GTF（使用简单的串行实现，可以后续优化为真正的并行）
-        fasta_success = download_file(fasta_url, fasta_path, "FASTA")
-        gtf_success = download_file(gtf_url, gtf_path, "GTF")
-        
-        success = fasta_success and gtf_success
+        success = all(success_flags)  # 所有文件都成功
         
         return {
             "success": success,
             "fasta_path": str(fasta_path),
             "gtf_path": str(gtf_path),
             "downloaded": downloaded,
-            "skipped": skipped,
             "errors": errors
         }
         
@@ -1236,10 +1241,91 @@ def build_star_index(
         project_root = tools_config.settings.project_root
         fasta_path = project_root / fasta_rel
         gtf_path = project_root / gtf_rel
+        
+        # 检查文件是否存在，如果不存在则尝试下载
+        files_missing = []
+        files_invalid = []
+        
         if not fasta_path.exists():
-            return {"success": False, "error": f"FASTA文件不存在: {fasta_path}"}
+            files_missing.append(f"FASTA: {fasta_path}")
+        else:
+            # 检查FASTA文件有效性
+            try:
+                file_size = fasta_path.stat().st_size
+                if file_size == 0:
+                    files_invalid.append(f"FASTA文件为空: {fasta_path}")
+                else:
+                    # 检查文件格式（前几个字符）
+                    with open(fasta_path, 'rb') as f:
+                        first_bytes = f.read(10)
+                    if not first_bytes.startswith(b'>'):
+                        files_invalid.append(f"FASTA文件格式无效: {fasta_path} (首字符: {first_bytes[:5]})")
+            except Exception as e:
+                files_invalid.append(f"FASTA文件检查失败: {fasta_path} ({e})")
+        
         if not gtf_path.exists():
-            return {"success": False, "error": f"GTF文件不存在: {gtf_path}"}
+            files_missing.append(f"GTF: {gtf_path}")
+        else:
+            # 检查GTF文件有效性
+            try:
+                file_size = gtf_path.stat().st_size
+                if file_size == 0:
+                    files_invalid.append(f"GTF文件为空: {gtf_path}")
+            except Exception as e:
+                files_invalid.append(f"GTF文件检查失败: {gtf_path} ({e})")
+            
+        if files_missing or files_invalid:
+            logger.info(f"检测到问题文件，尝试重新下载: missing={files_missing}, invalid={files_invalid}")
+            
+            # 删除无效文件
+            for invalid_file in files_invalid:
+                try:
+                    if "FASTA" in invalid_file and fasta_path.exists():
+                        fasta_path.unlink()
+                        logger.info(f"删除无效FASTA文件: {fasta_path}")
+                    elif "GTF" in invalid_file and gtf_path.exists():
+                        gtf_path.unlink()
+                        logger.info(f"删除无效GTF文件: {gtf_path}")
+                except Exception as e:
+                    logger.warning(f"删除无效文件失败: {e}")
+            
+            download_result = download_genome_assets(genome_id)
+            
+            if not download_result.get("success", False):
+                return {
+                    "success": False,
+                    "error": f"重新下载基因组文件失败: {download_result.get('error', '未知错误')}"
+                }
+            
+            # 等待并再次检查文件
+            import time
+            time.sleep(2)  # 等待文件系统同步
+            
+            # 重新检查文件是否存在且有效
+            if not fasta_path.exists():
+                return {"success": False, "error": f"重新下载后FASTA文件仍不存在: {fasta_path}"}
+            if not gtf_path.exists():
+                return {"success": False, "error": f"重新下载后GTF文件仍不存在: {gtf_path}"}
+            
+            # 再次验证文件有效性
+            try:
+                fasta_size = fasta_path.stat().st_size
+                if fasta_size == 0:
+                    return {"success": False, "error": f"重新下载的FASTA文件仍为空: {fasta_path}"}
+                
+                with open(fasta_path, 'rb') as f:
+                    first_bytes = f.read(10)
+                if not first_bytes.startswith(b'>'):
+                    return {"success": False, "error": f"重新下载的FASTA文件格式仍无效: {fasta_path}"}
+                
+                gtf_size = gtf_path.stat().st_size
+                if gtf_size == 0:
+                    return {"success": False, "error": f"重新下载的GTF文件仍为空: {gtf_path}"}
+                    
+            except Exception as e:
+                return {"success": False, "error": f"验证重新下载的文件失败: {e}"}
+            
+            logger.info(f"文件重新下载并验证成功: FASTA={fasta_size}字节, GTF={gtf_size}字节")
 
         # 目标索引目录
         index_dir = tools_config.get_star_index_dir(fasta_path)
@@ -1320,6 +1406,33 @@ def build_star_index(
         work_root = tools_config.settings.data_dir / "work"
         work_dir = work_root / f"star_index_{timestamp}"
         work_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 调试日志：验证文件路径假设
+        logger.info("=== STAR索引构建调试信息 ===")
+        logger.info(f"FASTA文件路径: {fasta_path}")
+        logger.info(f"FASTA文件存在: {fasta_path.exists()}")
+        logger.info(f"GTF文件路径: {gtf_path}")
+        logger.info(f"GTF文件存在: {gtf_path.exists()}")
+        logger.info(f"目标索引目录: {index_dir}")
+        logger.info(f"索引目录父目录存在: {index_dir.parent.exists()}")
+        logger.info(f"Nextflow脚本路径: {nextflow_script}")
+        logger.info(f"Nextflow脚本存在: {nextflow_script.exists()}")
+        logger.info(f"参数文件路径: {params_file}")
+        logger.info(f"工作目录: {work_dir}")
+        
+        # 调试日志：验证参数传递假设
+        logger.info("=== Nextflow参数内容 ===")
+        for key, value in nf_params.items():
+            logger.info(f"{key}: {value}")
+        
+        # 验证参数文件内容
+        try:
+            with open(params_file, 'r', encoding='utf-8') as f:
+                params_content = f.read()
+            logger.info(f"参数文件内容: {params_content}")
+        except Exception as e:
+            logger.error(f"读取参数文件失败: {e}")
+        
         cmd = [
             "nextflow",
             "run",
@@ -1331,6 +1444,7 @@ def build_star_index(
         ]
 
         logger.info("构建STAR索引 (Nextflow)")
+        logger.info(f"执行命令: {' '.join(cmd)}")
         logger.info(f"参数文件: {params_file}")
         logger.info(f"目标目录: {index_dir}")
         result = subprocess.run(
@@ -1904,8 +2018,13 @@ def build_hisat2_index(
             return pp if pp.is_absolute() else (tools_config.settings.project_root / pp)
 
         fasta_file = _resolve(fasta_path)
+        gtf_file = _resolve(gtf_path)
+        
+        # 检查必需文件是否存在
         if not fasta_file.exists():
-            return {"success": False, "error": f"FASTA文件不存在: {fasta_file}"}
+            return {"success": False, "error": f"FASTA文件不存在: {fasta_file}，请先下载基因组文件"}
+        if gtf_file.exists():
+            return {"success": False, "error": f"GTF文件不存在: {gtf_file}，请先下载基因组文件"}
 
         # 3) 确定索引目录
         index_dir = tools_config.get_hisat2_index_dir(fasta_file)
