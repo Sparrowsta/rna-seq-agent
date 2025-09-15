@@ -47,9 +47,7 @@ async def _numeric_user_confirm_node(state: AgentState) -> Dict[str, Any]:
             # 构建命令解析上下文
             context = {
                 'completed_steps': getattr(state, 'completed_steps', []),
-                'current_step': getattr(state, 'current_step', ''),
-                'batch_optimizations': getattr(state, 'batch_optimizations', {}),
-                'batch_optimization_complete': getattr(state, 'batch_optimization_complete', False)
+                'current_step': getattr(state, 'current_step', '')
             }
             
             # 使用新的数字选择解析

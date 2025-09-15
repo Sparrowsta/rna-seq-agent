@@ -35,13 +35,13 @@ def create_featurecounts_agent():
 
 async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
     """
-    FeatureCounts节点实现
+    FeatureCounts节点实现 - 执行基因定量并生成优化建议
     
     功能：
     - 执行基因定量
     - 生成表达矩阵  
     - 更新状态信息
-    - 根据模式进行参数优化
+    - 生成optimization_params供路由决策器使用
     """
     logger = get_logger("rna.nodes.featurecounts")
     logger.info("FeatureCounts定量节点开始执行")
@@ -50,9 +50,6 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
     completed_steps = state.completed_steps.copy() if state.completed_steps else []
     if "featurecounts" not in completed_steps:
         completed_steps.append("featurecounts")
-    
-    # 获取执行模式
-    execution_mode = state.execution_mode
     
     # 允许基于 STAR 或 HISAT2 的比对结果进行定量
     has_star = bool(getattr(state, 'star_results', {}) or {}) and bool(state.star_results.get("success"))
@@ -72,216 +69,59 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
         }
     
     try:
-        logger.info(f"[AGENT] 使用FeatureCounts Agent进行定量分析 (模式: {execution_mode})")
+        logger.info("[FEATURECOUNTS] 使用FeatureCounts Agent进行定量分析和优化...")
         
-        if execution_mode == "single":
-            # 单次执行：仅执行定量，不做参数优化
-            fc_response = await _call_featurecounts_optimization_agent(state)
-            
-            # 透传Agent返回的results（results_dir, matrix_path等）
-            agent_results = getattr(fc_response, 'results', None)
-            fc_results = {
-                "success": True,
-                "status": "success",
-            }
-            if agent_results and isinstance(agent_results, dict):
-                fc_results.update(agent_results)
-            
-            
-            result = {
-                "success": True,
-                "status": "featurecounts_completed",
-                "response": "✅ FeatureCounts定量完成（单次执行模式）\n\n🚀 执行详情: 已完成基因定量，保持原有参数配置",
-                "current_step": "featurecounts",
-                "completed_steps": completed_steps,
-                "featurecounts_results": fc_results,
-            }
-            
-            # 同时聚合到跨节点 results 字段，便于统一读取
-            try:
-                aggregated_results = dict(getattr(state, 'results', {}) or {})
-                aggregated_results["featurecounts"] = result.get("featurecounts_results", {})
-                result["results"] = aggregated_results
-            except Exception:
-                pass
-                
-            return result
-            
-        elif execution_mode == "optimized":
-            # 精细优化：执行+解析+应用优化
-            fc_response = await _call_featurecounts_optimization_agent(state)
-            
-            # 立即更新执行参数
-            optimized_params = fc_response.featurecounts_params
-            optimization_reasoning = fc_response.featurecounts_optimization_suggestions
-            optimization_params_changes = fc_response.featurecounts_optimization_params
-            
-            # 透传Agent返回的results
-            agent_results = getattr(fc_response, 'results', None)
-            fc_results = {
-                "success": True,
-                "status": "success",
-            }
-            if agent_results and isinstance(agent_results, dict):
-                fc_results.update(agent_results)
-            
-            result = {
-                "success": True,
-                "status": "featurecounts_completed",
-                "current_step": "featurecounts",
-                "completed_steps": completed_steps,
-                "featurecounts_params": optimized_params,
-                "featurecounts_optimization_suggestions": optimization_reasoning,
-                "featurecounts_optimization_params": optimization_params_changes,  # 记录变更的参数
-                "featurecounts_results": fc_results,
-            }
-            
-            optimization_count = len(optimization_params_changes or {})
+        # 统一调用FeatureCounts Agent执行定量和优化分析
+        fc_response = await _call_featurecounts_optimization_agent(state)
+        
+        # 立即更新执行参数和优化建议
+        optimized_params = fc_response.featurecounts_params
+        optimization_reasoning = fc_response.featurecounts_optimization_suggestions
+        optimization_params_changes = fc_response.featurecounts_optimization_params
+        
+        # 透传Agent返回的results
+        agent_results = getattr(fc_response, 'results', None)
+        fc_results = {
+            "success": True,
+            "status": "success",
+        }
+        if agent_results and isinstance(agent_results, dict):
+            fc_results.update(agent_results)
+        
+        result = {
+            "success": True,
+            "status": "featurecounts_completed",
+            "current_step": "featurecounts",
+            "completed_steps": completed_steps,
+            "featurecounts_params": optimized_params,
+            "featurecounts_optimization_suggestions": optimization_reasoning,
+            "featurecounts_optimization_params": optimization_params_changes,
+            "featurecounts_results": fc_results,
+        }
+
+        # 生成响应信息
+        optimization_count = len(optimization_params_changes or {})
+        if optimization_count > 0:
             result["response"] = (
-                f"✅ FeatureCounts定量完成并已优化\n- 定量状态: 成功完成\n- 参数优化: 应用了{optimization_count}个优化参数\n\n"
+                f"✅ FeatureCounts定量完成\n- 定量状态: 成功完成\n- 优化分析: 生成了{optimization_count}个优化建议\n\n"
                 f"⚡ 优化详情: {optimization_reasoning}"
             )
-            
-            # 同时聚合到跨节点 results 字段，便于统一读取
-            try:
-                aggregated_results = dict(getattr(state, 'results', {}) or {})
-                aggregated_results["featurecounts"] = result.get("featurecounts_results", {})
-                result["results"] = aggregated_results
-            except Exception:
-                pass
-                
-            return result
-            
-        elif execution_mode == "yolo":
-            # YOLO模式：与optimized相同的执行逻辑，但会自动进入下一步
-            fc_response = await _call_featurecounts_optimization_agent(state)
-            
-            # 立即更新执行参数
-            optimized_params = fc_response.featurecounts_params
-            optimization_reasoning = fc_response.featurecounts_optimization_suggestions
-            optimization_params_changes = fc_response.featurecounts_optimization_params
-            
-            # 透传Agent返回的results
-            agent_results = getattr(fc_response, 'results', None)
-            fc_results = {
-                "success": True,
-                "status": "success",
-            }
-            if agent_results and isinstance(agent_results, dict):
-                fc_results.update(agent_results)
-            
-            result = {
-                "success": True,
-                "status": "featurecounts_completed",
-                "current_step": "featurecounts",
-                "completed_steps": completed_steps,
-                "featurecounts_params": optimized_params,
-                "featurecounts_optimization_suggestions": optimization_reasoning,
-                "featurecounts_optimization_params": optimization_params_changes,
-                "featurecounts_results": fc_results,
-            }
-            
-            optimization_count = len(optimization_params_changes or {})
-            result["response"] = (
-                "🎯 FeatureCounts定量完成（YOLO自动模式）\n\n"
-                f"⚡ 优化执行: 已应用{optimization_count}个优化参数，自动进入下一步"
-            )
-            
-            # 同时聚合到跨节点 results 字段，便于统一读取
-            try:
-                aggregated_results = dict(getattr(state, 'results', {}) or {})
-                aggregated_results["featurecounts"] = result.get("featurecounts_results", {})
-                result["results"] = aggregated_results
-            except Exception:
-                pass
-                
-            return result
-            
-        elif execution_mode == "batch_optimize":
-            # 批次优化：执行+解析+收集优化，不应用
-            fc_response = await _call_featurecounts_optimization_agent(state)
-            
-            # 立即更新参数以供批次收集使用
-            optimized_params = fc_response.featurecounts_params
-            optimization_reasoning = fc_response.featurecounts_optimization_suggestions
-            optimization_params_changes = fc_response.featurecounts_optimization_params
-            
-            fc_optimization = {
-                "optimization_reasoning": optimization_reasoning,
-                "suggested_params": optimized_params,
-                "optimization_params_changes": optimization_params_changes,
-                "current_params": state.featurecounts_params.copy(),
-                "tool_name": "featurecounts",
-            }
-            
-            batch_optimizations = state.batch_optimizations.copy()
-            batch_optimizations["featurecounts"] = fc_optimization
-            
-            # 透传Agent返回的results
-            agent_results = getattr(fc_response, 'results', None)
-            fc_results = {
-                "success": True,
-                "status": "success",
-            }
-            if agent_results and isinstance(agent_results, dict):
-                fc_results.update(agent_results)
-            
-            result = {
-                "success": True,
-                "status": "featurecounts_completed",
-                "current_step": "featurecounts",
-                "completed_steps": completed_steps,
-                "batch_optimizations": batch_optimizations,
-                "featurecounts_optimization_suggestions": optimization_reasoning,
-                "featurecounts_results": fc_results,
-            }
-            
-            optimization_count = len(optimization_params_changes or {})
-            result["response"] = (
-                f"✅ FeatureCounts定量完成\n- 定量状态: 成功完成\n- 优化收集: {optimization_count}个参数优化建议已收集\n\n"
-                f"📦 收集的优化建议: {optimization_reasoning}"
-            )
-            
-            # 同时聚合到跨节点 results 字段，便于统一读取
-            try:
-                aggregated_results = dict(getattr(state, 'results', {}) or {})
-                aggregated_results["featurecounts"] = result.get("featurecounts_results", {})
-                result["results"] = aggregated_results
-            except Exception:
-                pass
-                
-            return result
-            
         else:
-            # 未知模式：按 single 处理
-            logger.warning(f"未知执行模式 '{execution_mode}'，按 single 处理")
-            fc_response = await _call_featurecounts_optimization_agent(state)
-            agent_results = getattr(fc_response, 'results', None)
-            fc_results = {
-                "success": True,
-                "status": "success"  # 子结果状态
-            }
-            if agent_results and isinstance(agent_results, dict):
-                fc_results.update(agent_results)
-                
-            result = {
-                "success": True,
-                "status": "featurecounts_completed",
-                "response": "✅ FeatureCounts定量完成（按single处理）\n\n🚀 执行详情: 已完成基因定量，保持原有参数配置",
-                "current_step": "featurecounts",
-                "completed_steps": completed_steps,
-                "featurecounts_results": fc_results,
-            }
+            result["response"] = (
+                "✅ FeatureCounts定量完成\n\n"
+                "🚀 执行详情: 已完成基因定量，当前参数配置已是最优"
+            )
+        
+        # 同时聚合到跨节点 results 字段，便于统一读取
+        try:
+            aggregated_results = dict(getattr(state, 'results', {}) or {})
+            aggregated_results["featurecounts"] = result.get("featurecounts_results", {})
+            result["results"] = aggregated_results
+        except Exception:
+            pass
             
-            # 同时聚合到跨节点 results 字段，便于统一读取
-            try:
-                aggregated_results = dict(getattr(state, 'results', {}) or {})
-                aggregated_results["featurecounts"] = result.get("featurecounts_results", {})
-                result["results"] = aggregated_results
-            except Exception:
-                pass
-                
-            return result
+        logger.info(f"[FEATURECOUNTS] FeatureCounts执行完成，生成{optimization_count}个优化参数")
+        return result
             
     except Exception as e:
         logger.error(f"FeatureCounts节点执行失败: {str(e)}", exc_info=True)
@@ -300,61 +140,38 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
 
 
 async def _call_featurecounts_optimization_agent(state: AgentState) -> FeaturecountsResponse:
-    """调用FeatureCounts Agent，根据执行模式区分行为，统一返回结构化响应"""
+    """调用FeatureCounts优化Agent进行智能参数优化"""
     
-    # 组织上下文（仅数据）
+    logger = get_logger("rna.nodes.featurecounts")
+    
+    # 组织数据上下文（仅数据，不重复流程与指南，遵循系统提示）
+    sample_info = {
+        "sample_groups": state.nextflow_config.get("sample_groups", []),
+        # 结果目录可选提供，工具内部会自动兜底
+        **({"results_dir": state.results_dir} if state.results_dir else {}),
+        # 添加state信息用于参数版本化
+        "state_info": {
+            "results_dir": state.results_dir,
+            "results_timestamp": state.results_timestamp
+        }
+    }
+    
     user_context = {
         "execution_mode": state.execution_mode,
-        "star_results": state.star_results,
-        "hisat2_results": getattr(state, 'hisat2_results', {}),
+        "sample_info": sample_info,
         "nextflow_config": state.nextflow_config,
         "current_featurecounts_params": state.featurecounts_params,
+        "star_results": state.star_results,
+        "hisat2_results": getattr(state, 'hisat2_results', {}),
         "genome_version": state.nextflow_config.get("genome_version", ""),
         "optimization_history": {
             "featurecounts": state.featurecounts_optimization_params,
             "star": state.star_optimization_params,
             "fastp": state.fastp_optimization_params,
         },
-        # 结果目录相关信息
-        **({"results_timestamp": state.results_timestamp} if state.results_timestamp else {}),
-        **({"base_results_dir": state.results_dir} if state.results_dir else {}),
     }
     
-    # 模式指令
-    mode = (state.execution_mode or "single").lower()
-    if mode == "single":
-        mode_instructions = (
-            "本次执行模式为 single（单次执行）。\n"
-            "- 仅执行 FeatureCounts 定量，不进行任何参数优化。\n"
-            "- 必须基于比对器（STAR/HISAT2）产生的坐标排序 BAM 文件进行定量。\n"
-            "- 保持 current_featurecounts_params 原样返回（featurecounts_params 可与输入相同），featurecounts_optimization_params 必须为空对象。\n"
-            "- 必须调用 run_nextflow_featurecounts 执行，并可调用 parse_featurecounts_metrics 提取关键指标。\n"
-            "- 请在结果中返回 results 字段（包含 results_dir、matrix_path 与 per_sample_outputs），便于下游使用。\n"
-            "- 仍需返回 FeaturecountsResponse 结构化结果。\n"
-        )
-    elif mode == "batch_optimize":
-        mode_instructions = (
-            "本次执行模式为 batch_optimize（批次优化）。\n"
-            "- 执行 FeatureCounts 并解析结果，生成优化建议，但不要在当前节点应用这些参数。\n"
-            "- featurecounts_params 请给出\"建议后的完整参数字典\"，featurecounts_optimization_params 仅包含改动的键值对。\n"
-            "- 返回 results（results_dir, matrix_path, per_sample_outputs）供下游使用。\n"
-        )
-    else:  # optimized
-        mode_instructions = (
-            "本次执行模式为 optimized（精细优化）。\n"
-            "- 执行 FeatureCounts、解析结果并生成优化建议。\n"
-            "- featurecounts_params 请返回\"应用优化后的完整参数字典\"，featurecounts_optimization_params 仅包含改动项。\n"
-            "- 返回 results（results_dir, matrix_path, per_sample_outputs）供下游使用。\n"
-        )
-    
-    # 组装用户消息
-    user_prompt = (
-        "请依据系统提示中的标准流程与指导原则执行本次任务。\n\n"
-        + mode_instructions
-        + "以下为本次任务的上下文数据（JSON）：\n\n"
-        + json.dumps(user_context, ensure_ascii=False, indent=2)
-        + "\n\n请基于上述数据完成必要的工具调用，并按系统提示要求返回结构化结果（FeaturecountsResponse）。"
-    )
+    user_prompt = json.dumps(user_context, ensure_ascii=False, indent=2)
     
     # 创建并调用Agent
     agent_executor = create_featurecounts_agent()

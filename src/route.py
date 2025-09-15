@@ -1,6 +1,12 @@
 from langgraph.graph import END
 from .state import AgentState
 from .logging_bootstrap import get_logger
+from .route_decider import (
+    decide_next_action_fastp,
+    decide_next_action_star,
+    decide_next_action_hisat2,
+    decide_next_action_featurecounts
+)
 
 logger = get_logger("rna.route")
 
@@ -68,165 +74,165 @@ def route_after_confirm(state: AgentState) -> str:
 
 def route_after_fastp(state: AgentState) -> str:
     """FastP节点后的路由：
-    - 检查配置中的比对器选择（align_tool/aligner: star 或 hisat2）
-    - 单次执行（single）：根据配置进入相应比对
-    - 优化执行（optimized）：回到用户确认进行参数微调
-    - 批次优化（batch_optimize）：根据配置进入相应比对（收集优化建议但不中断）
-    - 错误情况：回到用户确认
+    基于代码推断next_action，不再依赖execution_mode分支：
+    - continue_next: 根据配置选择比对器（star/hisat2）继续执行
+    - return_confirm: 返回用户确认界面（失败或有优化建议）
+    - re_run: 重新运行FastP（可自动修复的错误）
     """
-    mode = (getattr(state, 'execution_mode', 'single') or 'single').lower()
-    fastp_results = getattr(state, 'fastp_results', {}) or {}
-
-    fastp_success = fastp_results.get('success', False)
-    logger.debug(f"[ROUTE-FASTP] mode={mode}, success={fastp_success}")
-    if not fastp_success:
-        logger.info("[ROUTE] FastP未成功或结果缺失，返回确认界面")
-        logger.debug(f"[DEBUG] fastp_results keys: {list(fastp_results.keys())}")
-        return "user_confirm"
-
-    # 选择比对器 - 优先级：配置 > 用户需求 > 默认(star)
-    # 支持两种键名：align_tool（首选）与 aligner（兼容旧字段）
-    aligner = "star"  # 默认使用STAR
-    if hasattr(state, 'nextflow_config') and state.nextflow_config:
-        cfg = state.nextflow_config
-        aligner = (cfg.get('align_tool')
-                   or cfg.get('aligner')
-                   or 'star')
-    elif hasattr(state, 'user_requirements') and state.user_requirements:
-        req = state.user_requirements
-        aligner = (req.get('align_tool')
-                   or req.get('aligner')
-                   or 'star')
+    # 调用路由决策器获取下一步行动
+    next_action = decide_next_action_fastp(state)
     
-    # 确保比对器名称标准化
-    aligner = aligner.lower()
-    if aligner not in ['star', 'hisat2']:
-        logger.warning(f"[ROUTE] 未知比对器 '{aligner}'，使用默认STAR")
-        aligner = 'star'
-
-    logger.info(f"[ROUTE] 选择的比对器: {aligner.upper()}")
-
-    if mode == 'yolo':
-        logger.info(f"[ROUTE] YOLO模式：FastP完成后自动进入{aligner.upper()}比对")
-        return aligner
-    elif mode == 'optimized':
-        logger.info("[ROUTE] 优化执行模式：FastP 完成后返回确认进行参数微调")
+    logger.debug(f"[ROUTE-FASTP] 决策器返回: {next_action}")
+    
+    if next_action == "return_confirm":
+        logger.info("[ROUTE] FastP需要用户确认（失败或有优化建议），返回确认界面")
         return "user_confirm"
-    elif mode == 'batch_optimize':
-        logger.info(f"[ROUTE] 批次优化模式：FastP 完成后继续{aligner.upper()}比对（收集优化建议）")
+    
+    elif next_action == "re_run":
+        logger.info("[ROUTE] FastP检测到可自动修复错误，重新运行")
+        return "fastp"
+    
+    elif next_action == "continue_next":
+        # 选择比对器 - 优先级：配置 > 用户需求 > 默认(star)
+        # 支持两种键名：align_tool（首选）与 aligner（兼容旧字段）
+        aligner = "star"  # 默认使用STAR
+        if hasattr(state, 'nextflow_config') and state.nextflow_config:
+            cfg = state.nextflow_config
+            aligner = (cfg.get('align_tool')
+                       or cfg.get('aligner')
+                       or 'star')
+        elif hasattr(state, 'user_requirements') and state.user_requirements:
+            req = state.user_requirements
+            aligner = (req.get('align_tool')
+                       or req.get('aligner')
+                       or 'star')
+        
+        # 确保比对器名称标准化
+        aligner = aligner.lower()
+        if aligner not in ['star', 'hisat2']:
+            logger.warning(f"[ROUTE] 未知比对器 '{aligner}'，使用默认STAR")
+            aligner = 'star'
+
+        logger.info(f"[ROUTE] FastP完成，继续{aligner.upper()}比对")
         return aligner
-    else:  # single 及其他
-        logger.info(f"[ROUTE] 单次执行模式：FastP 完成后继续{aligner.upper()}比对")
-        return aligner
+    
+    else:
+        # 兜底逻辑：未知决策返回确认界面
+        logger.warning(f"[ROUTE] 未知决策 '{next_action}'，返回确认界面")
+        return "user_confirm"
 
 
 def route_after_star(state: AgentState) -> str:
     """STAR节点后的路由：
-    - 单次执行：继续FeatureCount定量
-    - 优化执行：回到用户确认进行参数微调
-    - 批次优化模式：继续FeatureCount（收集优化建议但不中断）
-    - 其他错误：回到用户确认
+    基于代码推断next_action，不再依赖execution_mode分支：
+    - continue_next: 继续FeatureCounts定量
+    - return_confirm: 返回用户确认界面（失败或有优化建议）
+    - re_run: 重新运行STAR（可自动修复的错误）
     """
-    mode = (getattr(state, 'execution_mode', 'single') or 'single').lower()
-    star_results = getattr(state, 'star_results', {}) or {}
-
-    star_success = star_results.get('success', False)
-    logger.debug(f"[ROUTE-STAR] mode={mode}, success={star_success}")
+    # 调用路由决策器获取下一步行动
+    next_action = decide_next_action_star(state)
     
-    # 检查STAR是否成功完成
-    if star_success:
-        if mode == 'yolo':
-            logger.info("[ROUTE] YOLO模式：STAR完成后自动进入FeatureCount定量")
-            return "featurecounts"
-        elif mode == 'optimized':
-            logger.info("[ROUTE] 优化执行模式：STAR完成后返回确认进行参数微调")
-            return "user_confirm"
-        else:  # single 或 batch_optimize 等
-            logger.info("[ROUTE] STAR比对成功，继续FeatureCount定量")
-            return "featurecounts"
+    logger.debug(f"[ROUTE-STAR] 决策器返回: {next_action}")
+    
+    if next_action == "return_confirm":
+        logger.info("[ROUTE] STAR需要用户确认（失败或有优化建议），返回确认界面")
+        return "user_confirm"
+    
+    elif next_action == "re_run":
+        logger.info("[ROUTE] STAR检测到可自动修复错误，重新运行")
+        return "star"
+    
+    elif next_action == "continue_next":
+        logger.info("[ROUTE] STAR比对成功，继续FeatureCounts定量")
+        return "featurecounts"
+    
     else:
-        logger.info("[ROUTE] star执行失败，返回确认界面")
+        # 兜底逻辑：未知决策返回确认界面
+        logger.warning(f"[ROUTE] 未知决策 '{next_action}'，返回确认界面")
         return "user_confirm"
        
 
 def route_after_hisat2(state: AgentState) -> str:
     """HISAT2节点后的路由：
-    - 单次执行：继续FeatureCount定量
-    - 优化执行：回到用户确认进行参数微调
-    - 批次优化模式：继续FeatureCount（收集优化建议但不中断）
-    - 其他错误：回到用户确认
+    基于代码推断next_action，不再依赖execution_mode分支：
+    - continue_next: 继续FeatureCounts定量
+    - return_confirm: 返回用户确认界面（失败或有优化建议）
+    - re_run: 重新运行HISAT2（可自动修复的错误）
     """
-    mode = (getattr(state, 'execution_mode', 'single') or 'single').lower()
-    hisat2_results = getattr(state, 'hisat2_results', {}) or {}
-
-    hisat2_success = hisat2_results.get('success', False)
-    logger.debug(f"[ROUTE-HISAT2] mode={mode}, success={hisat2_success}")
+    # 调用路由决策器获取下一步行动
+    next_action = decide_next_action_hisat2(state)
     
-    # 检查HISAT2是否成功完成
-    if hisat2_success:
-        if mode == 'yolo':
-            logger.info("[ROUTE] YOLO模式：HISAT2完成后自动进入FeatureCount定量")
-            return "featurecounts"
-        elif mode == 'optimized':
-            logger.info("[ROUTE] 优化执行模式：HISAT2完成后返回确认进行参数微调")
-            return "user_confirm"
-        else:  # single 或 batch_optimize 等
-            logger.info("[ROUTE] HISAT2比对成功，继续FeatureCount定量")
-            return "featurecounts"
+    logger.debug(f"[ROUTE-HISAT2] 决策器返回: {next_action}")
+    
+    if next_action == "return_confirm":
+        logger.info("[ROUTE] HISAT2需要用户确认（失败或有优化建议），返回确认界面")
+        return "user_confirm"
+    
+    elif next_action == "re_run":
+        logger.info("[ROUTE] HISAT2检测到可自动修复错误，重新运行")
+        return "hisat2"
+    
+    elif next_action == "continue_next":
+        logger.info("[ROUTE] HISAT2比对成功，继续FeatureCounts定量")
+        return "featurecounts"
+    
     else:
-        logger.info("[ROUTE] hisat2执行失败，返回确认界面")
+        # 兜底逻辑：未知决策返回确认界面
+        logger.warning(f"[ROUTE] 未知决策 '{next_action}'，返回确认界面")
         return "user_confirm"
 
 
 
 def route_after_featurecount(state: AgentState) -> str:
     """FeatureCount节点后的路由：
-    - 成功：进入综合分析
-    - 优化模式错误：回到用户确认
-    - 批量优化模式：继续分析（收集所有优化建议）
-    - 其他错误：回到用户确认
+    基于代码推断next_action，不再依赖execution_mode分支：
+    - continue_next: 进入综合分析
+    - return_confirm: 返回用户确认界面（失败或有优化建议）
+    - re_run: 重新运行FeatureCounts（可自动修复的错误）
     """
-    mode = (getattr(state, 'execution_mode', 'single') or 'single').lower()
-    featurecounts_results = getattr(state, 'featurecounts_results', {}) or {}
-
-    fc_success = featurecounts_results.get('success', False)
-    logger.debug(f"[ROUTE-FEATURECOUNTS] mode={mode}, success={fc_success}")
-
-    # 检查FeatureCounts是否成功完成
-    if fc_success:
-        if mode == 'yolo':
-            logger.info("[ROUTE] YOLO模式：FeatureCount完成后自动进入综合分析")
-            return "analysis"
-        elif mode == 'optimized':
-            logger.info("[ROUTE] 优化执行模式：FeatureCount完成后返回确认进行参数微调")
-            return "user_confirm"
-        elif mode == 'batch_optimize':
-            logger.info("[ROUTE] 批量优化模式：FeatureCount完成，返回确认界面显示优化建议")
-            return "user_confirm"
-        else:  # single 或其他
-            logger.info("[ROUTE] FeatureCount定量成功，进入综合分析")
-            return "analysis"
+    # 调用路由决策器获取下一步行动
+    next_action = decide_next_action_featurecounts(state)
+    
+    logger.debug(f"[ROUTE-FEATURECOUNTS] 决策器返回: {next_action}")
+    
+    if next_action == "return_confirm":
+        logger.info("[ROUTE] FeatureCounts需要用户确认（失败或有优化建议），返回确认界面")
+        return "user_confirm"
+    
+    elif next_action == "re_run":
+        logger.info("[ROUTE] FeatureCounts检测到可自动修复错误，重新运行")
+        return "featurecounts"
+    
+    elif next_action == "continue_next":
+        logger.info("[ROUTE] FeatureCounts定量成功，进入综合分析")
+        return "analysis"
+    
     else:
-        logger.info("[ROUTE] FeatureCount定量失败，返回确认界面")
+        # 兜底逻辑：未知决策返回确认界面
+        logger.warning(f"[ROUTE] 未知决策 '{next_action}'，返回确认界面")
         return "user_confirm"
 
     
 def route_after_analysis(state: AgentState) -> str:
-    """Analysis节点后的路由：
-    - YOLO模式：直接结束
-    - 其他模式：返回用户确认界面
+    """Analysis节点后的路由 - 基于四模式路由策略v1：
+    - single/yolo模式：直接结束（END）
+    - optimized/batch_optimize模式：返回用户确认界面
     """
     # 读取节点顶层success字段，符合success-first约定
     analysis_success = getattr(state, 'success', False)
     mode = (getattr(state, 'execution_mode', 'single') or 'single').lower()
     
     if analysis_success:
-        if mode == 'yolo':
-            logger.info("[ROUTE] YOLO模式：分析完成，流程结束")
+        if mode in ('single', 'yolo'):
+            logger.info(f"[ROUTE] {mode.upper()}模式：分析完成，流程结束")
             return END
+        elif mode in ('optimized', 'batch_optimize'):
+            logger.info(f"[ROUTE] {mode.upper()}模式：分析完成，返回用户确认界面")
+            return "user_confirm"
         else:
-            logger.info("[ROUTE] 分析完成，返回用户确认界面")
+            # 兜底：未知模式返回确认界面
+            logger.warning(f"[ROUTE] 未知执行模式 '{mode}'，兜底返回确认界面")
             return "user_confirm"
     else:
-        logger.info("[ROUTE] 分析失败，返回用户确认界面")
+        logger.info(f"[ROUTE] 分析失败（模式：{mode}），返回用户确认界面")
         return "user_confirm"

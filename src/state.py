@@ -46,11 +46,6 @@ class AgentState(BaseModel):
     completed_steps: List[str] = Field(default=[], description="已完成的步骤列表")
     pipeline_progress: Dict[str, Any] = Field(default={}, description="流水线执行进度跟踪")
 
-    # === 批次优化模式字段 ===
-    batch_optimization_mode: bool = Field(default=False, description="是否启用批次优化模式 - 当execution_mode为batch_optimize时自动设为True")
-    batch_optimizations: Dict[str, Dict[str, Any]] = Field(default={}, description="批次优化收集的所有工具优化参数")
-    batch_optimization_round: int = Field(default=1, description="批次优化轮次")
-    batch_optimization_complete: bool = Field(default=False, description="批次优化是否完成")
 
     # === 工具执行结果（保留这些字段，它们不是参数管理字段） ===
     fastp_results: Dict[str, Any] = Field(default={}, description="FastP执行结果数据")

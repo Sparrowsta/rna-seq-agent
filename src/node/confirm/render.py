@@ -142,11 +142,6 @@ def _render_progress(view: ConfirmView) -> List[str]:
     """渲染执行进度信息"""
     lines = []
     
-    # 批次优化完成提示
-    if view.batch_optimization_complete and view.batch_optimizations_count > 0:
-        lines.append("")
-        lines.append(f"✅ 批次优化完成: 已收集{view.batch_optimizations_count}个工具的优化参数并应用")
-    
     # 执行进度
     if view.completed_steps:
         lines.append("")

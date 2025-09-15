@@ -39,12 +39,13 @@ def create_star_agent():
 
 async def star_node(state: AgentState) -> Dict[str, Any]:
     """
-    STAR节点实现
-
+    STAR节点实现 - 执行序列比对并生成优化建议
+    
     功能：
     - 执行STAR比对
-    - 生成比对统计
+    - 基于Agent智能优化参数
     - 更新状态信息
+    - 生成optimization_params供路由决策器使用
     """
     logger.info("STAR比对节点开始执行...")
 
@@ -53,9 +54,7 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
     if "star" not in completed_steps:
         completed_steps.append("star")
 
-    # 获取执行模式
-    execution_mode = state.execution_mode
-
+    # 依赖检查：需要FastP成功结果
     if not state.fastp_results or not state.fastp_results.get("success"):
         return {
             "success": False,
@@ -71,304 +70,131 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
         }
 
     try:
-        logger.info(f"[AGENT] 使用STAR Agent进行比对与资源管理 (模式: {execution_mode})")
+        # 统一通过Agent执行STAR，生成优化建议
+        logger.info("[STAR] 调用Agent执行STAR比对和优化分析...")
+        agent_response = await _call_star_optimization_agent(state)
 
-        if execution_mode == "single":
-            # 单次执行：仅执行比对，不做参数优化
-            star_response = await _call_star_optimization_agent(state)
+        # 更新执行参数和优化建议
+        optimized_params = agent_response.star_params
+        optimization_reasoning = agent_response.star_optimization_suggestions
+        optimization_params_changes = agent_response.star_optimization_params
 
-            # 透传Agent返回的results（results_dir, per_sample_outputs）
-            agent_results = getattr(star_response, 'results', None)
-            star_results = {
-                "success": True,
-                "status": "success",
-            }
-            if agent_results and isinstance(agent_results, dict):
+        # 处理执行结果
+        star_results = {
+            "success": True,
+            "status": "success"
+        }
+        try:
+            if getattr(agent_response, 'results', None):
+                agent_results = agent_response.results or {}
                 star_results.update(agent_results)
-            
-            # 确保BAM文件路径信息完整（根据路径契约要求）
-            star_results = _ensure_bam_paths_from_per_sample(star_results)
+        except Exception:
+            star_results["success"] = False
+            star_results["status"] = "failed"
 
-            result = {
-                "success": True,
-                "status": "star_completed",
-                "response": "✅ STAR比对完成（单次执行模式）\n\n🚀 执行详情: 已完成比对，保持原有参数配置",
-                "current_step": "star",
-                "completed_steps": completed_steps,
-                "star_results": star_results,
-            }
-            return result
-
-        elif execution_mode == "optimized":
-            # 精细优化：执行+解析+应用优化
-            star_response = await _call_star_optimization_agent(state)
-
-            # 立即更新执行参数
-            optimized_params = star_response.star_params
-            optimization_reasoning = star_response.star_optimization_suggestions
-            optimization_params_changes = star_response.star_optimization_params
-
-            # 透传Agent返回的results（results_dir, per_sample_outputs）
-            agent_results = getattr(star_response, 'results', None)
-            star_results = {
-                "success": True,
-                "status": "success",
-            }
-            if agent_results and isinstance(agent_results, dict):
-                star_results.update(agent_results)
-            
-            # 确保BAM文件路径信息完整（根据路径契约要求）
-            star_results = _ensure_bam_paths_from_per_sample(star_results)
-
-            result = {
-                "success": True,
-                "status": "star_completed",
-                "current_step": "star",
-                "completed_steps": completed_steps,
-                "star_params": optimized_params,
-                "star_optimization_suggestions": optimization_reasoning,
-                "star_optimization_params": optimization_params_changes,  # 记录变更的参数
-                "star_results": star_results,
-            }
-
-            optimization_count = len(optimization_params_changes or {})
-            result["response"] = (
-                f"✅ STAR比对完成并已优化\n- 比对状态: 成功完成\n- 参数优化: 应用了{optimization_count}个优化参数\n\n"
+        # 生成响应信息
+        optimization_count = len(optimization_params_changes or {})
+        if optimization_count > 0:
+            response = (
+                f"✅ STAR比对完成\n- 比对状态: 成功完成\n- 优化分析: 生成了{optimization_count}个优化建议\n\n"
                 f"⚡ 优化详情: {optimization_reasoning}"
             )
-            return result
-            
-        elif execution_mode == "yolo":
-            # YOLO模式：与optimized相同的执行逻辑，但会自动进入下一步
-            star_response = await _call_star_optimization_agent(state)
-
-            # 立即更新执行参数
-            optimized_params = star_response.star_params
-            optimization_reasoning = star_response.star_optimization_suggestions
-            optimization_params_changes = star_response.star_optimization_params
-
-            # 透传Agent返回的results（results_dir, per_sample_outputs）
-            agent_results = getattr(star_response, 'results', None)
-            star_results = {
-                "success": True,
-                "status": "success",
-            }
-            if agent_results and isinstance(agent_results, dict):
-                star_results.update(agent_results)
-            
-            # 确保BAM文件路径信息完整（根据路径契约要求）
-            star_results = _ensure_bam_paths_from_per_sample(star_results)
-
-            result = {
-                "success": True,
-                "status": "star_completed",
-                "current_step": "star",
-                "completed_steps": completed_steps,
-                "star_params": optimized_params,
-                "star_optimization_suggestions": optimization_reasoning,
-                "star_optimization_params": optimization_params_changes,
-                "star_results": star_results,
-            }
-
-            optimization_count = len(optimization_params_changes or {})
-            result["response"] = (
-                "🎯 STAR比对完成（YOLO自动模式）\n\n"
-                f"⚡ 优化执行: 已应用{optimization_count}个优化参数，自动进入下一步"
-            )
-            return result
-
-        elif execution_mode == "batch_optimize":
-            # 批次优化：执行+解析+收集优化，不应用
-            star_response = await _call_star_optimization_agent(state)
-
-            # 立即更新参数以供批次收集使用
-            optimized_params = star_response.star_params
-            optimization_reasoning = star_response.star_optimization_suggestions
-            optimization_params_changes = star_response.star_optimization_params
-
-            star_optimization = {
-                "optimization_reasoning": optimization_reasoning,
-                "suggested_params": optimized_params,
-                "optimization_params_changes": optimization_params_changes,
-                "current_params": state.star_params.copy(),
-                "tool_name": "star",
-            }
-
-            batch_optimizations = state.batch_optimizations.copy()
-            batch_optimizations["star"] = star_optimization
-
-            # 透传Agent返回的results（results_dir, per_sample_outputs）
-            agent_results = getattr(star_response, 'results', None)
-            star_results = {
-                "success": True,
-                "status": "success",
-            }
-            if agent_results and isinstance(agent_results, dict):
-                star_results.update(agent_results)
-            
-            # 确保BAM文件路径信息完整（根据路径契约要求）
-            star_results = _ensure_bam_paths_from_per_sample(star_results)
-
-            result = {
-                "success": True,
-                "status": "star_completed",
-                "current_step": "star",
-                "completed_steps": completed_steps,
-                "batch_optimizations": batch_optimizations,
-                "star_optimization_suggestions": optimization_reasoning,
-                "star_results": star_results,
-            }
-
-            optimization_count = len(optimization_params_changes or {})
-            result["response"] = (
-                f"✅ STAR比对完成\n- 比对状态: 成功完成\n- 优化收集: {optimization_count}个参数优化建议已收集\n\n"
-                f"📊 状态更新: star_completed"
-            )
-            return result
-
         else:
-            # 未知模式：按 single 处理
-            logger.warning(f"未知执行模式 '{execution_mode}'，按 single 处理")
-            star_response = await _call_star_optimization_agent(state)
-            agent_results = getattr(star_response, 'results', None)
-            star_results = {
-                "success": True,
-                "status": "success"  # 子结果状态
-            }
-            if agent_results and isinstance(agent_results, dict):
-                star_results.update(agent_results)
+            response = (
+                "✅ STAR比对完成\n\n"
+                "🚀 执行详情: 已完成序列比对，当前参数配置已是最优"
+            )
             
-            return {
-                "success": True,
-                "status": "star_completed",
-                "response": "✅ STAR比对完成（按single处理）\n\n🚀 执行详情: 已完成比对，保持原有参数配置",
-                "current_step": "star",
-                "completed_steps": completed_steps,
-                "star_results": star_results,
-            }
+        logger.info(f"[STAR] STAR执行完成，生成{optimization_count}个优化参数")
+
+        # 构建成功结果
+        result = {
+            "success": True,
+            "status": "star_completed",
+            "current_step": "star",
+            "completed_steps": completed_steps,
+            "response": response,
+            "star_params": optimized_params,
+            "star_optimization_suggestions": optimization_reasoning,
+            "star_optimization_params": optimization_params_changes,
+            "star_results": star_results,
+        }
+
+        # 同时聚合到跨节点 results 字段，便于统一读取
+        try:
+            aggregated_results = dict(getattr(state, 'results', {}) or {})
+            aggregated_results["star"] = result.get("star_results", {})
+            result["results"] = aggregated_results
+        except Exception:
+            pass
+
+        return result
 
     except Exception as e:
-        logger.error(f"STAR节点执行失败: {str(e)}", exc_info=True)
+        logger.error(f"[STAR] STAR执行失败: {str(e)}")
         return {
             "success": False,
             "status": "star_failed",
-            "response": f"❌ STAR比对执行失败: {str(e)}",
+            "response": f"❌ STAR执行失败: {str(e)}",
             "current_step": "star",
             "completed_steps": completed_steps,
             "star_results": {
                 "success": False,
                 "status": "failed", 
                 "error": str(e)
-            },
+            }
         }
 
 
 async def _call_star_optimization_agent(state: AgentState) -> StarResponse:
-    """调用STAR Agent，根据执行模式区分行为，统一返回结构化响应"""
-    # 组织上下文（仅数据）
+    """调用STAR优化Agent进行智能参数优化"""
+    
+    # 组织数据上下文（仅数据，不重复流程与指南，遵循系统提示）
+    sample_info = {
+        "sample_groups": state.nextflow_config.get("sample_groups", []),
+        # 结果目录可选提供，工具内部会自动兜底
+        **({"results_dir": state.results_dir} if state.results_dir else {}),
+        # 添加state信息用于参数版本化
+        "state_info": {
+            "results_dir": state.results_dir,
+            "results_timestamp": state.results_timestamp
+        }
+    }
+
     user_context = {
         "execution_mode": state.execution_mode,
-        "fastp_results": state.fastp_results,
+        "sample_info": sample_info,
         "nextflow_config": state.nextflow_config,
         "current_star_params": state.star_params,
+        "fastp_results": state.fastp_results,
         "optimization_history": {
             "star": state.star_optimization_params,
             "fastp": state.fastp_optimization_params,
         },
-        # 结果目录相关信息（用于统一输出路径）
-        **({"results_timestamp": state.results_timestamp} if getattr(state, 'results_timestamp', None) else {}),
-        **({"base_results_dir": state.results_dir} if getattr(state, 'results_dir', None) else {}),
     }
 
-    # 模式指令
-    mode = (state.execution_mode or "single").lower()
-    if mode == "single":
-        mode_instructions = (
-            "本次执行模式为 single（单次执行）。\n"
-            "- 仅执行 STAR 比对与必要的资源准备（下载/索引），不进行任何参数优化。\n"
-            "- 必须基于 FastP 修剪后的 FASTQ 进行比对。\n"
-            "- 保持 current_star_params 原样返回，star_optimization_params 必须为空对象。\n"
-            "- 可调用 parse_star_metrics 提取关键指标以形成摘要。\n"
-            "- 仍需返回 StarResponse 结构化结果。\n"
-        )
-    elif mode == "batch_optimize":
-        mode_instructions = (
-            "本次执行模式为 batch_optimize（批次优化）。\n"
-            "- 执行 STAR 并解析结果，生成优化建议，但不要在当前节点应用这些参数。\n"
-            "- star_params 请给出“建议后的完整参数字典”，star_optimization_params 仅包含改动的键值对。\n"
-        )
-    else:  # optimized
-        mode_instructions = (
-            "本次执行模式为 optimized（精细优化）。\n"
-            "- 执行 STAR、解析结果并生成优化建议。\n"
-            "- star_params 请返回“应用优化后的完整参数字典”，star_optimization_params 仅包含改动项。\n"
-        )
-
-    # 组装用户消息
-    user_prompt = (
-        "请依据系统提示中的标准流程与指导原则执行本次任务。\n\n"
-        + mode_instructions
-        + "以下为本次任务的上下文数据（JSON）：\n\n"
-        + json.dumps(user_context, ensure_ascii=False, indent=2)
-        + "\n\n请基于上述数据完成必要的工具调用，并按系统提示要求返回结构化结果（StarResponse）。"
-    )
-
-    # 调用Agent
-    agent = create_star_agent()
-    messages = [{"role": "user", "content": user_prompt}]
-    result = await agent.ainvoke({"messages": messages})
-
+    user_prompt = json.dumps(user_context, ensure_ascii=False, indent=2)
+    
+    # 创建并调用Agent
+    agent_executor = create_star_agent()
+    
+    # 构建消息格式
+    messages = [
+        {"role": "user", "content": user_prompt}
+    ]
+    
+    result = await agent_executor.ainvoke({"messages": messages})
+    
     # 提取结构化响应
-    structured = result.get("structured_response") if isinstance(result, dict) else None
+    structured_response = result.get("structured_response")
     try:
-        if structured:
-            log_llm_preview(logger, "star", structured)
+        if structured_response:
+            log_llm_preview(logger, "star", structured_response)
         else:
             log_llm_preview(logger, "star.raw", {"keys": list(result.keys())[:10]})
     except Exception:
         pass
-    if structured and isinstance(structured, StarResponse):
-        return structured
-
-    # 兜底：保持当前参数
-    return StarResponse(
-        star_params=state.star_params,
-        star_optimization_suggestions=(
-            "STAR执行完成，单次执行不做优化" if mode == "single" else "STAR执行完成，但未返回有效优化建议"
-        ),
-        star_optimization_params={},
-    )
-
-
-def _ensure_bam_paths_from_per_sample(star_results: Dict[str, Any]) -> Dict[str, Any]:
-    """根据路径契约要求，从per_sample_outputs提取BAM文件路径列表
+    if not structured_response:
+        raise ValueError("Agent返回的结构化响应为空")
     
-    严格遵循docs/path_contract.md的STAR→FeatureCounts接口约定：
-    - 不覆盖results_dir
-    - 仅从per_sample_outputs中提取aligned_bam路径
-    - 生成bam_files列表供下游使用
-    """
-    enhanced = dict(star_results or {})
-    
-    try:
-        bam_files: list[str] = []
-        per_sample = enhanced.get("per_sample_outputs") or []
-        
-        # 根据路径契约，直接从per_sample_outputs的aligned_bam字段提取
-        for item in per_sample:
-            aligned_bam = item.get("aligned_bam")
-            if aligned_bam:
-                bam_files.append(aligned_bam)
-        
-        if bam_files:
-            enhanced["bam_files"] = bam_files
-            enhanced["bam_files_verified"] = True
-        else:
-            enhanced["bam_files_verified"] = False
-    
-    except Exception as e:
-        logger.warning(f"提取BAM路径时出错: {e}")
-        enhanced["bam_files_verified"] = False
-        enhanced.setdefault("error", str(e))
-    
-    return enhanced
+    return structured_response

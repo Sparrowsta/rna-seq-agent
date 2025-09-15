@@ -67,10 +67,6 @@ def build_confirm_view(state: AgentState) -> ConfirmView:
     completed_steps = getattr(state, 'completed_steps', []) or []
     current_step = getattr(state, 'current_step', None)
     
-    # 批次优化状态
-    batch_optimizations = getattr(state, 'batch_optimizations', {}) or {}
-    batch_optimization_complete = getattr(state, 'batch_optimization_complete', False)
-    
     return ConfirmView(
         summary=summary,
         resources=resources,
@@ -78,9 +74,7 @@ def build_confirm_view(state: AgentState) -> ConfirmView:
         config_reasoning=config_reasoning.strip() or None,
         commands=commands,
         completed_steps=completed_steps,
-        current_step=current_step,
-        batch_optimization_complete=batch_optimization_complete,
-        batch_optimizations_count=len(batch_optimizations)
+        current_step=current_step
     )
 
 

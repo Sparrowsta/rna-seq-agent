@@ -77,10 +77,6 @@ class ConfirmView(BaseModel):
     # 执行进度信息
     completed_steps: List[str] = Field(default_factory=list)
     current_step: Optional[str] = None
-    
-    # 批次优化状态
-    batch_optimization_complete: bool = False
-    batch_optimizations_count: int = 0
 
 
 class ConfirmDecision(BaseModel):
