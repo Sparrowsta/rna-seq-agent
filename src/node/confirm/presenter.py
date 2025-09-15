@@ -4,7 +4,7 @@
 聚合配置信息、参数对比、命令提示等，不包含任何 I/O 操作。
 """
 
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional
 from ...state import AgentState
 from .view_model import (
     ConfirmView, Section, SummaryItem, ResourceItem, 

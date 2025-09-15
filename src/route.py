@@ -210,29 +210,7 @@ def route_after_featurecount(state: AgentState) -> str:
         logger.info("[ROUTE] FeatureCount定量失败，返回确认界面")
         return "user_confirm"
 
-
-def route_to_analysis(state: AgentState) -> str:
-    """检查是否可以进入Analysis节点：
-    - 满足条件：进入分析节点
-    - 不满足：回到用户确认
-    """
-    mode = getattr(state, 'execution_mode', '')
     
-    # 检查是否有分析执行请求
-    if mode == "single_run":
-        # 检查是否有必要的数据进行分析
-        fastp_results = getattr(state, 'fastp_results', {})
-        star_results = getattr(state, 'star_results', {}) 
-        featurecounts_results = getattr(state, 'featurecounts_results', {})
-        
-        if fastp_results or star_results or featurecounts_results:
-            logger.info("[ROUTE] 满足分析条件，进入综合分析")
-            return "analysis"
-    
-    logger.info("[ROUTE] 不满足分析条件，返回确认界面")
-    return "user_confirm"
-
-
 def route_after_analysis(state: AgentState) -> str:
     """Analysis节点后的路由：
     - YOLO模式：直接结束

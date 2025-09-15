@@ -4,7 +4,6 @@
 完全弃用斜杠命令，采用数字索引选择模式。
 """
 
-import os
 from typing import Dict, Any
 from ..state import AgentState
 """交互输出统一使用标准 print，避免额外封装"""

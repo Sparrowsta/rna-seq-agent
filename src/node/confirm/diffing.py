@@ -4,7 +4,7 @@
 减少重复代码并提升可测试性。
 """
 
-from typing import Dict, Any, Tuple, Optional, List
+from typing import Dict, Any, Optional, List
 from pydantic import BaseModel
 
 

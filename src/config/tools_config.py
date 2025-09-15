@@ -52,19 +52,7 @@ class ToolsConfig:
         """获取HISAT2索引目录"""
         return fasta_path.parent / "hisat2_index"
     
-    # === 确保目录存在 ===
-    def ensure_directories(self):
-        """确保所有必要目录存在"""
-        # 注意：config 目录已废弃，不再确保其存在
-        directories = [
-            self.settings.data_dir,
-            self.fastq_dir,
-            self.results_dir,
-            self.reports_dir
-        ]
-        
-        for directory in directories:
-            self.path_manager.ensure_directory(directory)
+    # === 确保目录存在（已废弃：由调用方按需创建） ===
 
 # 全局工具配置实例
 _global_tools_config = None

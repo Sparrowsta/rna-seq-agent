@@ -9,7 +9,7 @@ RNA-seq智能分析助手 - 主程序入口
 import sys
 import asyncio
 from pathlib import Path
-from typing import Dict, Any
+ 
 
 # 添加项目根目录到Python路径 - 修复导入问题
 PROJECT_ROOT = Path(__file__).parent
@@ -20,7 +20,7 @@ from src.config.settings import Settings
 from src.state import AgentState
 from src.graph import create_agent
 from src.core import test_llm_connection
-from src.logging_bootstrap import is_debug_enabled
+ 
 
 # 日志初始化
 try:

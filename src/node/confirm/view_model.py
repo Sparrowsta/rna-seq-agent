@@ -3,7 +3,7 @@
 定义用户确认界面的结构化数据模型，分离数据与展示逻辑。
 """
 
-from typing import Dict, Any, List, Optional, Literal
+from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -103,10 +103,6 @@ class ConfirmDecision(BaseModel):
     def is_workflow_step(self) -> bool:
         return self.decision in {'fastp', 'star', 'featurecounts', 'analysis'}
     
-    @property
-    def is_control_command(self) -> bool:
-        return self.decision in {'modify', 'cancel', 'quit', 'restart'}
-
     # 添加需要二次输入检测的属性
     @property
     def needs_modify_content(self) -> bool:
