@@ -24,6 +24,7 @@ from langchain_core.tools import tool
 from .config import get_tools_config
 from .logging_bootstrap import get_logger
 from .config.settings import Settings
+from .state import AgentState
 
 logger = get_logger("rna.tools")
 
@@ -642,7 +643,7 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
     
     Args:
         fastp_params: FastP参数字典，例如 {"qualified_quality_phred": 25, "length_required": 50}
-        sample_info: 样本信息，包含sample_groups等
+        sample_info: 样本信息，包含sample_groups、state_info等
     
     Returns:
         执行结果字典，包含状态、输出路径、执行日志等
@@ -689,6 +690,7 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
             pass
         logger.info(f"FastP启动：样本组={len(sample_info.get('sample_groups', {}))} 运行目录: base={base_data_path} work={work_dir} results={results_dir}")
         
+        # M2: 组装完整的Nextflow参数
         nextflow_params: Dict[str, Any] = {}
         for raw_key, value in (fastp_params or {}).items():
             if value is None:
@@ -707,12 +709,37 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
         nextflow_params["results_dir"] = str(results_dir)
         nextflow_params["data"] = base_data_path
         
-        # 创建Nextflow参数文件 - 保存到fastp子目录中
-        fastp_dir = results_dir / "fastp"
-        fastp_dir.mkdir(parents=True, exist_ok=True)
-        params_file = fastp_dir / "fastp_params.json"
-        with open(params_file, 'w', encoding='utf-8') as f:
-            json.dump(nextflow_params, f, indent=2, ensure_ascii=False)
+        # 参数版本化: 将实际用于运行的nextflow_params写入版本化文件
+        versioned_params_file = None
+        try:
+            # 从 sample_info 中获取 state 信息
+            state_info = sample_info.get("state_info", {})
+            if state_info:
+                # 重构 AgentState 用于参数版本化
+                from .state import AgentState
+                temp_state = AgentState()
+                temp_state.results_dir = state_info.get("results_dir", "")
+                temp_state.results_timestamp = state_info.get("results_timestamp", "")
+                
+                # 写入版本化文件 - 使用实际运行的nextflow_params
+                versioned_params_file = write_params_file("fastp", nextflow_params, temp_state)
+                logger.info(f"FastP实际运行参数版本化文件已写入: {versioned_params_file}")
+                
+        except Exception as e:
+            logger.warning(f"FastP参数版本化写入失败 (不影响执行): {e}")
+            
+        # 使用版本化文件作为参数文件，如果失败则降级到临时文件
+        if versioned_params_file and versioned_params_file.exists():
+            params_file = versioned_params_file
+            logger.info(f"使用版本化参数文件运行FastP: {params_file}")
+        else:
+            # 降级方案：生成临时参数文件
+            logger.warning("版本化参数文件不可用，使用临时参数文件")
+            fastp_dir = results_dir / "fastp"
+            fastp_dir.mkdir(parents=True, exist_ok=True)
+            params_file = fastp_dir / "fastp_params.json"
+            with open(params_file, 'w', encoding='utf-8') as f:
+                json.dump(nextflow_params, f, indent=2, ensure_ascii=False)
         
         # 构建Nextflow命令（兼容Docker与本地路径）
         # 1) 优先使用src/nextflow/目录下的 fastp.nf（本地开发）
@@ -1587,12 +1614,35 @@ def run_nextflow_star(
             **cleaned_params,
         }
 
-        # 保存参数文件到star子目录
-        star_dir = results_dir / "star"
-        star_dir.mkdir(parents=True, exist_ok=True)
-        params_file = star_dir / "star_params.json"
-        with open(params_file, "w", encoding="utf-8") as f:
-            json.dump(nf_params, f, indent=2, ensure_ascii=False)
+        # 保存参数文件到star子目录 - 改为版本化参数文件
+        # M3: 参数版本化 - 将实际用于运行的nf_params写入版本化文件
+        versioned_params_file = None
+        try:
+            # 构建临时 state 用于参数版本化
+            from .state import AgentState
+            temp_state = AgentState()
+            temp_state.results_dir = str(results_dir)
+            temp_state.results_timestamp = results_timestamp or ""
+            
+            # 写入版本化文件 - 使用实际运行的nf_params
+            versioned_params_file = write_params_file("star", nf_params, temp_state)
+            logger.info(f"STAR实际运行参数版本化文件已写入: {versioned_params_file}")
+            
+        except Exception as e:
+            logger.warning(f"STAR参数版本化写入失败 (不影响执行): {e}")
+
+        # 使用版本化文件作为参数文件，如果失败则降级到临时文件
+        if versioned_params_file and versioned_params_file.exists():
+            params_file = versioned_params_file
+            logger.info(f"使用版本化参数文件运行STAR: {params_file}")
+        else:
+            # 降级方案：生成临时参数文件
+            logger.warning("版本化参数文件不可用，使用临时参数文件")
+            star_dir = results_dir / "star"
+            star_dir.mkdir(parents=True, exist_ok=True)
+            params_file = star_dir / "star_params.json"
+            with open(params_file, "w", encoding="utf-8") as f:
+                json.dump(nf_params, f, indent=2, ensure_ascii=False)
 
         # 6) 定位并执行 Nextflow
         nf_candidates = [
@@ -1859,6 +1909,23 @@ def run_nextflow_hisat2(
     try:
         tools_config = get_tools_config()
 
+        # M3: 参数版本化 - 在实际执行前写入参数版本化文件
+        try:
+            # 从 fastp_results 获取 results_dir，构建临时 state
+            fastp_results_dir = fastp_results.get("results_dir") if fastp_results else ""
+            if fastp_results_dir:
+                from .state import AgentState
+                temp_state = AgentState()
+                temp_state.results_dir = fastp_results_dir
+                temp_state.results_timestamp = results_timestamp or ""
+                
+                # 写入参数版本化文件
+                param_file_path = write_params_file("hisat2", hisat2_params, temp_state)
+                logger.info(f"HISAT2执行参数版本化文件已写入: {param_file_path}")
+                
+        except Exception as e:
+            logger.warning(f"HISAT2参数版本化写入失败 (不影响执行): {e}")
+
         # 1) 校验 FastP 结果与运行根目录
         if not (fastp_results and fastp_results.get("success")):
             return {"success": False, "error": "FastP结果无效，无法执行HISAT2比对"}
@@ -1934,12 +2001,35 @@ def run_nextflow_hisat2(
             **cleaned_params,
         }
 
-        # 保存参数文件到hisat2子目录
-        hisat2_dir = results_dir / "hisat2"
-        hisat2_dir.mkdir(parents=True, exist_ok=True)
-        params_file = hisat2_dir / "hisat2_params.json"
-        with open(params_file, "w", encoding="utf-8") as f:
-            json.dump(nf_params, f, indent=2, ensure_ascii=False)
+        # 保存参数文件到hisat2子目录 - 改为版本化参数文件
+        # M3: 参数版本化 - 将实际用于运行的nf_params写入版本化文件
+        versioned_params_file = None
+        try:
+            # 构建临时 state 用于参数版本化
+            from .state import AgentState
+            temp_state = AgentState()
+            temp_state.results_dir = str(results_dir)
+            temp_state.results_timestamp = results_timestamp or ""
+            
+            # 写入版本化文件 - 使用实际运行的nf_params
+            versioned_params_file = write_params_file("hisat2", nf_params, temp_state)
+            logger.info(f"HISAT2实际运行参数版本化文件已写入: {versioned_params_file}")
+            
+        except Exception as e:
+            logger.warning(f"HISAT2参数版本化写入失败 (不影响执行): {e}")
+
+        # 使用版本化文件作为参数文件，如果失败则降级到临时文件
+        if versioned_params_file and versioned_params_file.exists():
+            params_file = versioned_params_file
+            logger.info(f"使用版本化参数文件运行HISAT2: {params_file}")
+        else:
+            # 降级方案：生成临时参数文件
+            logger.warning("版本化参数文件不可用，使用临时参数文件")
+            hisat2_dir = results_dir / "hisat2"
+            hisat2_dir.mkdir(parents=True, exist_ok=True)
+            params_file = hisat2_dir / "hisat2_params.json"
+            with open(params_file, "w", encoding="utf-8") as f:
+                json.dump(nf_params, f, indent=2, ensure_ascii=False)
 
         # 6) 定位并执行 Nextflow
         nf_candidates = [
@@ -2458,12 +2548,34 @@ def run_nextflow_featurecounts(
             **mapped,
         }
 
-        # 保存参数文件到featurecounts子目录
-        fc_dir = results_dir / "featurecounts"
-        fc_dir.mkdir(parents=True, exist_ok=True)
-        params_file = fc_dir / "featurecounts_params.json"
-        with open(params_file, "w", encoding="utf-8") as f:
-            json.dump(nf_params, f, indent=2, ensure_ascii=False)
+        # M4: 参数版本化 - 将实际用于运行的nf_params写入版本化文件
+        versioned_params_file = None
+        try:
+            # 构建临时 state 用于参数版本化
+            from .state import AgentState
+            temp_state = AgentState()
+            temp_state.results_dir = str(results_dir)
+            temp_state.results_timestamp = results_timestamp or ""
+            
+            # 写入版本化文件 - 使用实际运行的nf_params
+            versioned_params_file = write_params_file("featurecounts", nf_params, temp_state)
+            logger.info(f"FeatureCounts实际运行参数版本化文件已写入: {versioned_params_file}")
+            
+        except Exception as e:
+            logger.warning(f"FeatureCounts参数版本化写入失败 (不影响执行): {e}")
+
+        # 使用版本化文件作为参数文件，如果失败则降级到临时文件
+        if versioned_params_file and versioned_params_file.exists():
+            params_file = versioned_params_file
+            logger.info(f"使用版本化参数文件运行FeatureCounts: {params_file}")
+        else:
+            # 降级方案：生成临时参数文件
+            logger.warning("版本化参数文件不可用，使用临时参数文件")
+            fc_dir = results_dir / "featurecounts"
+            fc_dir.mkdir(parents=True, exist_ok=True)
+            params_file = fc_dir / "featurecounts_params.json"
+            with open(params_file, "w", encoding="utf-8") as f:
+                json.dump(nf_params, f, indent=2, ensure_ascii=False)
 
         # 定位 Nextflow 脚本
         nf_candidates = [
@@ -3124,3 +3236,98 @@ def _render_analysis_markdown(report: Dict[str, Any], append_llm: bool = True) -
     ])
     
     return "\n".join(lines)
+
+
+# ==================== 参数版本化函数 ====================
+
+def write_params_file(step: str, params: dict, state: AgentState) -> Path:
+    """写入参数版本化文件
+    
+    Args:
+        step: 执行步骤名称 (prepare/fastp/star/hisat2/featurecounts)
+        params: 参数字典（纯参数对象，不添加额外字段）
+        state: AgentState实例，用于获取结果目录路径
+        
+    Returns:
+        Path: 生成的参数文件路径
+        
+    Raises:
+        Exception: 文件写入失败或目录创建失败
+    """
+    try:
+        settings = Settings()
+        
+        # 1. 解析结果目录路径
+        if state.results_dir and Path(state.results_dir).exists():
+            results_dir = Path(state.results_dir)
+        else:
+            # 使用 settings.data_dir / "results" / timestamp
+            timestamp = state.results_timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
+            results_dir = settings.data_dir / "results" / timestamp
+        
+        # 2. 创建参数文件目录
+        params_dir = results_dir / "params" / step
+        params_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 3. 生成时间戳和版本号
+        now = datetime.now()
+        timestamp_str = now.strftime("%Y%m%d_%H%M%S")  # 与项目其他地方保持一致
+        
+        # 4. 扫描现有文件，确定版本号
+        pattern = f"{step}.{timestamp_str}.v*.params.json"
+        existing_files = list(params_dir.glob(pattern))
+        
+        # 查找当前完整时间戳的最大版本号
+        version_num = 1
+        if existing_files:
+            max_version = 0
+            for existing_file in existing_files:
+                try:
+                    # 提取版本号 - 从 "step.timestamp.vNN.params.json" 中提取 NN
+                    filename = existing_file.name
+                    if ".v" in filename and filename.startswith(f"{step}.{timestamp_str}.v"):
+                        version_part = filename.split(".v")[1].split(".")[0]
+                        existing_version = int(version_part)
+                        max_version = max(max_version, existing_version)
+                except (IndexError, ValueError):
+                    continue
+            version_num = max_version + 1
+        
+        # 5. 生成文件名（带重试机制防止版本冲突）
+        max_retries = 10
+        for retry in range(max_retries):
+            filename = f"{step}.{timestamp_str}.v{version_num:02d}.params.json"
+            file_path = params_dir / filename
+            
+            # 如果文件已存在，递增版本号重试
+            if file_path.exists():
+                version_num += 1
+                continue
+            
+            # 6. 原子写入JSON - 仅包含参数对象本身
+            temp_file = file_path.with_suffix(".tmp")
+            try:
+                with open(temp_file, 'w', encoding='utf-8') as f:
+                    json.dump(params, f, indent=2, ensure_ascii=False)
+                
+                # 原子性重命名
+                temp_file.rename(file_path)
+                
+                logger.info(f"参数文件写入成功: {file_path}")
+                return file_path
+                
+            except Exception as e:
+                # 清理临时文件
+                if temp_file.exists():
+                    temp_file.unlink()
+                # 如果文件写入失败，可能是并发冲突，递增版本号重试
+                version_num += 1
+                if retry == max_retries - 1:
+                    raise e
+                continue
+        
+        raise Exception(f"参数版本化写入失败：超过最大重试次数 {max_retries}")
+            
+    except Exception as e:
+        logger.error(f"参数文件写入失败: {e}")
+        raise Exception(f"参数版本化写入错误: {e}")

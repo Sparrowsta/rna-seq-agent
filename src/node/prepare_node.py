@@ -10,8 +10,9 @@ from ..tools import (
     scan_genome_files,
     check_tool_availability,
     get_project_overview,
+    write_params_file,
 )
-from ..logging_bootstrap import get_logger, log_llm_preview, safe_preview
+from ..logging_bootstrap import get_logger, log_llm_preview
 
 logger = get_logger("rna.nodes.prepare")
 
@@ -104,6 +105,21 @@ async def prepare_node(state: AgentState) -> Dict[str, Any]:
             resource_params = structured_response.resource_config or {}
 
             logger.info("初始配置生成完成")
+
+            # 参数版本化: 合并配置并写入版本化文件 (M1实现)
+            try:
+                # 合并 nextflow_config 和 resource_config
+                merged_params = {
+                    "nextflow_config": nextflow_cfg,
+                    "resource_config": resource_params
+                }
+                
+                # 写入参数版本化文件 (仅写入，不参与运行)
+                param_file_path = write_params_file("prepare", merged_params, state)
+                logger.info(f"Prepare参数版本化文件已写入: {param_file_path}")
+                
+            except Exception as e:
+                logger.warning(f"参数版本化写入失败 (不影响配置生成): {e}")
 
             # 构建用户需求满足说明
             user_satisfaction_note = ""
