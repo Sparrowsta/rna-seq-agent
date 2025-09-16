@@ -1,5 +1,7 @@
+import json
 from typing import Dict, Any
 from datetime import datetime
+from pathlib import Path
 from ..state import AgentState
 from ..tools import (
     scan_fastq_files,
@@ -47,10 +49,40 @@ async def detect_node(state: AgentState) -> Dict[str, Any]:
             if gid in raw.lower():
                 focus = gid
                 break
+
+        # 首次调用scan_genome_files
         if focus:
-            results["verify_genome_setup"] = scan_genome_files.invoke({"genome_id": focus})
+            genome_result = scan_genome_files.invoke({"genome_id": focus})
         else:
-            results["verify_genome_setup"] = scan_genome_files.invoke({})
+            genome_result = scan_genome_files.invoke({})
+
+        # 如果找不到genomes.json文件，创建一个空的
+        if genome_result.get("detection_status") == "no_config":
+            missing_config_file = genome_result.get("missing_config_file")
+            if missing_config_file:
+                try:
+                    # 创建目录（如果不存在）
+                    config_path = Path(missing_config_file)
+                    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+                    # 创建空的genomes.json文件
+                    with open(config_path, 'w', encoding='utf-8') as f:
+                        json.dump({}, f, indent=2)
+
+                    logger.info(f"已创建空的基因组配置文件: {config_path}")
+
+                    # 设置创建后的结果状态 (适配新的scan_genome_files结构)
+                    genome_result = {
+                        "detection_status": "success",
+                        "available_count": [],
+                        "total_configured": 0,
+                        "available_star_index": [],
+                        "available_hisat2_index": []
+                    }
+                except Exception as create_error:
+                    logger.warning(f"创建基因组配置文件失败: {create_error}")
+
+        results["verify_genome_setup"] = genome_result
     except Exception as e:
         errors.append(f"scan_genome_files: {e}")
 
@@ -77,10 +109,18 @@ async def detect_node(state: AgentState) -> Dict[str, Any]:
         logger.info(f"FASTQ扫描: roots=[{search_roots}] files={fastq_total_files} samples={fastq_total_samples} preview=[{preview}]")
 
     # 汇总
+    # 获取可用基因组信息 (适配新的scan_genome_files结构)
+    genome_setup = results.get('verify_genome_setup') or {}
+
+    # 计算有索引的基因组总数 (STAR或HISAT2任一可用)
+    star_genomes = set(genome_setup.get('available_star_index', []))
+    hisat2_genomes = set(genome_setup.get('available_hisat2_index', []))
+    available_indexed_genomes = star_genomes | hisat2_genomes
+
     summary_parts = [
         "检测完成",
         f"FASTQ样本: {fastq_total_samples}",
-        f"可用基因组: {(results.get('verify_genome_setup') or {}).get('available_genomes', 0)}",
+        f"可用基因组: {len(available_indexed_genomes)}",
         "工具: " + ", ".join(
             f"{t}:✅" for t in ["fastp", "star", "hisat2", "featurecounts"]
         ) + " (Docker保证)",

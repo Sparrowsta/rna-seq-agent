@@ -64,3 +64,4 @@ config/nextflow.config
 .bmad-core
 !data/config/
 !data/config/genomes.json
+.serena

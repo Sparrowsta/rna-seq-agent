@@ -10,6 +10,8 @@ RNA-seq智能分析助手 - 通用检测和扫描工具
 import json
 import time
 import psutil
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -37,26 +39,22 @@ def scan_fastq_files() -> Dict[str, Any]:
         "work", "tmp", "temp", "results", "cache"
     }
 
-    # 选择搜索根目录：优先 data/fastq，其次 data，最后项目根目录
+    # 选择搜索根目录：优先 data/fastq，然后项目根目录
     search_roots = []
     try:
         if config.fastq_dir.exists():
             search_roots.append(config.fastq_dir)
-        elif config.settings.data_dir.exists():
-            search_roots.append(config.settings.data_dir)
-        else:
-            search_roots.append(config.project_root)
     except Exception:
         search_roots.append(config.project_root)
 
     # 扫描所有FASTQ文件
-    all_fastq_files = []
-    for root in search_roots:
-        for ext in fastq_extensions:
-            for file_path in root.rglob(ext):
-                if any(excluded in file_path.parts for excluded in exclude_directories):
-                    continue
-                all_fastq_files.append(file_path)
+    from itertools import chain
+
+    all_fastq_files = [
+        file_path for root in search_roots
+        for file_path in chain.from_iterable(root.rglob(ext) for ext in fastq_extensions)
+        if not any(excluded in file_path.parts for excluded in exclude_directories)
+    ]
     
     # 收集文件信息
     file_list = []
@@ -152,7 +150,6 @@ def scan_system_resources() -> Dict[str, Any]:
     """检测系统硬件资源，返回CPU、内存、磁盘和负载信息"""
     try:
         # CPU信息
-        cpu_count = psutil.cpu_count(logical=True)
         cpu_physical = psutil.cpu_count(logical=False)
         
         # 内存信息
@@ -179,7 +176,6 @@ def scan_system_resources() -> Dict[str, Any]:
         result = {
             "detection_status": "success",
             "cpu": {
-                "logical_cores": cpu_count,
                 "physical_cores": cpu_physical,
             },
             "memory": {
@@ -190,16 +186,14 @@ def scan_system_resources() -> Dict[str, Any]:
             "disk": {
                 "total_gb": disk_total_gb,
                 "free_gb": disk_free_gb,
-                "used_percent": round((disk.used / disk.total) * 100, 1),
-                "total_bytes": disk.total,
-                "free_bytes": disk.free
+                "used_percent": round((disk.used / disk.total) * 100, 1)
             },
             "load": load_info,
             "timestamp": time.time()
         }
         # 日志：资源摘要与低资源告警
         try:
-            logger.info(f"系统资源：CPU={cpu_count}核 内存={memory_gb}GB 磁盘={disk_free_gb}GB可用")
+            logger.info(f"系统资源：CPU={cpu_physical}核 内存={memory_gb}GB 磁盘={disk_free_gb}GB可用")
             if memory_available_gb < 4:
                 logger.warning(f"内存资源告警：可用内存仅{memory_available_gb}GB")
             if disk_free_gb < 10:
@@ -247,6 +241,8 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
     
     # 检查基因组文件状态
     genome_statuses = {}
+    available_star_index = []
+    available_hisat2_index = []
     
     # 如果指定了genome_id，只检查该基因组
     genomes_to_check = {genome_id: genomes_config[genome_id]} if genome_id and genome_id in genomes_config else genomes_config
@@ -290,34 +286,52 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
                     status["missing_files"].append("gtf")
                     status["available"] = False
             
-            # 检查STAR索引
-            star_index_dir = genome_info.get("star_index_dir", "")
-            if star_index_dir:
+            # 智能推断索引路径 - 基于fasta_path自动推断
+            fasta_path = genome_info.get("fasta_path", "")
+            if fasta_path:
+                # 从fasta路径推断基因组目录: genomes/human/hg19/hg19.fa -> genomes/human/hg19/
+                import os
+                genome_dir = os.path.dirname(fasta_path)
+
+                # 检查STAR索引 - 基于fasta路径推断索引目录
+                star_index_dir = f"{genome_dir}/star_index"
                 star_index_full_path = config.project_root / star_index_dir
-                star_genome_file = star_index_full_path / "Genome"
-                status["files"]["star_index"] = {
-                    "index_dir": str(star_index_full_path),
-                    "relative_path": star_index_dir,
-                    "exists": star_genome_file.exists(),
-                    "complete": star_genome_file.exists() and (star_index_full_path / "SA").exists()
-                }
-                if not status["files"]["star_index"]["complete"]:
-                    status["missing_files"].append("star_index")
-            
-            # 检查HISAT2索引
-            hisat2_index_dir = genome_info.get("hisat2_index_dir", "")
-            if hisat2_index_dir:
+                if star_index_full_path.exists():
+                    with tempfile.TemporaryDirectory() as tmp_dir:
+                        try:
+                            result = subprocess.run(
+                                ["micromamba", "run", "-n", "align_env", "STAR",
+                                 "--genomeDir", str(star_index_full_path),
+                                 "--genomeLoad", "LoadAndExit",
+                                 "--outFileNamePrefix", f"{tmp_dir}/"],
+                                capture_output=True, text=True, timeout=30,
+                                cwd=tmp_dir
+                            )
+                            if result.returncode == 0:
+                                available_star_index.append(gid)
+                        except Exception:
+                            pass
+
+                # 检查HISAT2索引 - 基于fasta路径推断索引目录
+                hisat2_index_dir = f"{genome_dir}/hisat2_index"
                 hisat2_index_full_path = config.project_root / hisat2_index_dir
-                # HISAT2索引通常是多个.ht2文件
-                ht2_files = list(hisat2_index_full_path.glob("*.ht2"))
-                status["files"]["hisat2_index"] = {
-                    "index_dir": str(hisat2_index_full_path),
-                    "relative_path": hisat2_index_dir,
-                    "exists": len(ht2_files) > 0,
-                    "index_files_count": len(ht2_files)
-                }
-                if len(ht2_files) == 0:
-                    status["missing_files"].append("hisat2_index")
+                if hisat2_index_full_path.exists():
+                    # 查找索引文件前缀 (通常是genome或基因组名称)
+                    ht2_files = list(hisat2_index_full_path.glob("*.1.ht2"))
+                    if ht2_files:
+                        # 提取索引前缀：从 "genome.1.ht2" 得到 "genome"
+                        index_prefix = ht2_files[0].stem.replace(".1", "")
+                        try:
+                            # 使用hisat2-inspect-s验证索引（二进制程序，无Python依赖）
+                            result = subprocess.run(
+                                ["micromamba", "run", "-n", "align_env", "hisat2-inspect-s", index_prefix],
+                                cwd=str(hisat2_index_full_path),
+                                capture_output=True, text=True, timeout=30
+                            )
+                            if result.returncode == 0:
+                                available_hisat2_index.append(gid)
+                        except Exception:
+                            pass
             
             genome_statuses[gid] = status
         except Exception as e:
@@ -328,22 +342,21 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
             }
     
     # 统计
-    available_count = sum(1 for status in genome_statuses.values() if status.get("available", False))
-    
+    available_ids = [gid for gid, status in genome_statuses.items() if status.get("available", False)]
+
     result = {
         "detection_status": "success",
-        "available_genomes": available_count,
+        "available_count": available_ids,
         "total_configured": len(genome_statuses),
-        "genomes": genome_statuses,
-        "config_file": str(genomes_config_path)
+        "available_star_index": available_star_index,
+        "available_hisat2_index": available_hisat2_index
     }
     # 日志：基因组概览
     try:
-        if available_count == 0:
+        if len(available_ids) == 0:
             logger.warning("基因组扫描：无可用基因组")
         else:
-            available_ids = [gid for gid, status in genome_statuses.items() if status.get("available")]
-            logger.info(f"基因组扫描：{available_count}/{len(genome_statuses)}可用 = {available_ids}")
+            logger.info(f"基因组扫描：{len(available_ids)}/{len(genome_statuses)}可用 = {available_ids}")
     except Exception:
         pass
     return result
