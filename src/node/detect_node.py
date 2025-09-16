@@ -5,7 +5,6 @@ from ..tools import (
     scan_fastq_files,
     scan_system_resources,
     scan_genome_files,
-    check_tool_availability,
 )
 from ..config.settings import Settings
 from ..logging_bootstrap import get_logger
@@ -55,12 +54,14 @@ async def detect_node(state: AgentState) -> Dict[str, Any]:
     except Exception as e:
         errors.append(f"scan_genome_files: {e}")
 
-    # 工具可用性
+    # 工具可用性 - Docker环境保证所有工具可用
     for tool in ["fastp", "star", "hisat2", "featurecounts"]:
-        try:
-            results[f"check_{tool}_availability"] = check_tool_availability.invoke({"tool_name": tool})
-        except Exception as e:
-            errors.append(f"check_{tool}_availability: {e}")
+        results[f"check_{tool}_availability"] = {
+            "tool_name": tool,
+            "available": True,
+            "environment": "docker",
+            "guaranteed_by_docker": True
+        }
 
     # 读取FASTQ统计，增强可观测性
     analyze_fastq_data = results.get("analyze_fastq_data") or {}
@@ -81,9 +82,8 @@ async def detect_node(state: AgentState) -> Dict[str, Any]:
         f"FASTQ样本: {fastq_total_samples}",
         f"可用基因组: {(results.get('verify_genome_setup') or {}).get('available_genomes', 0)}",
         "工具: " + ", ".join(
-            f"{t}:{'✅' if (results.get(f'check_{t}_availability') or {}).get('available') else '❌'}"
-            for t in ["fastp", "star", "hisat2", "featurecounts"]
-        ),
+            f"{t}:✅" for t in ["fastp", "star", "hisat2", "featurecounts"]
+        ) + " (Docker保证)",
     ]
     if errors:
         summary_parts.append(f"错误 {len(errors)}")

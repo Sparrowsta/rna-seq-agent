@@ -58,11 +58,10 @@ PREPARE_NODE_PROMPT = """你是RNA-seq分析配置专家。请在尽量少的工
 - scan_fastq_files(): 返回 samples/files/paired_end 等
 - scan_genome_files(): 返回本地基因组/索引状态
 - scan_system_resources(): 返回 CPU/内存/磁盘
-- check_tool_availability(tool_name): 仅当需确认某个工具是否可用时调用
 - get_project_overview(): 除非 detection 完全缺失，否则不要调用
 
 工具调用策略（非常重要）：
-- 先使用已提供的 detection 数据（keys: analyze_fastq_data, verify_genome_setup, assess_system_readiness, check_*_availability）；只有当关键信息缺失或矛盾时再调用工具；总调用次数≤2。
+- 先使用已提供的 detection 数据（keys: analyze_fastq_data, verify_genome_setup, assess_system_readiness, check_*_availability（Docker保证可用））；只有当关键信息缺失或矛盾时再调用工具；总调用次数≤2。
 
 配置规则（简明）：
 - 工具选择：若用户指定 align_tool/qc_tool/quant_tool，直接采用；否则内存≥32GB选 STAR，否则选 HISAT2；qc 默认 fastp，quant 默认 featurecounts。

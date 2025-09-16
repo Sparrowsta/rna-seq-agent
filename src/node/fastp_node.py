@@ -7,7 +7,10 @@ from langgraph.prebuilt import create_react_agent
 from ..state import AgentState, FastpResponse
 from ..core import get_shared_llm
 from ..prompts import FASTP_OPTIMIZATION_PROMPT
-from ..tools import run_nextflow_fastp, parse_fastp_results
+from ..tools import (
+    run_nextflow_fastp,
+    parse_fastp_results
+)
 from ..logging_bootstrap import get_logger, log_llm_preview
 import json
 

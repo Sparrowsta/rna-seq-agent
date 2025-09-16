@@ -7,7 +7,11 @@ from langgraph.prebuilt import create_react_agent
 from ..state import AgentState, FeaturecountsResponse
 from ..core import get_shared_llm
 from ..prompts import FEATURECOUNTS_OPTIMIZATION_PROMPT
-from ..tools import run_nextflow_featurecounts, parse_featurecounts_metrics, scan_genome_files
+from ..tools import (
+    run_nextflow_featurecounts,
+    parse_featurecounts_metrics,
+    scan_genome_files
+)
 from ..logging_bootstrap import get_logger, log_llm_preview
 import json
 

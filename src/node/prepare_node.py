@@ -8,7 +8,6 @@ from ..tools import (
     scan_fastq_files,
     scan_system_resources,
     scan_genome_files,
-    check_tool_availability,
     get_project_overview,
     write_params_file,
 )
@@ -37,7 +36,6 @@ def create_prepare_agent(detection_context: str = ""):
             scan_fastq_files,
             scan_system_resources,
             scan_genome_files,
-            check_tool_availability,
             get_project_overview,
         ],
         prompt=full_prompt,  # 使用动态构建的完整prompt
