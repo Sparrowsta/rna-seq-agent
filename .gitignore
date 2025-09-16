@@ -62,3 +62,5 @@ config/nextflow.config
 
 .claude
 .bmad-core
+!data/config/
+!data/config/genomes.json

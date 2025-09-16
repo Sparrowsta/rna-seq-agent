@@ -224,8 +224,8 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
     """
     config = get_tools_config()
     
-    # 读取基因组配置
-    genomes_config_path = config.project_root / "config" / "genomes.json"
+    # 读取基因组配置（统一从 settings.genomes_config_path/data/genomes.json 处获取）
+    genomes_config_path = config.genomes_config_path
     
     if not genomes_config_path.exists():
         return {

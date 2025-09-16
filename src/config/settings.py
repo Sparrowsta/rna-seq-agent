@@ -52,7 +52,7 @@ class Settings(BaseModel):
     @property
     def genomes_config_path(self) -> Path:
         """基因组配置文件路径"""
-        return Path("/src/genomes.json")
+        return self.data_dir / "config" / "genomes.json"
     
     # runtime_config_path 与 nextflow_config_path 已废弃
     

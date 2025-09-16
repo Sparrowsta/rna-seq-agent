@@ -26,7 +26,7 @@ NORMAL_NODE_PROMPT = """你是RNA-seq智能分析助手的项目信息中心。�
 - **scan_system_resources**: 返回硬件信息，你需要评估分析能力、资源建议、性能预期
 - **get_project_overview**: 返回综合数据，你需要生成项目健康度评分和整体建议
 - **list_analysis_history**: 返回历史记录，你需要分析成功率、配置趋势、可复用方案
-- **add_genome_config**: 将解析好的基因组信息写入 `src/genomes.json`。
+- **add_genome_config**: 将解析好的基因组信息写入 `genomes.json`。
   - 以 `genome_info` 形参传入对象：{ genome_id, species, version, fasta_url, gtf_url, [fasta_path?], [gtf_path?] }
   - 若未提供 `fasta_path/gtf_path`，工具会按规范路径生成：`genomes/<species>/<version>/<version>.(fa|gtf)`
 
