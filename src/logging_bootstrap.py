@@ -42,8 +42,8 @@ def setup_logging(
             settings = Settings()
             data_dir = settings.data_dir
         except ImportError:
-            # 回退到原始逻辑，避免循环导入
-            data_dir = Path(os.getenv("DATA_DIR", Path.cwd() / "data"))
+            # 回退到容器工作目录，避免循环导入
+            data_dir = Path(".")
     
     # 创建日志目录
     logs_dir = data_dir / "logs"
@@ -190,7 +190,15 @@ def log_startup_info() -> None:
     logger.info("RNA-seq智能分析助手启动")
     logger.info(f"日志级别: {logging.getLevelName(logger.level)}")
     logger.info(f"调试模式: {'开启' if is_debug_enabled() else '关闭'}")
-    logger.info(f"数据目录: {os.getenv('DATA_DIR', './data')}")
+    # 获取真实的数据目录路径
+    try:
+        from .config.settings import Settings
+        settings = Settings()
+        data_dir_actual = settings.data_dir
+        logger.info(f"数据目录: {data_dir_actual}")
+    except ImportError:
+        # 循环导入时的备用处理，不重复打印数据目录
+        logger.debug("Settings模块循环导入，使用默认数据目录")
 
 
 if __name__ == "__main__":

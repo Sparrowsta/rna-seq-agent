@@ -19,7 +19,7 @@ from typing import Dict, Any, Optional
 from langchain_core.tools import tool
 
 # 导入配置模块
-from ..config import get_tools_config
+from ..config import get_tools_config, Settings
 from ..logging_bootstrap import get_logger
 
 logger = get_logger("rna.tools.genome")
@@ -65,8 +65,11 @@ def add_genome_config(genome_info: Dict[str, Any]) -> Dict[str, Any]:
             return {"success": False, "error": "genome_id/species/version 不能为空"}
 
         # 规范化本地存放路径（允许外部覆盖）
-        fasta_path = genome_info.get("fasta_path") or f"genomes/{species}/{version}/{version}.fa"
-        gtf_path = genome_info.get("gtf_path") or f"genomes/{species}/{version}/{version}.gtf"
+        fasta_path_raw = genome_info.get("fasta_path") or f"genomes/{species}/{version}/{version}.fa"
+        gtf_path_raw = genome_info.get("gtf_path") or f"genomes/{species}/{version}/{version}.gtf"
+        
+        fasta_path = fasta_path_raw
+        gtf_path = gtf_path_raw
 
         new_genome_config = {
             "species": species,
@@ -437,20 +440,12 @@ def build_star_index(
             json.dump(nf_params, f, indent=2, ensure_ascii=False)
 
         # 定位 build_index.nf
-        nf_candidates = [
-            tools_config.settings.project_root / "src" / "nextflow" / "build_index.nf",
-            Path("/src/nextflow/build_index.nf"),
-        ]
-        nextflow_script = None
-        for cand in nf_candidates:
-            if cand.exists():
-                nextflow_script = cand
-                break
-        if nextflow_script is None:
+        nextflow_script = Path('/src/nextflow/build_index.nf')
+        if not nextflow_script.exists():
             return {
                 "success": False,
-                "error": "未找到 build_index.nf 脚本，请检查 /src/nextflow/build_index.nf 路径",
-                "searched": [str(p) for p in nf_candidates],
+                "error": "未找到 build_index.nf",
+                "searched": ["/src/nextflow/build_index.nf"],
             }
 
         # 运行 Nextflow
@@ -592,13 +587,13 @@ def build_hisat2_index(
             json.dump(nf_params, f, indent=2, ensure_ascii=False)
 
         # 6) 定位并执行 Nextflow
-        nf_candidates = [
-            tools_config.settings.project_root / "src" / "nextflow" / "build_hisat2_index.nf",
-            Path("/src/nextflow/build_hisat2_index.nf"),
-        ]
-        nextflow_script = next((p for p in nf_candidates if p.exists()), None)
-        if nextflow_script is None:
-            return {"success": False, "error": "未找到 build_hisat2_index.nf 脚本"}
+        nextflow_script = Path('/src/nextflow/build_hisat2_index.nf')
+        if not nextflow_script.exists():
+            return {
+                "success": False,
+                "error": "未找到 build_hisat2_index.nf",
+                "searched": ["/src/nextflow/build_hisat2_index.nf"]
+            }
 
         logger.info(f"构建HISAT2索引 - 基因组: {genome_id}")
         logger.info(f"FASTA: {fasta_file}")

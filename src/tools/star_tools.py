@@ -17,7 +17,7 @@ from typing import Dict, Any, Optional, List
 from langchain_core.tools import tool
 
 # 导入配置模块  
-from ..config import get_tools_config
+from ..config import get_tools_config, Settings
 from ..logging_bootstrap import get_logger
 
 logger = get_logger("rna.tools.star")
@@ -68,8 +68,9 @@ def run_nextflow_star(
         if isinstance(genome_info, dict):
             star_index_dir = genome_info.get("star_index_dir") or genome_info.get("index_dir") or ""
             if not star_index_dir:
-                fasta_path = genome_info.get("fasta_path") or genome_info.get("fasta")
-                if fasta_path:
+                fasta_path_raw = genome_info.get("fasta_path") or genome_info.get("fasta")
+                if fasta_path_raw:
+                    fasta_path = fasta_path_raw
                     # 直接基于fasta路径的父目录构建索引目录
                     star_index_dir = str(Path(fasta_path).parent / "star_index")
 
@@ -145,13 +146,13 @@ def run_nextflow_star(
                 json.dump(nf_params, f, indent=2, ensure_ascii=False)
 
         # 6) 定位并执行 Nextflow
-        nf_candidates = [
-            tools_config.settings.project_root / "src" / "nextflow" / "star.nf",
-            Path("/src/nextflow/star.nf"),
-        ]
-        nextflow_script = next((p for p in nf_candidates if p.exists()), None)
-        if nextflow_script is None:
-            return {"success": False, "error": "未找到 star.nf 脚本，请检查 /src/nextflow/star.nf 路径", "searched": [str(p) for p in nf_candidates]}
+        nextflow_script = Path('/src/nextflow/star.nf')
+        if not nextflow_script.exists():
+            return {
+                "success": False, 
+                "error": "未找到 star.nf",
+                "searched": ["/src/nextflow/star.nf"]
+            }
 
         logger.info(f"执行STAR比对 - 参数文件: {params_file}")
         logger.info(f"STAR索引: {nf_params['star_index']}")

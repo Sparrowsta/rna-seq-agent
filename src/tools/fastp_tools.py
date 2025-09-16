@@ -17,7 +17,7 @@ from typing import Dict, Any
 from langchain_core.tools import tool
 
 # 导入配置模块
-from ..config import get_tools_config
+from ..config import get_tools_config, Settings
 from ..logging_bootstrap import get_logger
 
 logger = get_logger("rna.tools.fastp")
@@ -58,15 +58,18 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
         # 统一数据根目录来源：始终以 Settings().data_dir 为准，不从 sample_info 读取
         base_data_path = str(config.settings.data_dir)
 
-        # 结果目录（运行根目录）：优先使用 sample_info 提供；否则按时间戳生成到 data/results/<timestamp>
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        results_dir = sample_info.get("results_dir") or str(config.settings.data_dir / "results" / f"{timestamp}")
+        # 结果目录（运行根目录）：优先使用 sample_info 提供；否则按时间戳生成
+        if sample_info and sample_info.get("results_dir"):
+            results_dir = Path(sample_info["results_dir"])
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            results_dir = config.settings.data_dir / "results" / f"fastp_{timestamp}"
 
         # 工作目录：统一到 /data/work
-        run_id = results_dir.split('/')[-1] if '/' in str(results_dir) else timestamp
-        work_dir = Path(base_data_path) / "work" / f"fastp_{run_id}"
+        run_id = results_dir.name
+        work_dir = Settings().data_dir / 'work' / f"fastp_{run_id}"
         work_dir.mkdir(parents=True, exist_ok=True)
-        results_dir = Path(results_dir)
+        
         # 确保结果目录存在，避免 publishDir 目标不存在造成的发布失败
         try:
             results_dir.mkdir(parents=True, exist_ok=True)
@@ -90,22 +93,13 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
             json.dump(nextflow_config, f, indent=2, ensure_ascii=False)
         
         # 寻找Nextflow脚本
-        script_candidates = [
-            config.project_root / "src" / "nextflow" / "fastp.nf",
-            Path("/src/nextflow/fastp.nf")
-        ]
+        nextflow_script = Path('/src/nextflow/fastp.nf')
         
-        nextflow_script = None
-        for candidate in script_candidates:
-            if candidate.exists():
-                nextflow_script = candidate
-                break
-        
-        if nextflow_script is None:
+        if not nextflow_script.exists():
             return {
                 "success": False,
-                "error": "未找到FastP Nextflow脚本",
-                "searched_paths": [str(p) for p in script_candidates],
+                "error": "未找到 fastp.nf",
+                "searched": ["/src/nextflow/fastp.nf"],
                 "execution_time": 0
             }
         

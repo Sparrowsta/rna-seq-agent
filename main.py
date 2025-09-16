@@ -48,7 +48,7 @@ def initialize_application() -> Settings:
         sys.exit(1)
     
     # 显示配置信息
-    print(f"✅ 环境类型: {'容器环境' if settings.is_container_environment else '本地开发环境'}")
+    print(f"✅ 环境类型: 容器环境")
     print(f"✅ 数据目录: {settings.data_dir}")
     
     # 验证关键文件

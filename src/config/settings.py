@@ -13,21 +13,10 @@ class Settings(BaseModel):
     # === 项目路径配置 ===
     project_root: Path = Field(default_factory=lambda: Path.cwd())
     
-    # === 环境检测 ===
-    @property
-    def is_container_environment(self) -> bool:
-        """检测是否在容器环境中运行"""
-        # 不使用环境变量；仅基于常见路径特征判断
-        return Path("/data").exists() or Path("/.dockerenv").exists() or Path("/src").exists()
-    
-    
     @property 
     def data_dir(self) -> Path:
-        """数据文件目录"""
-        if self.is_container_environment:
-            return Path("/data")
-        else:
-            return self.project_root / "data"
+        """数据文件目录 - 容器工作目录当前路径"""
+        return Path(".")
     
     # === API配置 ===
     deepseek_api_key: str = Field(default="", description="DeepSeek API密钥")

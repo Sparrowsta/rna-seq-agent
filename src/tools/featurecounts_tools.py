@@ -16,7 +16,7 @@ from typing import Dict, Any, Optional, List
 from langchain_core.tools import tool
 
 # 导入配置模块
-from ..config import get_tools_config
+from ..config import get_tools_config, Settings
 from ..logging_bootstrap import get_logger
 
 logger = get_logger("rna.tools.featurecounts")
@@ -47,22 +47,6 @@ def run_nextflow_featurecounts(
     try:
         tools_config = get_tools_config()
 
-        # 仅支持容器路径的归一化（不做本地映射）
-        def _to_container_path(path_str: str) -> str:
-            """将输入规范化为容器内路径：
-            - 允许 '/data/...', '/config/...', '/work/...'
-            - 'genomes/...' 将映射为 '/data/genomes/...'
-            - 其他相对或本地路径一律原样返回（由存在性校验报错）
-            """
-            s = str(path_str or '').strip()
-            if not s:
-                return s
-            if s.startswith('/data/') or s.startswith('/config/') or s.startswith('/work/'):
-                return s
-            if s.startswith('genomes/'):
-                return '/data/' + s
-            return s
-
         # 校验依赖输入
         # 选择可用的比对结果（STAR/HISAT2）
         align_results = None
@@ -88,7 +72,7 @@ def run_nextflow_featurecounts(
         )
         if not gtf_file_raw:
             return {"success": False, "error": "genome_info 未提供 GTF 注释文件路径 (gtf_path)"}
-        gtf_file = _to_container_path(gtf_file_raw)
+        gtf_file = gtf_file_raw
         if not Path(gtf_file).exists():
             return {
                 "success": False,
@@ -98,8 +82,6 @@ def run_nextflow_featurecounts(
         # 运行根目录（results_dir）：复用比对步骤的 results_dir，保持同一运行根目录
         timestamp = results_timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
         run_root = Path(align_results.get("results_dir") or base_results_dir or tools_config.results_dir / f"{timestamp}")
-        # 容器路径规范（如需）
-        run_root = Path(_to_container_path(str(run_root)))
         results_dir = run_root
         # 统一 Nextflow 工作目录到 /data/work，使用运行ID区分
         run_id = results_dir.name or timestamp
@@ -117,7 +99,7 @@ def run_nextflow_featurecounts(
             bam = item.get("aligned_bam") or item.get("bam")
             if not bam:
                 continue
-            bam_norm = _to_container_path(bam)
+            bam_norm = bam
             if not Path(bam_norm).exists():
                 return {
                     "success": False,
@@ -198,20 +180,12 @@ def run_nextflow_featurecounts(
                 json.dump(nf_params, f, indent=2, ensure_ascii=False)
 
         # 定位 Nextflow 脚本
-        nf_candidates = [
-            tools_config.settings.project_root / "src" / "nextflow" / "featurecounts.nf",
-            Path("/src/nextflow/featurecounts.nf"),
-        ]
-        nextflow_script = None
-        for cand in nf_candidates:
-            if cand.exists():
-                nextflow_script = cand
-                break
-        if nextflow_script is None:
+        nextflow_script = Path('/src/nextflow/featurecounts.nf')
+        if not nextflow_script.exists():
             return {
                 "success": False,
-                "error": "未找到 featurecounts.nf 脚本，请检查 /src/nextflow/featurecounts.nf 路径",
-                "searched": [str(p) for p in nf_candidates],
+                "error": "未找到 featurecounts.nf",
+                "searched": ["/src/nextflow/featurecounts.nf"],
             }
 
         # 执行 Nextflow

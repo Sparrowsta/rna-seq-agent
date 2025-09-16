@@ -17,7 +17,7 @@ from typing import Dict, Any, Optional, List
 from langchain_core.tools import tool
 
 # 导入配置模块
-from ..config import get_tools_config
+from ..config import get_tools_config, Settings
 from ..logging_bootstrap import get_logger
 
 logger = get_logger("rna.tools.hisat2")
@@ -87,8 +87,9 @@ def run_nextflow_hisat2(
             if hisat2_index_dir:
                 hisat2_index_prefix = str(Path(hisat2_index_dir) / "genome")
             else:
-                fasta_path = genome_info.get("fasta_path") or genome_info.get("fasta")
-                if fasta_path:
+                fasta_path_raw = genome_info.get("fasta_path") or genome_info.get("fasta")
+                if fasta_path_raw:
+                    fasta_path = fasta_path_raw
                     # 直接基于fasta路径的父目录构建索引目录
                     hisat2_index_prefix = str(Path(fasta_path).parent / "hisat2_index" / "genome")
 
@@ -164,13 +165,13 @@ def run_nextflow_hisat2(
                 json.dump(nf_params, f, indent=2, ensure_ascii=False)
 
         # 6) 定位并执行 Nextflow
-        nf_candidates = [
-            tools_config.settings.project_root / "src" / "nextflow" / "hisat2.nf",
-            Path("/src/nextflow/hisat2.nf"),
-        ]
-        nextflow_script = next((p for p in nf_candidates if p.exists()), None)
-        if nextflow_script is None:
-            return {"success": False, "error": "未找到 hisat2.nf 脚本，请检查 /src/nextflow/hisat2.nf 路径", "searched": [str(p) for p in nf_candidates]}
+        nextflow_script = Path('/src/nextflow/hisat2.nf')
+        if not nextflow_script.exists():
+            return {
+                "success": False, 
+                "error": "未找到 hisat2.nf",
+                "searched": ["/src/nextflow/hisat2.nf"]
+            }
 
         logger.info(f"执行HISAT2比对 - 参数文件: {params_file}")
         logger.info(f"HISAT2索引: {nf_params['hisat2_index']}")
