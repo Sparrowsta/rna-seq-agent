@@ -25,7 +25,7 @@ logger = get_logger("rna.tools.fastp")
 
 @tool
 def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]) -> Dict[str, Any]:
-    """执行Nextflow FastP质量控制流程
+    """执行Nextflow FastP质控流程
     
     Args:
         fastp_params: FastP参数字典，例如 {"qualified_quality_phred": 25, "length_required": 50}
@@ -37,7 +37,7 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
     try:
         config = get_tools_config()
         
-        # 验证必需参数
+        # 校验必需参数
         if not fastp_params:
             return {
                 "success": False,
@@ -58,6 +58,12 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
         # 统一数据根目录来源：始终以 Settings().data_dir 为准，不从 sample_info 读取
         base_data_path = str(config.settings.data_dir)
 
+        # 规范化 paired_end：优先使用显式传入，其次从 sample_groups 是否存在 read2 推断；默认 False
+        paired_end_value = sample_info.get("paired_end")
+        if paired_end_value is None:
+            groups = sample_info.get("sample_groups", [])
+            paired_end_value = any((isinstance(s, dict) and s.get("read2")) for s in groups)
+        
         # 结果目录（运行根目录）：优先使用 sample_info 提供；否则按时间戳生成
         if sample_info and sample_info.get("results_dir"):
             results_dir = Path(sample_info["results_dir"])
@@ -77,13 +83,13 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
         except Exception as e:
             logger.warning(f"创建结果目录失败: {e}")
         
-        # 准备Nextflow配置
+        # 准备Nextflow配置（用于 -params-file）
         nextflow_config = {
             "work_dir": str(work_dir),
             "results_dir": str(results_dir),
             "data_dir": base_data_path,
             "sample_groups": sample_info["sample_groups"],
-            "paired_end": sample_info.get("paired_end", True),
+            "paired_end": bool(paired_end_value),
             **fastp_params
         }
 
@@ -158,7 +164,7 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
                         "json": str(sample_dir / f"{sample_id}.fastp.json")
                     }
                     
-                    if sample_info.get("paired_end", True):
+                    if paired_end_value:
                         output_info.update({
                             "trimmed_r1": str(sample_dir / f"{sample_id}_1.trimmed.fastq.gz"),
                             "trimmed_r2": str(sample_dir / f"{sample_id}_2.trimmed.fastq.gz")

@@ -140,6 +140,8 @@ async def _call_fastp_optimization_agent(state: AgentState) -> FastpResponse:
     # 组织数据上下文（仅数据，不重复流程与指南，遵循系统提示）
     sample_info = {
         "sample_groups": state.nextflow_config.get("sample_groups", []),
+        # 补充 paired_end，确保工具拿到与 Prepare 一致的测序类型
+        "paired_end": state.nextflow_config.get("paired_end"),
         # 结果目录可选提供，工具内部会自动兜底
         **({"results_dir": state.results_dir} if state.results_dir else {}),
         # M2: 添加 state 信息用于参数版本化
