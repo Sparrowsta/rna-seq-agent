@@ -12,7 +12,6 @@ import time
 import psutil
 import subprocess
 import tempfile
-from pathlib import Path
 from typing import Dict, Any, Optional
 
 # 使用官方工具装饰器
@@ -193,7 +192,7 @@ def scan_system_resources() -> Dict[str, Any]:
         }
         # 日志：资源摘要与低资源告警
         try:
-            logger.info(f"系统资源：CPU={cpu_physical}核 内存={memory_gb}GB 磁盘={disk_free_gb}GB可用")
+            logger.info(f"系统资源：CPU={cpu_physical}核 内存={memory_available_gb}/{memory_gb}GB可用 磁盘={disk_free_gb}/{disk_total_gb}GB可用")
             if memory_available_gb < 4:
                 logger.warning(f"内存资源告警：可用内存仅{memory_available_gb}GB")
             if disk_free_gb < 10:
