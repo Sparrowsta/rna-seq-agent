@@ -233,7 +233,7 @@ def write_params_file(step: str, params: dict, state: AgentState = None,
     except Exception as e:
         logger.error(f"写入参数文件失败: {e}")
         # 返回默认路径，避免中断流程
-        fallback_path = Path("/tmp") / f"{step}_params_error.json"
+        fallback_path = config.settings.temp_dir / f"{step}_params_error.json"
         return fallback_path
 
 

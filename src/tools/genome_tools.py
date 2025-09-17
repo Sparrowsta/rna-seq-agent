@@ -19,7 +19,7 @@ from typing import Dict, Any, Optional
 from langchain_core.tools import tool
 
 # 导入配置模块
-from ..config import get_tools_config, Settings
+from ..config import get_tools_config
 from ..logging_bootstrap import get_logger
 
 logger = get_logger("rna.tools.genome")
@@ -169,8 +169,8 @@ def download_genome_assets(genome_id: str) -> Dict[str, Any]:
             }
         
         # 转换为绝对路径
-        fasta_full_path = config.project_root / fasta_path
-        gtf_full_path = config.project_root / gtf_path
+        fasta_full_path = config.settings.data_dir / fasta_path
+        gtf_full_path = config.settings.data_dir / gtf_path
         
         # 创建目录
         fasta_full_path.parent.mkdir(parents=True, exist_ok=True)
@@ -297,9 +297,9 @@ def build_star_index(
         if not fasta_rel or not gtf_rel:
             return {"success": False, "error": f"基因组 '{genome_id}' 缺少 fasta_path 或 gtf_path"}
 
-        project_root = tools_config.settings.project_root
-        fasta_path = project_root / fasta_rel
-        gtf_path = project_root / gtf_rel
+        data_dir = tools_config.settings.data_dir
+        fasta_path = data_dir / fasta_rel
+        gtf_path = data_dir / gtf_rel
         
         # 检查文件是否存在，如果不存在则尝试下载
         files_missing = []
@@ -440,12 +440,12 @@ def build_star_index(
             json.dump(nf_params, f, indent=2, ensure_ascii=False)
 
         # 定位 build_index.nf
-        nextflow_script = Path('/src/nextflow/build_index.nf')
+        nextflow_script = tools_config.settings.nextflow_scripts_dir / "build_index.nf"
         if not nextflow_script.exists():
             return {
                 "success": False,
                 "error": "未找到 build_index.nf",
-                "searched": ["/src/nextflow/build_index.nf"],
+                "searched": [str(tools_config.settings.nextflow_scripts_dir / "build_index.nf")],
             }
 
         # 运行 Nextflow
@@ -519,7 +519,6 @@ def build_hisat2_index(
     genome_id: str,
     p: Optional[int] = None,
     force_rebuild: bool = False,
-    results_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
     """构建 HISAT2 索引（等价 build_star_index）"""
     try:
@@ -586,12 +585,12 @@ def build_hisat2_index(
             json.dump(nf_params, f, indent=2, ensure_ascii=False)
 
         # 6) 定位并执行 Nextflow
-        nextflow_script = Path('/src/nextflow/build_hisat2_index.nf')
+        nextflow_script = tools_config.settings.nextflow_scripts_dir / "build_hisat2_index.nf"
         if not nextflow_script.exists():
             return {
                 "success": False,
                 "error": "未找到 build_hisat2_index.nf",
-                "searched": ["/src/nextflow/build_hisat2_index.nf"]
+                "searched": [str(tools_config.settings.nextflow_scripts_dir / "build_hisat2_index.nf")]
             }
 
         logger.info(f"构建HISAT2索引 - 基因组: {genome_id}")

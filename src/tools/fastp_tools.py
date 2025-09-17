@@ -17,7 +17,7 @@ from typing import Dict, Any
 from langchain_core.tools import tool
 
 # 导入配置模块
-from ..config import get_tools_config, Settings
+from ..config import get_tools_config
 from ..logging_bootstrap import get_logger
 
 logger = get_logger("rna.tools.fastp")
@@ -67,7 +67,7 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
 
         # 工作目录：统一到 /data/work
         run_id = results_dir.name
-        work_dir = Settings().data_dir / 'work' / f"fastp_{run_id}"
+        work_dir = config.settings.data_dir / 'work' / f"fastp_{run_id}"
         work_dir.mkdir(parents=True, exist_ok=True)
         
         # 确保结果目录存在，避免 publishDir 目标不存在造成的发布失败
@@ -114,13 +114,13 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
                 json.dump(nextflow_config, f, indent=2, ensure_ascii=False)
         
         # 寻找Nextflow脚本
-        nextflow_script = Path('/src/nextflow/fastp.nf')
+        nextflow_script = config.settings.nextflow_scripts_dir / "fastp.nf"
         
         if not nextflow_script.exists():
             return {
                 "success": False,
                 "error": "未找到 fastp.nf",
-                "searched": ["/src/nextflow/fastp.nf"],
+                "searched": [str(config.settings.nextflow_scripts_dir / "fastp.nf")],
                 "execution_time": 0
             }
         

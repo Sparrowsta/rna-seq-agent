@@ -143,12 +143,12 @@ def run_nextflow_star(
                 json.dump(nf_params, f, indent=2, ensure_ascii=False)
 
         # 6) 定位并执行 Nextflow
-        nextflow_script = Path('/src/nextflow/star.nf')
+        nextflow_script = tools_config.settings.nextflow_scripts_dir / "star.nf"
         if not nextflow_script.exists():
             return {
                 "success": False, 
                 "error": "未找到 star.nf",
-                "searched": ["/src/nextflow/star.nf"]
+                "searched": [str(tools_config.settings.nextflow_scripts_dir / "star.nf")]
             }
 
         logger.info(f"执行STAR比对 - 参数文件: {params_file}")

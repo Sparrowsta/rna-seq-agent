@@ -13,10 +13,52 @@ class Settings(BaseModel):
     # === 项目路径配置 ===
     project_root: Path = Field(default_factory=lambda: Path.cwd())
     
-    @property 
+    @property
+    def is_docker_environment(self) -> bool:
+        """检测是否在Docker容器中运行"""
+        # 检查.dockerenv文件（Docker官方标准方法）
+        return Path("/.dockerenv").exists()
+
+    @property
     def data_dir(self) -> Path:
-        """数据文件目录 - 容器工作目录当前路径"""
-        return Path(".")
+        """数据文件目录 - 自动适配Docker和本地环境"""
+        if self.is_docker_environment:
+            return Path(".")  # Docker中工作目录就是/data
+        else:
+            return self.project_root / "data"  # 本地环境使用data子目录
+
+    @property
+    def work_dir(self) -> Path:
+        """Nextflow工作目录"""
+        return self.data_dir / "work"
+
+    @property
+    def logs_dir(self) -> Path:
+        """日志目录"""
+        return self.data_dir / "logs"
+
+    @property
+    def genomes_dir(self) -> Path:
+        """基因组文件目录"""
+        return self.data_dir / "genomes"
+
+    @property
+    def results_dir(self) -> Path:
+        """结果输出目录"""
+        return self.data_dir / "results"
+
+    @property
+    def temp_dir(self) -> Path:
+        """临时文件目录"""
+        return self.data_dir / "tmp"
+
+    @property
+    def nextflow_scripts_dir(self) -> Path:
+        """Nextflow脚本目录"""
+        if self.is_docker_environment:
+            return Path("/src/nextflow")  # Docker容器内固定路径
+        else:
+            return self.project_root / "src" / "nextflow"  # 本地相对路径
     
     # === API配置 ===
     deepseek_api_key: str = Field(default="", description="DeepSeek API密钥")

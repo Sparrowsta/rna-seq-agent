@@ -44,7 +44,7 @@ def scan_fastq_files() -> Dict[str, Any]:
         if config.fastq_dir.exists():
             search_roots.append(config.fastq_dir)
     except Exception:
-        search_roots.append(config.project_root)
+        search_roots.append(config.settings.data_dir)
 
     # 扫描所有FASTQ文件
     from itertools import chain
@@ -260,7 +260,7 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
             # 检查FASTA文件
             fasta_path = genome_info.get("fasta_path", "")
             if fasta_path:
-                fasta_full_path = config.project_root / fasta_path
+                fasta_full_path = config.settings.data_dir / fasta_path
                 status["files"]["fasta"] = {
                     "path": str(fasta_full_path),
                     "relative_path": fasta_path,
@@ -274,7 +274,7 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
             # 检查GTF文件
             gtf_path = genome_info.get("gtf_path", "")
             if gtf_path:
-                gtf_full_path = config.project_root / gtf_path
+                gtf_full_path = config.settings.data_dir / gtf_path
                 status["files"]["gtf"] = {
                     "path": str(gtf_full_path),
                     "relative_path": gtf_path,
@@ -294,7 +294,7 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
 
                 # 检查STAR索引 - 基于fasta路径推断索引目录
                 star_index_dir = f"{genome_dir}/star_index"
-                star_index_full_path = config.project_root / star_index_dir
+                star_index_full_path = config.settings.data_dir / star_index_dir
                 if star_index_full_path.exists():
                     with tempfile.TemporaryDirectory() as tmp_dir:
                         try:
@@ -313,7 +313,7 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
 
                 # 检查HISAT2索引 - 基于fasta路径推断索引目录
                 hisat2_index_dir = f"{genome_dir}/hisat2_index"
-                hisat2_index_full_path = config.project_root / hisat2_index_dir
+                hisat2_index_full_path = config.settings.data_dir / hisat2_index_dir
                 if hisat2_index_full_path.exists():
                     # 查找索引文件前缀 (通常是genome或基因组名称)
                     ht2_files = list(hisat2_index_full_path.glob("*.1.ht2"))
@@ -345,7 +345,7 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
 
     result = {
         "detection_status": "success",
-        "available_count": available_ids,
+        "available_ids": available_ids,
         "total_configured": len(genome_statuses),
         "available_star_index": available_star_index,
         "available_hisat2_index": available_hisat2_index

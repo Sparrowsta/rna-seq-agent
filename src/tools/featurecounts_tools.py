@@ -178,12 +178,12 @@ def run_nextflow_featurecounts(
                 json.dump(nf_params, f, indent=2, ensure_ascii=False)
 
         # 定位 Nextflow 脚本
-        nextflow_script = Path('/src/nextflow/featurecounts.nf')
+        nextflow_script = tools_config.settings.nextflow_scripts_dir / "featurecounts.nf"
         if not nextflow_script.exists():
             return {
                 "success": False,
                 "error": "未找到 featurecounts.nf",
-                "searched": ["/src/nextflow/featurecounts.nf"],
+                "searched": [str(tools_config.settings.nextflow_scripts_dir / "featurecounts.nf")],
             }
 
         # 执行 Nextflow
