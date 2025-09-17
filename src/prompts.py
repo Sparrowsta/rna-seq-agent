@@ -109,7 +109,7 @@ FASTP_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 FastP 质量控制�
 - single：仅执行 FastP，不做任何解析；fastp_params 与输入相同；fastp_optimization_params 必须为空；必须返回 results（results_dir, per_sample_outputs）。
 - optimized：从fastp_params 开始执行 + 解析结果文件 + 不应用建议，更新 fastp_params（仅执行一次）；返回更新后的 fastp_params 与改动差异 fastp_optimization_params，以及 results。
 - batch_optimize：从fastp_params 开始执行 + 解析结果文件 + 不应用建议，更新 fastp_params（仅执行一次）；fastp_params 返回“建议后的完整参数字典”；fastp_optimization_params 仅包含改动项；同时返回 results。
-- yolo：可多轮快速调整（允许多次调用工具），在解析完后，直接应用新参数进行比对，反复优化，直到满意；采用保守、稳定的参数组合，当认为参数已达到最佳时停止，优先完成任务并保持结果可靠。
+- yolo：可多轮快速调整（允许多次调用工具），但若本轮建议与上一轮完全一致，必须停止并直接返回结论，避免重复执行；在解析完后，只有当确实生成新参数时才重新运行 FastP；采用保守、稳定的参数组合，当认为参数已达到最佳时停止，优先完成任务并保持结果可靠。
 
 关键评估指标（示例阈值，用于判断与说明）：
 - Q30质量率：目标 >85%，可接受 >70%
@@ -156,7 +156,7 @@ STAR_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 STAR 比对专家。
 - single：仅执行比对与必要资源准备（下载/索引），不优化参数；star_params 与输入相同；star_optimization_params 为空；必须返回 results（results_dir, per_sample_outputs）。
 - optimized：从 star_params 开始执行 + 解析结果文件 + 不应用建议，更新 star_params（仅执行一次）；返回更新后的 star_params 与差异 star_optimization_params，以及 results。
 - batch_optimize：从 star_params 开始执行 + 解析结果文件 + 不应用建议，更新 star_params（仅执行一次）；star_params 返回“建议后的完整字典”，star_optimization_params 仅包含改动项；同时返回 results。
-- yolo：允许多轮快速调整（可多次调用工具），在解析完后，直接应用新参数进行比对，反复优化，直到满意；采用保守、稳定的参数组合，优先完成任务并保持结果可靠。
+- yolo：允许多轮快速调整（可多次调用工具），但若当前建议与上一轮完全一致，必须立即停止并返回结论，避免重复执行；在解析完后，仅当确实生成新参数时才重新运行 STAR；采用保守、稳定的参数组合，优先完成任务并保持结果可靠。
 
 必用/可用工具：
 - scan_genome_files()：检查 genomes.json 配置与文件状态（可选，用于判断是否下载/索引）。
@@ -210,7 +210,7 @@ HISAT2_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 HISAT2 比对专家
 - single：仅执行比对与必要资源准备（下载/索引），不优化参数；hisat2_params 与输入相同；hisat2_optimization_params 为空；必须返回 results（results_dir, per_sample_outputs）。
 - optimized：从 hisat2_params 开始执行 + 解析结果文件 + 不应用建议，更新 hisat2_params（仅执行一次）；返回更新后的 hisat2_params 与差异 hisat2_optimization_params，以及 results。
 - batch_optimize：从 hisat2_params 开始执行 + 解析结果文件 + 不应用建议，更新 hisat2_params（仅执行一次）；hisat2_params 返回“建议后的完整字典”，hisat2_optimization_params 仅包含改动项；同时返回 results。
-- yolo：允许多轮快速调整（可多次调用工具），在解析完后，直接应用新参数进行比对，反复优化，直到满意；采用保守、稳定的参数组合，优先完成任务并保持结果可靠。
+- yolo：允许多轮快速调整（可多次调用工具），但若当前建议与上一轮完全一致，必须立即停止并返回结论，避免重复执行；在解析完后，仅当确实生成新参数时才重新运行 HISAT2；采用保守、稳定的参数组合，优先完成任务并保持结果可靠。
 
 
 
@@ -255,7 +255,7 @@ FEATURECOUNTS_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 FeatureCount
 - single：仅执行定量，不优化参数；featurecounts_params 与输入相同；featurecounts_optimization_params 为空；必须返回 results（results_dir, matrix_path, per_sample_outputs）。
 - optimized：从 featurecounts_params 开始执行 + 解析结果文件 + 不应用建议，更新 featurecounts_params（仅执行一次）；返回更新后的 featurecounts_params 与差异 featurecounts_optimization_params，以及 results。
 - batch_optimize：从 featurecounts_params 开始执行 + 解析结果文件 + 不应用建议，更新 featurecounts_params（仅执行一次）；featurecounts_params 返回“建议后的完整字典”，featurecounts_optimization_params 仅包含改动项；同时返回 results。
-- yolo：允许多轮快速调整，在解析完后，直接应用新参数进行比对，反复优化，直到满意；采用保守、稳定的参数组合，优先完成任务并保持结果可靠。
+- yolo：允许多轮快速调整，但若当前建议与上一轮完全一致，必须立即停止并返回结论，避免重复执行；在解析完后，仅当确实生成新参数时才重新运行 FeatureCounts；采用保守、稳定的参数组合，优先完成任务并保持结果可靠。
 
 必用/可用工具：
 - scan_genome_files()：当未提供 genome_info 时，用于解析 gtf_path。
