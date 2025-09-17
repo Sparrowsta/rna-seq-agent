@@ -485,7 +485,6 @@ def build_star_index(
         try:
             if get_tools_config().settings.debug_mode:
                 payload.update({
-                    "stdout": result.stdout,
                     "stderr": result.stderr,
                     "cmd": " ".join(cmd)
                 })
@@ -627,7 +626,7 @@ def build_hisat2_index(
             payload["error"] = f"HISAT2索引构建失败，returncode: {result.returncode}"
 
         if get_tools_config().settings.debug_mode:
-            payload.update({"stdout": result.stdout, "stderr": result.stderr, "cmd": " ".join(cmd)})
+            payload.update({"stderr": result.stderr, "cmd": " ".join(cmd)})
 
         return payload
 

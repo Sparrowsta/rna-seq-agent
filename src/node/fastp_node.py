@@ -75,10 +75,7 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
         try:
             if getattr(agent_response, 'results', None):
                 agent_results = agent_response.results or {}
-                fastp_results.update({
-                    "results_dir": agent_results.get("results_dir"),
-                    "per_sample_outputs": agent_results.get("per_sample_outputs") or []
-                })
+                fastp_results.update(agent_results)  # 直接更新所有结果，包括params_file
         except Exception:
             fastp_results["success"] = False
             fastp_results["status"] = "failed"

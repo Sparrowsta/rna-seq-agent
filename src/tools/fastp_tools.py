@@ -86,11 +86,32 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
             "paired_end": sample_info.get("paired_end", True),
             **fastp_params
         }
-        
-        # 创建配置文件
-        config_file = work_dir / "nextflow.config.json"
-        with open(config_file, 'w', encoding='utf-8') as f:
-            json.dump(nextflow_config, f, indent=2, ensure_ascii=False)
+
+        # 写入参数版本化文件
+        versioned_params_file = None
+        try:
+            from .utils_tools import write_params_file
+            # 直接传递results_dir，不需要创建临时state
+            versioned_params_file = write_params_file(
+                "fastp",
+                nextflow_config,
+                results_dir=str(results_dir)
+            )
+            logger.info(f"FastP实际运行参数版本化文件已写入: {versioned_params_file}")
+
+        except Exception as e:
+            logger.warning(f"FastP参数版本化写入失败 (不影响执行): {e}")
+
+        # 使用版本化文件作为参数文件，如果失败则降级到临时文件
+        if versioned_params_file and versioned_params_file.exists():
+            params_file = versioned_params_file
+            logger.info(f"使用版本化参数文件运行FastP: {params_file}")
+        else:
+            # 降级方案：生成临时参数文件
+            logger.warning("版本化参数文件不可用，使用临时参数文件")
+            params_file = work_dir / "nextflow.config.json"
+            with open(params_file, 'w', encoding='utf-8') as f:
+                json.dump(nextflow_config, f, indent=2, ensure_ascii=False)
         
         # 寻找Nextflow脚本
         nextflow_script = Path('/src/nextflow/fastp.nf')
@@ -106,7 +127,7 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
         # 执行Nextflow
         cmd = [
             "nextflow", "run", str(nextflow_script),
-            "-params-file", str(config_file),
+            "-params-file", str(params_file),
             "-work-dir", str(work_dir),
             "-resume"
         ]
@@ -152,14 +173,13 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
                     "results_dir": str(results_dir),
                     "per_sample_outputs": per_sample_outputs,
                     "execution_time": execution_time,
-                    "stdout": result.stdout,
+                    "params_file": str(params_file),
                     "message": "FastP执行成功"
                 }
             else:
                 return {
                     "success": False,
                     "error": f"FastP执行失败，返回码: {result.returncode}",
-                    "stdout": result.stdout,
                     "stderr": result.stderr,
                     "execution_time": execution_time
                 }

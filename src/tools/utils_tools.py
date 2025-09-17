@@ -166,22 +166,27 @@ def list_analysis_history() -> Dict[str, Any]:
         }
 
 
-def write_params_file(step: str, params: dict, state: AgentState) -> Path:
+def write_params_file(step: str, params: dict, state: AgentState = None,
+                     results_dir: str = None, metadata: dict = None) -> Path:
     """写入参数版本化文件
-    
+
     Args:
         step: 执行步骤名称 (prepare/fastp/star/featurecounts等)
         params: 参数字典
-        state: 当前Agent状态
-    
+        state: 当前Agent状态 (可选，向后兼容)
+        results_dir: 结果目录路径 (可选，优先使用)
+        metadata: 额外的元数据 (可选)
+
     Returns:
         写入的文件路径
     """
     try:
         config = get_tools_config()
         
-        # 确定写入目录（基于state.results_dir或默认）
-        if hasattr(state, 'results_dir') and state.results_dir:
+        # 确定写入目录（优先使用results_dir参数，其次state.results_dir，最后默认）
+        if results_dir:
+            base_dir = Path(results_dir)
+        elif state and hasattr(state, 'results_dir') and state.results_dir:
             base_dir = Path(state.results_dir)
         else:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -203,13 +208,20 @@ def write_params_file(step: str, params: dict, state: AgentState) -> Path:
             "params": params,
             "metadata": {
                 "created_by": "rna-seq-agent",
-                "agent_state_snapshot": {
-                    "status": getattr(state, 'status', ''),
-                    "current_step": getattr(state, 'current_step', ''),
-                    "execution_mode": getattr(state, 'execution_mode', '')
-                }
             }
         }
+
+        # 添加state快照（如果有state）
+        if state:
+            data_to_write["metadata"]["agent_state_snapshot"] = {
+                "status": getattr(state, 'status', ''),
+                "current_step": getattr(state, 'current_step', ''),
+                "execution_mode": getattr(state, 'execution_mode', '')
+            }
+
+        # 添加额外元数据（如果提供）
+        if metadata:
+            data_to_write["metadata"].update(metadata)
         
         # 写入文件
         with open(params_file, 'w', encoding='utf-8') as f:

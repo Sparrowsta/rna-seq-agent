@@ -44,19 +44,19 @@ def run_nextflow_hisat2(
 
         # M3: 参数版本化 - 在实际执行前写入参数版本化文件
         try:
-            # 从 fastp_results 获取 results_dir，构建临时 state
+            # 从 fastp_results 获取 results_dir，直接传递给write_params_file
             fastp_results_dir = fastp_results.get("results_dir") if fastp_results else ""
             if fastp_results_dir:
-                from ..state import AgentState
                 from .utils_tools import write_params_file
-                temp_state = AgentState()
-                temp_state.results_dir = fastp_results_dir
-                temp_state.results_timestamp = results_timestamp or ""
-                
-                # 写入参数版本化文件
-                param_file_path = write_params_file("hisat2", hisat2_params, temp_state)
+
+                # 直接传递results_dir，不需要创建临时state
+                param_file_path = write_params_file(
+                    "hisat2",
+                    hisat2_params,
+                    results_dir=fastp_results_dir
+                )
                 logger.info(f"HISAT2执行参数版本化文件已写入: {param_file_path}")
-                
+
         except Exception as e:
             logger.warning(f"HISAT2参数版本化写入失败 (不影响执行): {e}")
 
@@ -133,21 +133,18 @@ def run_nextflow_hisat2(
             **cleaned_params,
         }
 
-        # 保存参数文件到hisat2子目录 - 改为版本化参数文件
-        # M3: 参数版本化 - 将实际用于运行的nf_params写入版本化文件
+        # 参数版本化 - 使用新的接口直接传递results_dir
         versioned_params_file = None
         try:
-            # 构建临时 state 用于参数版本化
-            from ..state import AgentState
             from .utils_tools import write_params_file
-            temp_state = AgentState()
-            temp_state.results_dir = str(results_dir)
-            temp_state.results_timestamp = results_timestamp or ""
-            
-            # 写入版本化文件 - 使用实际运行的nf_params
-            versioned_params_file = write_params_file("hisat2", nf_params, temp_state)
+            # 直接传递results_dir，不需要创建临时state
+            versioned_params_file = write_params_file(
+                "hisat2",
+                nf_params,
+                results_dir=str(results_dir)
+            )
             logger.info(f"HISAT2实际运行参数版本化文件已写入: {versioned_params_file}")
-            
+
         except Exception as e:
             logger.warning(f"HISAT2参数版本化写入失败 (不影响执行): {e}")
 
@@ -205,7 +202,7 @@ def run_nextflow_hisat2(
             "per_sample_outputs": per_sample_outputs,
         }
         if get_tools_config().settings.debug_mode:
-            payload.update({"stdout": result.stdout, "stderr": result.stderr, "cmd": " ".join(cmd)})
+            payload.update({"stderr": result.stderr, "cmd": " ".join(cmd)})
         return payload
 
     except Exception as e:

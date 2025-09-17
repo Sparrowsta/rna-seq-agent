@@ -149,20 +149,18 @@ def run_nextflow_featurecounts(
             **mapped,
         }
 
-        # M4: 参数版本化 - 将实际用于运行的nf_params写入版本化文件
+        # M4: 参数版本化 - 使用新的接口直接传递results_dir
         versioned_params_file = None
         try:
-            # 构建临时 state 用于参数版本化
-            from ..state import AgentState
             from .utils_tools import write_params_file
-            temp_state = AgentState()
-            temp_state.results_dir = str(results_dir)
-            temp_state.results_timestamp = results_timestamp or ""
-            
-            # 写入版本化文件 - 使用实际运行的nf_params
-            versioned_params_file = write_params_file("featurecounts", nf_params, temp_state)
+            # 直接传递results_dir，不需要创建临时state
+            versioned_params_file = write_params_file(
+                "featurecounts",
+                nf_params,
+                results_dir=str(results_dir)
+            )
             logger.info(f"FeatureCounts实际运行参数版本化文件已写入: {versioned_params_file}")
-            
+
         except Exception as e:
             logger.warning(f"FeatureCounts参数版本化写入失败 (不影响执行): {e}")
 
@@ -247,7 +245,6 @@ def run_nextflow_featurecounts(
         try:
             if get_tools_config().settings.debug_mode:
                 payload.update({
-                    "stdout": result.stdout,
                     "stderr": result.stderr,
                     "cmd": " ".join(cmd),
                 })
