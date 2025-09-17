@@ -199,16 +199,18 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
         }
 
 
-@tool  
+@tool
 def parse_fastp_results(results_directory: str) -> Dict[str, Any]:
-    """解析FastP结果文件，提取客观质量指标供LLM分析
-    
+    """解析FastP结果文件，提取基本质量统计和特殊处理的复杂数据供LLM分析
+
     Args:
         results_directory: FastP结果目录路径
-    
+
     Returns:
-        解析的质量指标字典，包含各样本的质量统计、过滤率等客观数据
-        注意：此工具仅提供客观数据分析，不生成优化建议。优化建议由LLM基于这些数据智能生成。
+        解析的质量指标字典，包含：
+        - 基本前后质量统计（reads数量、质量分数、GC含量等）
+        - Top10 k-mer和过度表达序列
+        - 原始复杂数据直接传入LLM分析
     """
     try:
         results_dir = Path(results_directory)
@@ -217,17 +219,17 @@ def parse_fastp_results(results_directory: str) -> Dict[str, Any]:
                 "success": False,
                 "error": f"结果目录不存在: {results_directory}"
             }
-        
+
         # 查找所有FastP JSON报告文件
         json_files = list(results_dir.rglob("*.fastp.json"))
-        
+
         if not json_files:
             logger.warning(f"未找到FastP JSON报告文件：{results_directory}")
             return {
                 "success": False,
                 "error": "未找到FastP JSON报告文件"
             }
-        
+
         sample_metrics = []
         overall_stats = {
             "total_reads_before": 0,
@@ -238,55 +240,108 @@ def parse_fastp_results(results_directory: str) -> Dict[str, Any]:
             "q30_rates": [],
             "gc_contents": []
         }
-        
+
         # 解析每个样本的JSON报告
         for json_file in json_files:
             try:
                 with open(json_file, 'r', encoding='utf-8') as f:
                     fastp_data = json.load(f)
-                
+
                 # 提取样本ID
                 sample_id = json_file.stem.replace('.fastp', '')
-                
+
                 # 基本统计信息
                 summary = fastp_data.get("summary", {})
                 before_filtering = summary.get("before_filtering", {})
                 after_filtering = summary.get("after_filtering", {})
-                
-                # 质量统计
+
+                # 基本质量统计（前后对比）
                 reads_before = before_filtering.get("total_reads", 0)
                 reads_after = after_filtering.get("total_reads", 0)
                 bases_before = before_filtering.get("total_bases", 0)
                 bases_after = after_filtering.get("total_bases", 0)
-                
+
                 # 质量分数统计
                 q20_before = before_filtering.get("q20_bases", 0)
                 q30_before = before_filtering.get("q30_bases", 0)
                 q20_after = after_filtering.get("q20_bases", 0)
                 q30_after = after_filtering.get("q30_bases", 0)
-                
+
                 # 计算质量率
                 q20_rate_before = (q20_before / bases_before * 100) if bases_before > 0 else 0
                 q30_rate_before = (q30_before / bases_before * 100) if bases_before > 0 else 0
                 q20_rate_after = (q20_after / bases_after * 100) if bases_after > 0 else 0
                 q30_rate_after = (q30_after / bases_after * 100) if bases_after > 0 else 0
-                
+
                 # GC含量
                 gc_before = before_filtering.get("gc_content", 0)
                 gc_after = after_filtering.get("gc_content", 0)
-                
+
                 # 读长统计
                 read1_mean_length_before = before_filtering.get("read1_mean_length", 0)
                 read1_mean_length_after = after_filtering.get("read1_mean_length", 0)
-                
+
+                # 特殊处理：计算前后变化最大的Top10 k-mer
+                top_changed_kmers = []
+                kmer_data_before = fastp_data.get("read1_before_filtering", {}).get("kmer_count", {})
+                kmer_data_after = fastp_data.get("read1_after_filtering", {}).get("kmer_count", {})
+
+                if kmer_data_before and kmer_data_after:
+                    kmer_changes = []
+                    # 计算所有k-mer的前后变化
+                    for seq in kmer_data_before.keys():
+                        count_before = kmer_data_before[seq]
+                        count_after = kmer_data_after.get(seq, 0)  # 如果after中没有，说明被完全去除
+                        absolute_change = abs(count_before - count_after)
+                        change_rate = ((count_before - count_after) / count_before * 100) if count_before > 0 else 0
+
+                        kmer_changes.append({
+                            "sequence": seq,
+                            "count_before": count_before,
+                            "count_after": count_after,
+                            "absolute_change": absolute_change,
+                            "change_rate": round(change_rate, 2)
+                        })
+
+                    # 按绝对变化量降序排序，取前10个
+                    kmer_changes.sort(key=lambda x: x["absolute_change"], reverse=True)
+                    top_changed_kmers = kmer_changes[:10]
+
+                # 特殊处理：计算前后变化最大的Top10 overrepresented_sequences
+                top_changed_overrepresented = []
+                overrep_data_before = fastp_data.get("read1_before_filtering", {}).get("overrepresented_sequences", {})
+                overrep_data_after = fastp_data.get("read1_after_filtering", {}).get("overrepresented_sequences", {})
+
+                if overrep_data_before and overrep_data_after:
+                    overrep_changes = []
+                    # 计算所有过度表达序列的前后变化
+                    for seq in overrep_data_before.keys():
+                        count_before = overrep_data_before[seq]
+                        count_after = overrep_data_after.get(seq, 0)  # 如果after中没有，说明被完全去除
+                        absolute_change = abs(count_before - count_after)
+                        change_rate = ((count_before - count_after) / count_before * 100) if count_before > 0 else 0
+
+                        overrep_changes.append({
+                            "sequence": seq,
+                            "count_before": count_before,
+                            "count_after": count_after,
+                            "absolute_change": absolute_change,
+                            "change_rate": round(change_rate, 2)
+                        })
+
+                    # 按绝对变化量降序排序，取前10个
+                    overrep_changes.sort(key=lambda x: x["absolute_change"], reverse=True)
+                    top_changed_overrepresented = overrep_changes[:10]
+
                 sample_metric = {
                     "sample_id": sample_id,
+                    # 基本前后统计
                     "reads_before": reads_before,
                     "reads_after": reads_after,
-                    "reads_passed_rate": (reads_after / reads_before * 100) if reads_before > 0 else 0,
+                    "reads_passed_rate": round((reads_after / reads_before * 100) if reads_before > 0 else 0, 2),
                     "bases_before": bases_before,
                     "bases_after": bases_after,
-                    "bases_passed_rate": (bases_after / bases_before * 100) if bases_before > 0 else 0,
+                    "bases_passed_rate": round((bases_after / bases_before * 100) if bases_before > 0 else 0, 2),
                     "q20_rate_before": round(q20_rate_before, 2),
                     "q20_rate_after": round(q20_rate_after, 2),
                     "q30_rate_before": round(q30_rate_before, 2),
@@ -295,11 +350,21 @@ def parse_fastp_results(results_directory: str) -> Dict[str, Any]:
                     "gc_content_after": round(gc_after, 2),
                     "mean_length_before": read1_mean_length_before,
                     "mean_length_after": read1_mean_length_after,
+
+                    # 特殊处理的Top10变化数据
+                    "top_changed_kmers": top_changed_kmers,
+                    "top_changed_overrepresented": top_changed_overrepresented,
+
+                    # 直接传入LLM的原始复杂数据
+                    "raw_filtering_result": fastp_data.get("filtering_result", {}),
+                    "raw_adapter_cutting": fastp_data.get("adapter_cutting", {}),
+                    "raw_duplication": fastp_data.get("duplication", {}),
+
                     "json_file": str(json_file)
                 }
-                
+
                 sample_metrics.append(sample_metric)
-                
+
                 # 累计统计
                 overall_stats["total_reads_before"] += reads_before
                 overall_stats["total_reads_after"] += reads_after
@@ -308,26 +373,26 @@ def parse_fastp_results(results_directory: str) -> Dict[str, Any]:
                 overall_stats["q20_rates"].append(q20_rate_after)
                 overall_stats["q30_rates"].append(q30_rate_after)
                 overall_stats["gc_contents"].append(gc_after)
-                
+
             except Exception as e:
                 logger.error(f"解析FastP JSON文件失败: {json_file}, 错误: {e}")
                 continue
-        
+
         if not sample_metrics:
             return {
                 "success": False,
                 "error": "没有成功解析任何FastP结果文件"
             }
-        
+
         # 计算整体统计
         total_samples = len(sample_metrics)
         overall_read_retention = (overall_stats["total_reads_after"] / overall_stats["total_reads_before"] * 100) if overall_stats["total_reads_before"] > 0 else 0
         overall_base_retention = (overall_stats["total_bases_after"] / overall_stats["total_bases_before"] * 100) if overall_stats["total_bases_before"] > 0 else 0
-        
+
         avg_q20_rate = sum(overall_stats["q20_rates"]) / len(overall_stats["q20_rates"]) if overall_stats["q20_rates"] else 0
         avg_q30_rate = sum(overall_stats["q30_rates"]) / len(overall_stats["q30_rates"]) if overall_stats["q30_rates"] else 0
         avg_gc_content = sum(overall_stats["gc_contents"]) / len(overall_stats["gc_contents"]) if overall_stats["gc_contents"] else 0
-        
+
         result = {
             "success": True,
             "sample_count": total_samples,
@@ -345,10 +410,10 @@ def parse_fastp_results(results_directory: str) -> Dict[str, Any]:
             },
             "results_directory": results_directory
         }
-        
+
         logger.info(f"FastP结果解析完成: {total_samples}个样本, 平均Q30={avg_q30_rate:.1f}%, 数据保留率={overall_read_retention:.1f}%")
         return result
-        
+
     except Exception as e:
         logger.error(f"解析FastP结果异常: {e}")
         return {
