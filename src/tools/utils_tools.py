@@ -168,14 +168,14 @@ def list_analysis_history() -> Dict[str, Any]:
 
 def write_params_file(step: str, params: dict, state: AgentState = None,
                      results_dir: str = None, metadata: dict = None) -> Path:
-    """写入参数版本化文件
+    """写入Nextflow参数文件
 
     Args:
         step: 执行步骤名称 (prepare/fastp/star/featurecounts等)
-        params: 参数字典
+        params: 参数字典，直接写入文件供Nextflow使用
         state: 当前Agent状态 (可选，向后兼容)
         results_dir: 结果目录路径 (可选，优先使用)
-        metadata: 额外的元数据 (可选)
+        metadata: 额外的元数据 (可选，暂未使用)
 
     Returns:
         写入的文件路径
@@ -201,27 +201,8 @@ def write_params_file(step: str, params: dict, state: AgentState = None,
         filename = f"{step}_params_{timestamp}.json"
         params_file = params_dir / filename
         
-        # 准备写入的数据
-        data_to_write = {
-            "step": step,
-            "timestamp": timestamp,
-            "params": params,
-            "metadata": {
-                "created_by": "rna-seq-agent",
-            }
-        }
-
-        # 添加state快照（如果有state）
-        if state:
-            data_to_write["metadata"]["agent_state_snapshot"] = {
-                "status": getattr(state, 'status', ''),
-                "current_step": getattr(state, 'current_step', ''),
-                "execution_mode": getattr(state, 'execution_mode', '')
-            }
-
-        # 添加额外元数据（如果提供）
-        if metadata:
-            data_to_write["metadata"].update(metadata)
+        # 准备写入的数据 - 直接写入参数供Nextflow使用
+        data_to_write = params
         
         # 写入文件
         with open(params_file, 'w', encoding='utf-8') as f:

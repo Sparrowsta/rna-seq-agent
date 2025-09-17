@@ -23,7 +23,7 @@ class Settings(BaseModel):
     def data_dir(self) -> Path:
         """数据文件目录 - 自动适配Docker和本地环境"""
         if self.is_docker_environment:
-            return Path(".")  # Docker中工作目录就是/data
+            return Path("/data")  # Docker容器绝对路径
         else:
             return self.project_root / "data"  # 本地环境使用data子目录
 
