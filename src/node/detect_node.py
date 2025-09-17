@@ -74,10 +74,14 @@ async def detect_node(state: AgentState) -> Dict[str, Any]:
                     # 设置创建后的结果状态 (适配新的scan_genome_files结构)
                     genome_result = {
                         "detection_status": "success",
-                        "available_count": [],
-                        "total_configured": 0,
-                        "available_star_index": [],
-                        "available_hisat2_index": []
+                        "genomes": {},
+                        "summary": {
+                            "total_configured": 0,
+                            "available_count": 0,
+                            "available_ids": [],
+                            "available_star_index": [],
+                            "available_hisat2_index": []
+                        }
                     }
                 except Exception as create_error:
                     logger.warning(f"创建基因组配置文件失败: {create_error}")
@@ -109,12 +113,13 @@ async def detect_node(state: AgentState) -> Dict[str, Any]:
         logger.info(f"FASTQ扫描: roots=[{search_roots}] files={fastq_total_files} samples={fastq_total_samples} preview=[{preview}]")
 
     # 汇总
-    # 获取可用基因组信息 (适配新的scan_genome_files结构)
+    # 获取可用基因组信息
     genome_setup = results.get('verify_genome_setup') or {}
+    summary = genome_setup.get('summary', {})
 
     # 计算有索引的基因组总数 (STAR或HISAT2任一可用)
-    star_genomes = set(genome_setup.get('available_star_index', []))
-    hisat2_genomes = set(genome_setup.get('available_hisat2_index', []))
+    star_genomes = set(summary.get('available_star_index', []))
+    hisat2_genomes = set(summary.get('available_hisat2_index', []))
     available_indexed_genomes = star_genomes | hisat2_genomes
 
     summary_parts = [

@@ -208,6 +208,22 @@ def scan_system_resources() -> Dict[str, Any]:
         }
 
 
+def generate_reason(status: Dict[str, Any]) -> str:
+    """生成基因组不可用的可读原因"""
+    if status.get("available"):
+        return "基因组完整可用"
+
+    missing = status.get("missing_files", [])
+    if "fasta" in missing:
+        return "缺少FASTA序列文件"
+    elif "gtf" in missing:
+        return "缺少GTF注释文件"
+    elif "index" in missing:
+        return "基因组文件完整但缺少索引"
+    else:
+        return "未知原因不可用"
+
+
 @tool
 def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
     """扫描可用的参考基因组配置，返回基因组列表和文件状态
@@ -331,7 +347,30 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
                                 available_hisat2_index.append(gid)
                         except Exception:
                             pass
-            
+
+            # 重新评估available状态 - 必须至少有一个可用索引
+            if status["available"]:  # 如果基础文件都存在
+                has_star_index = gid in available_star_index
+                has_hisat2_index = gid in available_hisat2_index
+
+                # 添加索引状态信息供LLM分析
+                status["indexes"] = {
+                    "star": has_star_index,
+                    "hisat2": has_hisat2_index
+                }
+
+                if not (has_star_index or has_hisat2_index):
+                    status["available"] = False
+                    status["missing_files"].append("index")
+            else:
+                # 即使基础文件不存在，也检查索引状态
+                has_star_index = gid in available_star_index
+                has_hisat2_index = gid in available_hisat2_index
+                status["indexes"] = {
+                    "star": has_star_index,
+                    "hisat2": has_hisat2_index
+                }
+
             genome_statuses[gid] = status
         except Exception as e:
             genome_statuses[gid] = {
@@ -345,11 +384,38 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
 
     result = {
         "detection_status": "success",
-        "available_ids": available_ids,
-        "total_configured": len(genome_statuses),
-        "available_star_index": available_star_index,
-        "available_hisat2_index": available_hisat2_index
+        "genomes": genome_statuses,  # 详细的基因组状态信息，供LLM分析
+        "summary": {
+            "total_configured": len(genome_statuses),
+            "available_count": len(available_ids),
+            "available_ids": available_ids,  # 保留用于日志显示
+            "available_star_index": available_star_index,
+            "available_hisat2_index": available_hisat2_index
+        }
     }
+
+    # 根据查询类型返回不同格式的结果
+    if genome_id:  # 单个基因组查询，返回简化结构
+        if genome_id in genome_statuses:
+            genome_status = genome_statuses[genome_id]
+            return {
+                "detection_status": "success",
+                "genome_id": genome_id,
+                "available": genome_status.get("available", False),
+                "files": {k: {"exists": v["exists"], "size_mb": v["size_mb"]}
+                         for k, v in genome_status.get("files", {}).items()},
+                "indexes": genome_status.get("indexes", {}),
+                "missing_files": genome_status.get("missing_files", []),
+                "reason": generate_reason(genome_status)
+            }
+        else:
+            return {
+                "detection_status": "not_found",
+                "genome_id": genome_id,
+                "reason": f"基因组 '{genome_id}' 未在配置中找到"
+            }
+
+    # 全量查询，返回详细结构
     # 日志：基因组概览
     try:
         if len(available_ids) == 0:
