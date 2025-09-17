@@ -8,12 +8,15 @@ RNA-seq智能分析助手 - 基因组管理工具
 - build_hisat2_index: 构建HISAT2索引
 """
 
+import gzip
 import json
+import shutil
 import subprocess
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional, Tuple
 
 # 使用官方工具装饰器
 from langchain_core.tools import tool
@@ -23,8 +26,6 @@ from ..config import get_tools_config
 from ..logging_bootstrap import get_logger
 
 logger = get_logger("rna.tools.genome")
-
-
 @tool
 def add_genome_config(genome_info: Dict[str, Any]) -> Dict[str, Any]:
     """添加基因组配置到 genomes.json（不在工具内调用LLM）。
@@ -124,19 +125,114 @@ def add_genome_config(genome_info: Dict[str, Any]) -> Dict[str, Any]:
         return {"success": False, "error": f"添加基因组配置时出错：{str(e)}"}
 
 
+def _download_genome_file(
+    url: str,
+    destination: Path,
+    *,
+    timeout: int,
+    label: str,
+    timeout_message: str,
+) -> Tuple[bool, Optional[str], Optional[Path]]:
+    """从远程下载基因组文件到 tmp 目录，成功后移动到目标位置。
+
+    返回：
+        (success, error_message, tmp_file_path)
+        - success: 是否成功
+        - error_message: 若失败则包含错误详情
+        - tmp_file_path: 实际下载文件路径，便于排查
+    """
+    tools_config = get_tools_config()
+    tmp_dir = Path(tools_config.settings.data_dir) / "tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    token = uuid.uuid4().hex
+    download_tmp = tmp_dir / f"{destination.name}.{token}"
+    prepared_tmp = download_tmp
+    needs_decompress = url.endswith(".gz") and not destination.name.endswith(".gz")
+
+    if needs_decompress:
+        download_tmp = tmp_dir / f"{destination.name}.{token}.gz"
+        prepared_tmp = tmp_dir / f"{destination.name}.{token}.ready"
+
+    try:
+        result = subprocess.run(
+            [
+                "curl",
+                "-L",
+                "-sS",
+                "--fail",
+                "--retry",
+                "2",
+                "--connect-timeout",
+                "30",
+                "--max-time",
+                str(timeout),
+                "-o",
+                str(download_tmp),
+                url,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+        if result.returncode != 0:
+            error_detail = result.stderr.strip() or result.stdout.strip() or f"curl exit code {result.returncode}"
+            return False, f"{label}下载失败: {error_detail} (临时文件: {download_tmp})", download_tmp
+
+        if needs_decompress:
+            try:
+                with gzip.open(download_tmp, "rb") as src, open(prepared_tmp, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                logger.info(f"{label}下载完成并解压: {prepared_tmp}")
+            except Exception as exc:  # noqa: BLE001
+                return False, f"{label}解压失败: {exc} (临时文件: {download_tmp})", download_tmp
+        else:
+            prepared_tmp = download_tmp
+            logger.info(f"{label}下载完成: {prepared_tmp}")
+
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(prepared_tmp), str(destination))
+            logger.info(f"{label}文件已移动到目标路径: {destination}")
+        except Exception as exc:  # noqa: BLE001
+            return False, f"{label}移动到目标路径失败: {exc} (临时文件: {prepared_tmp})", prepared_tmp
+
+        # 若需要解压，保留原始压缩文件供复查；否则已被移动
+        return True, None, download_tmp if needs_decompress else None
+
+    except subprocess.TimeoutExpired:
+        return False, f"{timeout_message} (临时文件: {download_tmp})", download_tmp
+    except Exception as exc:  # noqa: BLE001
+        return False, f"{label}下载异常: {exc} (临时文件: {download_tmp})", download_tmp
+
+
 @tool
-def download_genome_assets(genome_id: str) -> Dict[str, Any]:
-    """下载指定基因组的FASTA和GTF文件
-    
+def download_genome_assets(
+    genome_id: str,
+    download_fasta: bool = True,
+    download_gtf: bool = True
+) -> Dict[str, Any]:
+    """下载指定基因组的FASTA和/或GTF文件
+
     Args:
         genome_id: 基因组标识符，如'hg38', 'mm39'等
-    
+        download_fasta: 是否下载FASTA文件，默认True
+        download_gtf: 是否下载GTF文件，默认True
+
     Returns:
         下载结果字典，包含状态、文件路径等信息
     """
     try:
+        # 参数验证：至少要选择一种文件类型
+        if not download_fasta and not download_gtf:
+            return {
+                "success": False,
+                "error": "至少需要选择下载一种文件类型（FASTA或GTF）"
+            }
+
         config = get_tools_config()
-        
+
         # 获取基因组配置
         genomes_config_path = config.genomes_config_path
         if not genomes_config_path.exists():
@@ -178,71 +274,92 @@ def download_genome_assets(genome_id: str) -> Dict[str, Any]:
         
         start_time = time.time()
         downloaded_files = []
-        
+
         # 下载FASTA文件
-        if not fasta_full_path.exists():
-            logger.info(f"下载FASTA: {fasta_url} -> {fasta_full_path}")
-            try:
-                result = subprocess.run([
-                    "wget", "-O", str(fasta_full_path), fasta_url
-                ], capture_output=True, text=True, timeout=3600)  # 1小时超时
-                
-                if result.returncode == 0:
-                    downloaded_files.append("fasta")
-                    logger.info(f"FASTA下载完成: {fasta_full_path}")
-                else:
+        if download_fasta:
+            if not fasta_full_path.exists():
+                logger.info(f"下载FASTA: {fasta_url} -> {fasta_full_path}")
+                success, error_msg, tmp_file = _download_genome_file(
+                    fasta_url,
+                    fasta_full_path,
+                    timeout=3600,
+                    label="FASTA",
+                    timeout_message="FASTA下载超时（1小时）"
+                )
+                if not success:
                     return {
                         "success": False,
-                        "error": f"FASTA下载失败: {result.stderr}",
+                        "error": error_msg,
+                        "tmp_file": str(tmp_file) if tmp_file else None,
                         "execution_time": time.time() - start_time
                     }
-            except subprocess.TimeoutExpired:
-                return {
-                    "success": False,
-                    "error": "FASTA下载超时（1小时）",
-                    "execution_time": time.time() - start_time
-                }
+                downloaded_files.append("fasta")
+            else:
+                logger.info(f"FASTA文件已存在: {fasta_full_path}")
         else:
-            logger.info(f"FASTA文件已存在: {fasta_full_path}")
-        
+            logger.info(f"跳过FASTA文件下载（用户选择）")
+
         # 下载GTF文件
-        if not gtf_full_path.exists():
-            logger.info(f"下载GTF: {gtf_url} -> {gtf_full_path}")
-            try:
-                result = subprocess.run([
-                    "wget", "-O", str(gtf_full_path), gtf_url
-                ], capture_output=True, text=True, timeout=1800)  # 30分钟超时
-                
-                if result.returncode == 0:
-                    downloaded_files.append("gtf")
-                    logger.info(f"GTF下载完成: {gtf_full_path}")
-                else:
+        if download_gtf:
+            if not gtf_full_path.exists():
+                logger.info(f"下载GTF: {gtf_url} -> {gtf_full_path}")
+                success, error_msg, tmp_file = _download_genome_file(
+                    gtf_url,
+                    gtf_full_path,
+                    timeout=1800,
+                    label="GTF",
+                    timeout_message="GTF下载超时（30分钟）"
+                )
+                if not success:
                     return {
                         "success": False,
-                        "error": f"GTF下载失败: {result.stderr}",
+                        "error": error_msg,
+                        "tmp_file": str(tmp_file) if tmp_file else None,
                         "execution_time": time.time() - start_time
                     }
-            except subprocess.TimeoutExpired:
-                return {
-                    "success": False,
-                    "error": "GTF下载超时（30分钟）",
-                    "execution_time": time.time() - start_time
-                }
+                downloaded_files.append("gtf")
+            else:
+                logger.info(f"GTF文件已存在: {gtf_full_path}")
         else:
-            logger.info(f"GTF文件已存在: {gtf_full_path}")
-        
+            logger.info(f"跳过GTF文件下载（用户选择）")
+
         execution_time = time.time() - start_time
-        
+
+        # 构建文件信息字典（只包含请求的文件）
+        files_dict = {}
+        skipped_by_user = []
+
+        if download_fasta:
+            files_dict["fasta"] = str(fasta_full_path)
+        else:
+            skipped_by_user.append("fasta")
+
+        if download_gtf:
+            files_dict["gtf"] = str(gtf_full_path)
+        else:
+            skipped_by_user.append("gtf")
+
+        # 构建返回消息
+        requested_types = []
+        if download_fasta:
+            requested_types.append("FASTA")
+        if download_gtf:
+            requested_types.append("GTF")
+        message = f"基因组{'/'.join(requested_types)}处理完成: {genome_id}"
+
         return {
             "success": True,
             "genome_id": genome_id,
-            "downloaded_files": downloaded_files,
-            "files": {
-                "fasta": str(fasta_full_path),
-                "gtf": str(gtf_full_path)
+            "requested_files": {
+                "fasta": download_fasta,
+                "gtf": download_gtf
             },
+            "downloaded_files": downloaded_files,
+            "skipped_by_user": skipped_by_user,
+            "files": files_dict,
+            "tmp_file": None,
             "execution_time": execution_time,
-            "message": f"基因组下载完成: {genome_id}"
+            "message": message
         }
     
     except Exception as e:
