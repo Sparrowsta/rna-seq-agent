@@ -72,10 +72,10 @@ PREPARE_NODE_PROMPT = """你是RNA-seq分析配置专家。请在尽量少的工
 - FASTQ样本：从 analyze_fastq_data 构造 sample_groups（[{sample_id, read1, read2?}]），并设置 paired_end（true/false）。
 - genome_version：用用户要求或最匹配的已配置基因组（如 hg38/mm39 等）。
 
-资源配置（轻量）：
+资源配置（完整）：
 - 基于 assess_system_readiness 的 CPU 核心数与内存(GB)估算；给出合理但保守的 cpus 与 memory（字符串如 "8 GB"）。
-- STAR 相关进程优先给 32 GB；HISAT2 相关进程 8–16 GB；其余适度分配。
-- 资源配置必须按工具名组织：{"工具名": {"cpus": 数值, "memory": "字符串"}}
+- 必须为所有工具生成资源配置，以适应后续修改：fastp（4核/8GB）、star（8核/32GB）、hisat2（8核/16GB）、featurecounts（4核/8GB）。
+- 资源配置必须按工具名组织：{"工具名": {"cpus": 数值, "memory": "字符串"}}，即使某工具未被选择也要生成其配置。
 
 输出要求（必须返回 PrepareResponse）：
 - nextflow_config：包含以下关键参数（键名需精确）：
@@ -88,7 +88,7 @@ PREPARE_NODE_PROMPT = """你是RNA-seq分析配置专家。请在尽量少的工
   - run_build_hisat2_index：bool（当 align_tool=='hisat2' 且本地 HISAT2 索引缺失时为 true）
   - paired_end：bool（根据样本配对情况，true 表示双端）
   - sample_groups：列表，每项包含 { sample_id, read1, [read2?] }，要根据用户选择来选择sample_groups
-- resource_config：按流程/工具给出资源建议，结构为 { 进程名: { cpus: 整数, memory: '数字+空格+GB' } }
+- resource_config：必须包含所有工具的完整资源配置，结构为 {"fastp": {"cpus": 4, "memory": "8 GB"}, "star": {"cpus": 8, "memory": "32 GB"}, "hisat2": {"cpus": 8, "memory": "16 GB"}, "featurecounts": {"cpus": 4, "memory": "8 GB"}}，具体数值根据系统资源调整
 - config_reasoning：详细的配置决策理由，仅限普通中英文及常见标点，禁止 emoji/Markdown
 
 """
