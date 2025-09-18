@@ -94,7 +94,7 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
             "star_results": {
                 "success": False,
                 "status": "failed",
-                "error": "FastP结果不可用或未成功"
+                "error": "missing_fastp_results"
             }
         }
 
@@ -114,8 +114,8 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
             "status": "success"
         }
         try:
-            if getattr(agent_response, 'results', None):
-                agent_results = agent_response.results or {}
+            if getattr(agent_response, 'star_results', None):
+                agent_results = agent_response.star_results or {}
                 star_results.update(agent_results)
         except Exception:
             star_results["success"] = False
@@ -194,18 +194,6 @@ async def _call_star_optimization_agent(state: AgentState) -> StarResponse:
         except Exception as e:
             logger.warning(f"从query_results获取基因组配置失败: {e}")
 
-    # 组织数据上下文（仅数据，不重复流程与指南，遵循系统提示）
-    sample_info = {
-        "sample_groups": state.nextflow_config.get("sample_groups", []),
-        # 结果目录可选提供，工具内部会自动兜底
-        **({"results_dir": state.results_dir} if state.results_dir else {}),
-        # 添加state信息用于参数版本化
-        "state_info": {
-            "results_dir": state.results_dir,
-            "results_timestamp": state.results_timestamp
-        }
-    }
-
     user_context = {
         "execution_mode": state.execution_mode,
         "genome_config": {
@@ -213,13 +201,11 @@ async def _call_star_optimization_agent(state: AgentState) -> StarResponse:
             "paired_end": state.nextflow_config.get("paired_end")
         },
         "genome_info": genome_info,
-        "sample_info": sample_info,
         "current_star_params": state.star_params,
-        "fastp_results": state.fastp_results,
-        "star_results": state.star_results,  # 新增：历史执行结果
+        "fastp_results": state.fastp_results,  # 完整传递FastP结果
+        "star_results": state.star_results,  # 历史执行结果
         "optimization_history": {
             "star": state.star_optimization_history,  # 完整历史列表
-            "fastp": state.fastp_optimization_params,
         },
     }
 

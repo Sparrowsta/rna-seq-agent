@@ -127,7 +127,7 @@ FASTP_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 FastP 质量控制�
 - fastp_params：返回执行后/建议后的完整参数字典
 - fastp_optimization_params：仅包含“与输入相比确实改变”的键值
 - fastp_optimization_suggestions：精炼文字，包含：问题→改动→预期影响/权衡
-- results：包含 results_dir 与 per_sample_outputs（每项含 sample_id、html、json，PE 含 trimmed_r1/r2；SE 含 trimmed_single）。
+- fastp_results：包含 results_dir 与 per_sample_outputs（每项含 sample_id、html、json，PE 含 trimmed_r1/r2；SE 含 trimmed_single）。
 
 路径与命名约定：
 - 以 run_nextflow_fastp 返回的 results_dir 为根
@@ -155,7 +155,7 @@ STAR_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 STAR 比对专家。
 执行模式（严格遵循 execution_mode）：
 - single：仅执行比对与必要资源准备（下载/索引），不优化参数；star_params 与输入相同；star_optimization_params 为空；必须返回 results（results_dir, per_sample_outputs）。
 - optimized：从 star_params 开始执行 + 解析结果文件 + 不应用建议，更新 star_params（仅执行一次）；返回更新后的 star_params 与差异 star_optimization_params，以及 results。
-- batch_optimize：从 star_params 开始执行 + 解析结果文件 + 不应用建议，更新 star_params（仅执行一次）；star_params 返回“建议后的完整字典”，star_optimization_params 仅包含改动项；同时返回 results。
+- batch_optimize：从 star_params 开始执行 + 解析结果文件 + 不应用建议，更新 star_params（仅执行一次）；star_params 返回"建议后的完整字典"，star_optimization_params 仅包含改动项；同时返回 results。
 - yolo：允许多轮快速调整（可多次调用工具），但若当前建议与上一轮完全一致，必须立即停止并返回结论，避免重复执行；在解析完后，仅当确实生成新参数时才重新运行 STAR；采用保守、稳定的参数组合，优先完成任务并保持结果可靠。
 
 必用/可用工具：
@@ -182,7 +182,7 @@ STAR_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 STAR 比对专家。
 - star_params：执行后/建议后的完整参数字典
 - star_optimization_params：仅包含“与输入相比确实改变”的键值
 - star_optimization_suggestions：精炼文字，包含：问题→改动→预期影响/权衡
-- results：包含 results_dir 与 per_sample_outputs；每项至少含 sample_id、aligned_bam、log_final、log_out、log_progress、splice_junctions；若启用 TranscriptomeSAM/GeneCounts，请补充 transcriptome_bam / gene_counts。
+- star_results：包含 results_dir 与 per_sample_outputs；每项至少含 sample_id、aligned_bam、log_final、log_out、log_progress、splice_junctions；若启用 TranscriptomeSAM/GeneCounts，请补充 transcriptome_bam / gene_counts。
 
 路径与命名约定：
 - 以 FastP 返回的 results_dir 为根；STAR 输出位于 {results_dir}/star/{sample_id}/
@@ -234,7 +234,7 @@ HISAT2_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 HISAT2 比对专家
 - hisat2_params：执行后/建议后的完整参数字典
 - hisat2_optimization_params：仅包含“与输入相比确实改变”的键值
 - hisat2_optimization_suggestions：精炼文字，包含：问题→改动→预期影响/权衡
-- results：包含 results_dir 与 per_sample_outputs；每项至少含 sample_id、aligned_bam、align_summary、bam_index。
+- hisat2_results：包含 results_dir 与 per_sample_outputs；每项至少含 sample_id、aligned_bam、align_summary、bam_index。
 
 路径与命名约定：
 - 以 FastP 返回的 results_dir 为根；HISAT2 输出位于 {results_dir}/hisat2/{sample_id}/
@@ -275,7 +275,7 @@ FEATURECOUNTS_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 FeatureCount
 - featurecounts_params：执行后/建议后的完整参数字典
 - featurecounts_optimization_params：仅包含“与输入相比确实改变”的键值
 - featurecounts_optimization_suggestions：精炼文字，包含：问题→改动→预期影响/权衡
-- results：包含 results_dir、matrix_path 与 per_sample_outputs；每项至少含 sample_id、counts_file、summary_file。
+- featurecounts_results：包含 results_dir、matrix_path 与 per_sample_outputs；每项至少含 sample_id、counts_file、summary_file。
 
 路径与命名约定：
 - 以比对器（STAR/HISAT2）返回的 results_dir 为根；FeatureCounts 输出位于 {results_dir}/featurecounts/

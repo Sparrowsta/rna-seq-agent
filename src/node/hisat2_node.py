@@ -107,8 +107,8 @@ async def hisat2_node(state: AgentState) -> Dict[str, Any]:
             "status": "success"
         }
         try:
-            if getattr(agent_response, 'results', None):
-                agent_results = agent_response.results or {}
+            if getattr(agent_response, 'hisat2_results', None):
+                agent_results = agent_response.hisat2_results or {}
                 hisat2_results.update(agent_results)
         except Exception:
             hisat2_results["success"] = False
@@ -200,8 +200,8 @@ async def _call_hisat2_optimization_agent(state: AgentState) -> Hisat2Response:
         "genome_info": genome_info,
         "sample_info": sample_info,
         "current_hisat2_params": state.hisat2_params,
-        "fastp_results": state.fastp_results,
-        "hisat2_results": state.hisat2_results,  # 新增：历史执行结果
+        "fastp_results": state.fastp_results,  # 完整传递FastP结果
+        "hisat2_results": state.hisat2_results,  # 历史执行结果
         "optimization_history": {
             "hisat2": state.hisat2_optimization_history,  # 完整历史列表
             "fastp": state.fastp_optimization_params,

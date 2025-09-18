@@ -106,7 +106,7 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
         optimization_params_changes = fc_response.featurecounts_optimization_params
         
         # 透传Agent返回的results
-        agent_results = getattr(fc_response, 'results', None)
+        agent_results = getattr(fc_response, 'featurecounts_results', None)
         fc_results = {
             "success": True,
             "status": "success",
@@ -172,30 +172,32 @@ async def _call_featurecounts_optimization_agent(state: AgentState) -> Featureco
     
     logger = get_logger("rna.nodes.featurecounts")
     
-    # 组织数据上下文（仅数据，不重复流程与指南，遵循系统提示）
-    sample_info = {
-        "sample_groups": state.nextflow_config.get("sample_groups", []),
-        # 结果目录可选提供，工具内部会自动兜底
-        **({"results_dir": state.results_dir} if state.results_dir else {}),
-        # 添加state信息用于参数版本化
-        "state_info": {
-            "results_dir": state.results_dir,
-            "results_timestamp": state.results_timestamp
-        }
-    }
+    # 获取基因组配置信息（从detect节点的query_results中获取）
+    genome_version = state.nextflow_config.get("genome_version")
+    genome_info = {}
+    if genome_version and state.query_results:
+        try:
+            # 从detect节点已经收集的结果中获取基因组配置
+            genome_scan_result = state.query_results.get("verify_genome_setup", {})
+            if isinstance(genome_scan_result, dict):
+                genomes_dict = genome_scan_result.get("genomes", {})
+                if isinstance(genomes_dict, dict) and genome_version in genomes_dict:
+                    genome_info = genomes_dict[genome_version]
+        except Exception as e:
+            logger.warning(f"从query_results获取基因组配置失败: {e}")
     
     user_context = {
         "execution_mode": state.execution_mode,
-        "sample_info": sample_info,
-        "nextflow_config": state.nextflow_config,
+        "genome_config": {
+            "genome_version": genome_version,
+            "paired_end": state.nextflow_config.get("paired_end")
+        },
+        "genome_info": genome_info,  # 添加genome_info传递
         "current_featurecounts_params": state.featurecounts_params,
         "star_results": state.star_results,
         "hisat2_results": getattr(state, 'hisat2_results', {}),
-        "genome_version": state.nextflow_config.get("genome_version", ""),
         "optimization_history": {
             "featurecounts": state.featurecounts_optimization_history,  # 完整历史列表
-            "star": state.star_optimization_params,                     # 暂时保持兼容
-            "fastp": state.fastp_optimization_params,
         },
     }
     

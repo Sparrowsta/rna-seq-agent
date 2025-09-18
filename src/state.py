@@ -48,10 +48,10 @@ class AgentState(BaseModel):
 
 
     # === 工具执行结果（保留这些字段，它们不是参数管理字段） ===
-    fastp_results: Dict[str, Any] = Field(default_factory=dict, description="FastP执行结果数据")
-    star_results: Dict[str, Any] = Field(default_factory=dict, description="STAR比对结果数据")  
-    hisat2_results: Dict[str, Any] = Field(default_factory=dict, description="HISAT2比对结果数据")
-    featurecounts_results: Dict[str, Any] = Field(default_factory=dict, description="FeatureCounts定量结果数据")
+    fastp_results: Dict[str, Any] = Field(default_factory=dict, description="FastP执行产生的输出与摘要；遵循Prompt约定")
+    star_results: Dict[str, Any] = Field(default_factory=dict, description="STAR执行产生的输出与摘要；遵循Prompt约定")  
+    hisat2_results: Dict[str, Any] = Field(default_factory=dict, description="HISAT2执行产生的输出与摘要；遵循Prompt约定")
+    featurecounts_results: Dict[str, Any] = Field(default_factory=dict, description="FeatureCounts执行产生的输出与摘要；遵循Prompt约定")
 
     # === 当前工具参数（仅保留当前参数，删除历史和版本管理） ===
     fastp_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_FASTP_PARAMS.copy(), description="当前FastP运行参数")
@@ -125,25 +125,25 @@ class FastpResponse(BaseModel):
     fastp_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_FASTP_PARAMS.copy(), description="优化后的FastP参数")
     fastp_optimization_suggestions: str = Field(description="详细的优化理由、数据支撑和预期效果")
     fastp_optimization_params: Dict[str, Any] = Field(default_factory=dict, description="仅包含改变了的优化参数")
-    results: Dict[str, Any] = Field(default_factory=dict, description="FastP执行产生的输出与摘要；遵循Prompt约定")
+    fastp_results: Dict[str, Any] = Field(default_factory=dict, description="FastP执行产生的输出与摘要；遵循Prompt约定")
 
 class StarResponse(BaseModel):
     """STAR节点的Agent响应格式"""
     star_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_STAR_PARAMS.copy(), description="优化后的STAR参数")
     star_optimization_suggestions: str = Field(description="详细的优化理由、数据支撑和预期效果")
     star_optimization_params: Dict[str, Any] = Field(default_factory=dict, description="仅包含改变了的优化参数")
-    results: Dict[str, Any] = Field(default_factory=dict, description="STAR执行产生的输出与摘要；遵循Prompt约定")
+    star_results: Dict[str, Any] = Field(default_factory=dict, description="STAR执行产生的输出与摘要；遵循Prompt约定")
 
 class FeaturecountsResponse(BaseModel):
     """FeatureCounts节点的Agent响应格式"""
     featurecounts_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_FEATURECOUNTS_PARAMS.copy(), description="优化后的FeatureCounts参数")
     featurecounts_optimization_suggestions: str = Field(description="详细的优化理由、数据支撑和预期效果")
     featurecounts_optimization_params: Dict[str, Any] = Field(default_factory=dict, description="仅包含改变了的优化参数")
-    results: Dict[str, Any] = Field(default_factory=dict, description="FeatureCounts执行产生的输出与摘要；遵循Prompt约定")
+    featurecounts_results: Dict[str, Any] = Field(default_factory=dict, description="FeatureCounts执行产生的输出与摘要；遵循Prompt约定")
 
 class Hisat2Response(BaseModel):
     """HISAT2节点的Agent响应格式"""
     hisat2_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_HISAT2_PARAMS.copy(), description="优化后的HISAT2参数")
     hisat2_optimization_suggestions: str = Field(description="详细的优化理由、数据支撑和预期效果")
     hisat2_optimization_params: Dict[str, Any] = Field(default_factory=dict, description="仅包含改变了的优化参数")
-    results: Dict[str, Any] = Field(default_factory=dict, description="HISAT2执行产生的输出与摘要；遵循Prompt约定")
+    hisat2_results: Dict[str, Any] = Field(default_factory=dict, description="HISAT2执行产生的输出与摘要；遵循Prompt约定")

@@ -61,7 +61,6 @@ def run_nextflow_featurecounts(
         if not per_sample:
             return {"success": False, "error": "比对结果缺少 per_sample_outputs 信息"}
 
-        # 环境检查：允许本地与容器环境，路径规范化在下方处理
 
         # 解析并归一化 GTF 注释文件路径（容器内）
         gtf_file_raw = (
