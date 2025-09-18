@@ -142,7 +142,7 @@ def run_nextflow_star(
         nextflow_script = tools_config.settings.nextflow_scripts_dir / "star.nf"
         if not nextflow_script.exists():
             return {
-                "success": False, 
+                "success": False,
                 "error": "未找到 star.nf",
                 "searched": [str(tools_config.settings.nextflow_scripts_dir / "star.nf")]
             }
@@ -205,20 +205,176 @@ def run_nextflow_star(
         return {"success": False, "error": f"执行STAR比对失败: {str(exception)}"}
 
 
+def _parse_star_log_final(log_file_path: Path) -> Dict[str, Any]:
+    """解析单个STAR Log.final.out文件，提取所有参数
+
+    Args:
+        log_file_path: Log.final.out文件路径
+
+    Returns:
+        Dict: 解析后的所有STAR参数
+    """
+    try:
+        with open(log_file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        metrics = {}
+
+        # 按行解析，用"|"分割每行
+        for line in content.split('\n'):
+            line = line.strip()
+            if '|' in line:
+                # 按"|"分割为两部分
+                parts = line.split('|', 1)  # 只分割第一个"|"
+                if len(parts) == 2:
+                    key = parts[0].strip()
+                    value = parts[1].strip()
+
+                    # 跳过空值
+                    if not key or not value:
+                        continue
+
+                    # 解析数值
+                    parsed_value = _parse_value(value)
+                    metrics[key] = parsed_value
+
+        return metrics
+
+    except Exception as e:
+        logger.error(f"解析STAR日志文件失败 {log_file_path}: {e}")
+        return {}
+
+
+def _parse_value(value_str: str) -> Any:
+    """解析STAR日志中的值，自动识别类型
+
+    Args:
+        value_str: 原始字符串值
+
+    Returns:
+        解析后的值（int、float或str）
+    """
+    value_str = value_str.strip()
+
+    # 处理百分比
+    if value_str.endswith('%'):
+        try:
+            return float(value_str[:-1])
+        except:
+            return value_str
+
+    # 处理数字（可能包含逗号）
+    clean_value = value_str.replace(',', '')
+
+    # 尝试解析为整数
+    try:
+        return int(clean_value)
+    except:
+        pass
+
+    # 尝试解析为浮点数
+    try:
+        return float(clean_value)
+    except:
+        pass
+
+    # 返回原始字符串
+    return value_str
+
+
+def _extract_key_metrics(all_metrics: Dict[str, Any]) -> Dict[str, Any]:
+    """从所有解析的参数中提取关键指标
+
+    Args:
+        all_metrics: 解析后的所有STAR参数
+
+    Returns:
+        Dict: 标准化的关键指标
+    """
+    # 定义关键指标的映射关系
+    key_mappings = {
+        # 输入reads
+        "Number of input reads": "input_reads",
+
+        # 唯一比对
+        "Uniquely mapped reads number": "uniquely_mapped",
+        "Uniquely mapped reads %": "uniquely_mapped_percentage",
+
+        # 错配率
+        "Mismatch rate per base, %": "mismatch_rate",
+
+        # 多重比对
+        "Number of reads mapped to multiple loci": "multimapped",
+        "% of reads mapped to multiple loci": "multimapped_percentage",
+
+        # 未比对reads
+        "Number of reads unmapped: too many mismatches": "unmapped_mismatches",
+        "% of reads unmapped: too many mismatches": "unmapped_mismatches_percentage",
+        "Number of reads unmapped: too short": "unmapped_too_short",
+        "% of reads unmapped: too short": "unmapped_too_short_percentage",
+        "Number of reads unmapped: other": "unmapped_other",
+        "% of reads unmapped: other": "unmapped_other_percentage",
+
+        # 剪接相关
+        "Number of splices: Total": "total_splices",
+        "Number of splices: Annotated (sjdb)": "annotated_splices",
+        "Number of splices: GT/AG": "gt_ag_splices",
+        "Number of splices: GC/AG": "gc_ag_splices",
+        "Number of splices: AT/AC": "at_ac_splices",
+        "Number of splices: Non-canonical": "non_canonical_splices",
+
+        # 多重map reads
+        "Number of reads mapped to too many loci": "reads_too_many_loci",
+        "% of reads mapped to too many loci": "reads_too_many_loci_percentage",
+
+        # 删除/插入
+        "Deletion rate per base": "deletion_rate",
+        "Deletion average length": "deletion_avg_length",
+        "Insertion rate per base": "insertion_rate",
+        "Insertion average length": "insertion_avg_length"
+    }
+
+    # 提取关键指标
+    key_metrics = {}
+    for original_key, standard_key in key_mappings.items():
+        if original_key in all_metrics:
+            key_metrics[standard_key] = all_metrics[original_key]
+
+    # 计算总的未比对数量和百分比
+    if "input_reads" in key_metrics:
+        total_unmapped = 0
+        unmapped_keys = ["unmapped_mismatches", "unmapped_too_short", "unmapped_other"]
+
+        for key in unmapped_keys:
+            if key in key_metrics:
+                total_unmapped += key_metrics[key]
+
+        key_metrics["unmapped"] = total_unmapped
+
+        if key_metrics["input_reads"] > 0:
+            key_metrics["unmapped_percentage"] = round(
+                (total_unmapped / key_metrics["input_reads"]) * 100, 2
+            )
+
+    return key_metrics
+
+
 @tool
 def parse_star_metrics(results_directory: str) -> Dict[str, Any]:
-    """解析STAR比对结果文件，返回原始日志文件内容
-    
+    """解析STAR比对结果文件，深入提取所有统计指标
+
     Args:
         results_directory: STAR结果目录路径
-    
+
     Returns:
-        Dict: 包含原始日志文件内容的数据
+        Dict: 包含完整统计指标的数据
         {
             "success": bool,
             "total_samples": int,
-            "results_directory": str,
-            "sample_logs": List[Dict]  # 每个样本的原始日志内容
+            "overall_statistics": Dict,  # 汇总统计
+            "sample_metrics": List[Dict],  # 每个样本的详细指标
+            "raw_metrics": Dict,  # 原始解析的所有参数
+            "results_directory": str
         }
     """
     try:
@@ -228,84 +384,85 @@ def parse_star_metrics(results_directory: str) -> Dict[str, Any]:
                 "success": False,
                 "error": f"STAR结果目录不存在: {results_directory}"
             }
-        
+
         # 查找STAR输出目录
         star_dir = results_path / "star"
         if not star_dir.exists():
-            try:
-                logger.warning(f"STAR输出目录不存在: {star_dir}")
-            except Exception:
-                pass
             return {
                 "success": False,
                 "error": f"STAR输出目录不存在: {star_dir}"
             }
-        
-        sample_logs = []
-        
-        # 遍历样本目录，收集Log.final.out文件内容
-        for sample_dir in star_dir.iterdir():
-            if not sample_dir.is_dir():
-                continue
-                
-            sample_id = sample_dir.name
-            log_final_file = sample_dir / f"{sample_id}.Log.final.out"
-            
-            if not log_final_file.exists():
-                sample_logs.append({
-                    "sample_id": sample_id,
-                    "log_file": str(log_final_file),
-                    "error": "Log.final.out文件不存在"
-                })
-                continue
-            
-            try:
-                # 读取Log.final.out原始内容
-                with open(log_final_file, 'r', encoding='utf-8') as f:
-                    log_content = f.read()
-                
-                sample_logs.append({
-                    "sample_id": sample_id,
-                    "log_file": str(log_final_file),
-                    "content": log_content
-                })
-                
-            except Exception as exception:
-                sample_logs.append({
-                    "sample_id": sample_id,
-                    "log_file": str(log_final_file),
-                    "error": f"读取失败: {str(exception)}"
-                })
-        
-        if not sample_logs:
-            return {
-                "success": False,
-                "error": "未找到任何样本日志文件"
-            }
-        
-        # 计算成功读取的样本数
-        successful_samples = len([log for log in sample_logs if "error" not in log])
-        
-        result = {
-            "success": True,
-            "total_samples": successful_samples,
-            "results_directory": results_directory,
-            "sample_logs": sample_logs
+
+        sample_metrics = []
+        all_raw_metrics = {}
+        overall_stats = {
+            "total_input_reads": 0,
+            "total_uniquely_mapped": 0,
+            "total_multimapped": 0,
+            "total_unmapped": 0,
+            "overall_uniquely_mapped_percentage": 0.0,
+            "overall_multimapped_percentage": 0.0,
+            "overall_mapped_percentage": 0.0
         }
-        
-        try:
-            logger.info(f"STAR日志收集完成: {successful_samples}个样本，目录={results_directory}")
-        except Exception:
-            pass
-        
-        return result
-        
-    except Exception as exception:
-        try:
-            logger.error(f"收集STAR日志失败：{exception}")
-        except Exception:
-            pass
+
+        # 扫描每个样本的STAR输出
+        sample_dirs = [d for d in star_dir.iterdir() if d.is_dir()]
+
+        for sample_dir in sample_dirs:
+            sample_id = sample_dir.name
+            log_final_path = sample_dir / "Log.final.out"
+
+            if not log_final_path.exists():
+                logger.warning(f"未找到STAR日志文件: {log_final_path}")
+                continue
+
+            # 解析完整的日志文件
+            raw_metrics = _parse_star_log_final(log_final_path)
+            if not raw_metrics:
+                continue
+
+            # 提取关键指标
+            key_metrics = _extract_key_metrics(raw_metrics)
+            key_metrics["sample_id"] = sample_id
+
+            sample_metrics.append(key_metrics)
+            all_raw_metrics[sample_id] = raw_metrics
+
+            # 累计到总体统计
+            if "input_reads" in key_metrics:
+                overall_stats["total_input_reads"] += key_metrics["input_reads"]
+            if "uniquely_mapped" in key_metrics:
+                overall_stats["total_uniquely_mapped"] += key_metrics["uniquely_mapped"]
+            if "multimapped" in key_metrics:
+                overall_stats["total_multimapped"] += key_metrics["multimapped"]
+            if "unmapped" in key_metrics:
+                overall_stats["total_unmapped"] += key_metrics["unmapped"]
+
+        # 计算总体百分比
+        if overall_stats["total_input_reads"] > 0:
+            total_reads = overall_stats["total_input_reads"]
+            overall_stats["overall_uniquely_mapped_percentage"] = round(
+                (overall_stats["total_uniquely_mapped"] / total_reads) * 100, 2
+            )
+            overall_stats["overall_multimapped_percentage"] = round(
+                (overall_stats["total_multimapped"] / total_reads) * 100, 2
+            )
+            overall_stats["overall_mapped_percentage"] = round(
+                ((overall_stats["total_uniquely_mapped"] + overall_stats["total_multimapped"]) / total_reads) * 100, 2
+            )
+
+        return {
+            "success": True,
+            "total_samples": len(sample_metrics),
+            "overall_statistics": overall_stats,
+            "sample_metrics": sample_metrics,
+            "raw_metrics": all_raw_metrics,  # 新增：包含所有原始解析参数
+            "results_directory": results_directory
+        }
+
+    except Exception as e:
+        logger.error(f"解析STAR指标失败: {e}")
         return {
             "success": False,
-            "error": f"收集STAR日志失败: {str(exception)}"
+            "error": f"解析STAR指标失败: {str(e)}"
         }

@@ -98,15 +98,41 @@ class AgentState(BaseModel):
 # ==================== 节点响应模型 - 用于特定节点的结构化输出 ====================
 
 # LLM 智能分析结构化输出模型
+class SampleHealthAssessment(BaseModel):
+    """单个样本健康度评估结果"""
+    sample_id: str
+    health_status: str = Field(description="健康状态: PASS/WARN/FAIL/UNKNOWN")
+    quality_score: float = Field(description="整体质量评分 0-100")
+    issues: List[str] = Field(default_factory=list, description="发现的具体问题")
+    strengths: List[str] = Field(default_factory=list, description="数据质量优点")
+    recommendations: List[str] = Field(default_factory=list, description="针对该样本的建议")
+
 class LLMAnalysisModel(BaseModel):
-    """LLM 智能分析的结构化输出模型"""
-    global_summary: str  # 3-5句面向非技术读者的总结
-    key_findings: List[str]  # 每条包含具体数据的关键发现
-    per_sample_flags: List[Dict[str, Any]]  # sample_id, issues, severity
-    recommendations: List[Dict[str, str]]  # type, title, detail
-    risks: List[str]  # 潜在风险与注意事项
-    report_md: Optional[str] = None  # 可选的额外Markdown片段
-    debug_notes: Optional[List[str]] = None  # 调试模式时的补充信息
+    """LLM 驱动的智能分析结构化输出模型"""
+
+    # 核心分析结果
+    overall_assessment: str = Field(description="整体实验评估：成功/部分成功/失败，包含关键指标")
+    global_summary: str = Field(description="3-5句面向非技术读者的总结")
+
+    # 样本级别的智能分析
+    sample_assessments: List[SampleHealthAssessment] = Field(description="每个样本的详细健康度评估")
+
+    # 数据质量洞察
+    key_findings: List[str] = Field(description="基于数据模式的关键发现，包含具体数值")
+    data_quality_insights: List[str] = Field(description="数据质量深度洞察和异常模式识别")
+
+    # 实用建议
+    immediate_actions: List[str] = Field(description="需要立即采取的行动")
+    optimization_suggestions: List[str] = Field(description="流水线优化建议")
+    next_steps: List[str] = Field(description="后续分析方向建议")
+
+    # 风险和注意事项
+    risks: List[str] = Field(description="潜在风险与注意事项")
+    limitations: List[str] = Field(description="当前分析的局限性")
+
+    # 可选附加信息
+    technical_notes: Optional[List[str]] = Field(default=None, description="技术细节补充")
+    debug_info: Optional[Dict[str, Any]] = Field(default=None, description="调试信息")
 
 class NormalResponse(BaseModel):
     """Normal节点的精简响应格式 - 兼容create_react_agent工具响应"""
