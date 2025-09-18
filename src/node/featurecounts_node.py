@@ -138,13 +138,7 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
                 "🚀 执行详情: 已完成基因定量，当前参数配置已是最优"
             )
         
-        # 同时聚合到跨节点 results 字段，便于统一读取
-        try:
-            aggregated_results = dict(getattr(state, 'results', {}) or {})
-            aggregated_results["featurecounts"] = result.get("featurecounts_results", {})
-            result["results"] = aggregated_results
-        except Exception:
-            pass
+
             
         # 追加优化历史记录
         append_featurecounts_optimization_history(

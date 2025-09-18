@@ -157,13 +157,7 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
             "star_results": star_results,
         }
 
-        # 同时聚合到跨节点 results 字段，便于统一读取
-        try:
-            aggregated_results = dict(getattr(state, 'results', {}) or {})
-            aggregated_results["star"] = result.get("star_results", {})
-            result["results"] = aggregated_results
-        except Exception:
-            pass
+
 
         return result
 

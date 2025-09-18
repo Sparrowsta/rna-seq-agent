@@ -137,13 +137,7 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
             "fastp_results": fastp_results,
         }
 
-        # 同时聚合到跨节点 results 字段，便于统一读取
-        try:
-            aggregated_results = dict(getattr(state, 'results', {}) or {})
-            aggregated_results["fastp"] = result.get("fastp_results", {})
-            result["results"] = aggregated_results
-        except Exception:
-            pass
+
 
         return result
 

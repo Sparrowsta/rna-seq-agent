@@ -126,13 +126,7 @@ async def hisat2_node(state: AgentState) -> Dict[str, Any]:
             "hisat2_results": hisat2_results,
         }
 
-        # 同时聚合到跨节点 results 字段，便于统一读取
-        try:
-            aggregated_results = dict(getattr(state, 'results', {}) or {})
-            aggregated_results["hisat2"] = result.get("hisat2_results", {})
-            result["results"] = aggregated_results
-        except Exception:
-            pass
+
 
         return result
 
