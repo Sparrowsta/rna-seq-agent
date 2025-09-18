@@ -14,6 +14,7 @@ from ..tools import (
 )
 from ..logging_bootstrap import get_logger, log_llm_preview
 import json
+from datetime import datetime
 
 
 def create_featurecounts_agent():
@@ -35,6 +36,27 @@ def create_featurecounts_agent():
         response_format=FeaturecountsResponse
     )
     return agent
+
+def append_featurecounts_optimization_history(state: AgentState, optimization_params: Dict[str, Any], 
+                                           suggestions: str, results: Dict[str, Any]) -> None:
+    """追加FeatureCounts优化历史记录，保持最近5次记录"""
+    history_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "execution_id": f"featurecounts_run_{len(state.featurecounts_optimization_history) + 1}",
+        "optimization_params": optimization_params or {},
+        "optimization_suggestions": suggestions or "",
+        "execution_results": results or {}
+    }
+    
+    # 追加新记录
+    state.featurecounts_optimization_history.append(history_entry)
+    
+    # 保持最近5次记录
+    if len(state.featurecounts_optimization_history) > 5:
+        state.featurecounts_optimization_history = state.featurecounts_optimization_history[-5:]
+    
+    logger = get_logger("rna.nodes.featurecounts")
+    logger.info(f"[FEATURECOUNTS] 已追加优化历史记录，当前保存{len(state.featurecounts_optimization_history)}次历史")
 
 
 async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
@@ -124,6 +146,14 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
         except Exception:
             pass
             
+        # 追加优化历史记录
+        append_featurecounts_optimization_history(
+            state=state,
+            optimization_params=optimization_params_changes,
+            suggestions=optimization_reasoning,
+            results=fc_results
+        )
+        
         logger.info(f"[FEATURECOUNTS] FeatureCounts执行完成，生成{optimization_count}个优化参数")
         return result
             
@@ -169,8 +199,8 @@ async def _call_featurecounts_optimization_agent(state: AgentState) -> Featureco
         "hisat2_results": getattr(state, 'hisat2_results', {}),
         "genome_version": state.nextflow_config.get("genome_version", ""),
         "optimization_history": {
-            "featurecounts": state.featurecounts_optimization_params,
-            "star": state.star_optimization_params,
+            "featurecounts": state.featurecounts_optimization_history,  # 完整历史列表
+            "star": state.star_optimization_params,                     # 暂时保持兼容
             "fastp": state.fastp_optimization_params,
         },
     }

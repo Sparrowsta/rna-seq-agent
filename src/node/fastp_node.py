@@ -13,6 +13,7 @@ from ..tools import (
 )
 from ..logging_bootstrap import get_logger, log_llm_preview
 import json
+from datetime import datetime
 
 logger = get_logger("rna.nodes.fastp")
 
@@ -38,6 +39,26 @@ def create_fastp_agent():
         response_format=FastpResponse
     )
     return agent
+
+def append_fastp_optimization_history(state: AgentState, optimization_params: Dict[str, Any], 
+                                    suggestions: str, results: Dict[str, Any]) -> None:
+    """追加FastP优化历史记录，保持最近5次记录"""
+    history_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "execution_id": f"fastp_run_{len(state.fastp_optimization_history) + 1}",
+        "optimization_params": optimization_params or {},
+        "optimization_suggestions": suggestions or "",
+        "execution_results": results or {}
+    }
+    
+    # 追加新记录
+    state.fastp_optimization_history.append(history_entry)
+    
+    # 保持最近5次记录
+    if len(state.fastp_optimization_history) > 5:
+        state.fastp_optimization_history = state.fastp_optimization_history[-5:]
+    
+    logger.info(f"[FASTP] 已追加优化历史记录，当前保存{len(state.fastp_optimization_history)}次历史")
 
 
 async def fastp_node(state: AgentState) -> Dict[str, Any]:
@@ -94,6 +115,14 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
             )
 
         logger.info(f"[FASTP] FastP执行完成，生成{optimization_count}个优化参数")
+
+        # 追加优化历史记录
+        append_fastp_optimization_history(
+            state=state,
+            optimization_params=optimization_params_changes,
+            suggestions=optimization_reasoning,
+            results=fastp_results
+        )
 
         # 构建成功结果
         result = {
@@ -157,8 +186,8 @@ async def _call_fastp_optimization_agent(state: AgentState) -> FastpResponse:
         "nextflow_config": state.nextflow_config,
         "current_fastp_params": state.fastp_params,
         "optimization_history": {
-            "fastp": state.fastp_optimization_params,
-            "star": state.star_optimization_params,
+            "fastp": state.fastp_optimization_history,  # 完整历史列表
+            "star": state.star_optimization_params,     # 暂时保持兼容
             "featurecounts": state.featurecounts_optimization_params,
         },
     }

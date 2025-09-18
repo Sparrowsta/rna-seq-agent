@@ -77,6 +77,11 @@ class AgentState(BaseModel):
     hisat2_optimization_suggestions: str = Field(default="", description="HISAT2优化建议")
     featurecounts_optimization_suggestions: str = Field(default="", description="FeatureCounts优化建议")
     
+    # === 工具优化历史字段（支持多次历史保存） ===
+    fastp_optimization_history: List[Dict[str, Any]] = Field(default_factory=list, description="FastP优化参数历史列表，保存最近5次优化记录")
+    star_optimization_history: List[Dict[str, Any]] = Field(default_factory=list, description="STAR优化参数历史列表，保存最近5次优化记录")
+    hisat2_optimization_history: List[Dict[str, Any]] = Field(default_factory=list, description="HISAT2优化参数历史列表，保存最近5次优化记录")
+    featurecounts_optimization_history: List[Dict[str, Any]] = Field(default_factory=list, description="FeatureCounts优化参数历史列表，保存最近5次优化记录")
     # === 工作流集成字段 ===
     workflow_status: str = Field(default="", description="整体流程状态")
     workflow_checkpoints: Dict[str, Any] = Field(default_factory=dict, description="检查点数据")

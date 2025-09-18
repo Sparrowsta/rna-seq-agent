@@ -16,6 +16,7 @@ from ..tools import (
 )
 from ..logging_bootstrap import get_logger, log_llm_preview
 import json
+from datetime import datetime
 
 logger = get_logger("rna.nodes.star")
 
@@ -41,6 +42,27 @@ def create_star_agent():
         response_format=StarResponse,
     )
     return agent
+
+
+def append_star_optimization_history(state: AgentState, optimization_params: Dict[str, Any],
+                                   suggestions: str, results: Dict[str, Any]) -> None:
+    """追加STAR优化历史记录，保持最近5次记录"""
+    history_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "execution_id": f"star_run_{len(state.star_optimization_history) + 1}",
+        "optimization_params": optimization_params or {},
+        "optimization_suggestions": suggestions or "",
+        "execution_results": results or {}
+    }
+
+    # 追加新记录
+    state.star_optimization_history.append(history_entry)
+
+    # 保持最近5次记录
+    if len(state.star_optimization_history) > 5:
+        state.star_optimization_history = state.star_optimization_history[-5:]
+
+    logger.info(f"[STAR] 已追加优化历史记录，当前保存{len(state.star_optimization_history)}次历史")
 
 
 async def star_node(state: AgentState) -> Dict[str, Any]:
@@ -113,6 +135,14 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
             
         logger.info(f"[STAR] STAR执行完成，生成{optimization_count}个优化参数")
 
+        # 追加优化历史记录
+        append_star_optimization_history(
+            state=state,
+            optimization_params=optimization_params_changes,
+            suggestions=optimization_reasoning,
+            results=star_results
+        )
+
         # 构建成功结果
         result = {
             "success": True,
@@ -174,7 +204,7 @@ async def _call_star_optimization_agent(state: AgentState) -> StarResponse:
         "current_star_params": state.star_params,
         "fastp_results": state.fastp_results,
         "optimization_history": {
-            "star": state.star_optimization_params,
+            "star": state.star_optimization_history,  # 完整历史列表
             "fastp": state.fastp_optimization_params,
         },
     }
