@@ -54,7 +54,8 @@ from .utils_tools import (
     get_project_overview,
     list_analysis_history,
     write_params_file,
-    enhance_tool_result_with_debug
+    enhance_tool_result_with_debug,
+    extract_genome_paths
 )
 
 # 为了兼容性，导出所有工具
@@ -93,7 +94,8 @@ __all__ = [
     "get_project_overview",
     "list_analysis_history",
     "write_params_file",
-    "enhance_tool_result_with_debug"
+    "enhance_tool_result_with_debug",
+    "extract_genome_paths"
 ]
 
 # 工具分类映射，便于节点按需导入
@@ -125,20 +127,17 @@ TOOL_CATEGORIES = {
         "download_genome_assets",
         "build_star_index",
         "run_nextflow_star", 
-        "parse_star_metrics",
-        "scan_genome_files"
+        "parse_star_metrics"
     ],
     "hisat2": [
         "download_genome_assets",
         "build_hisat2_index",
         "run_nextflow_hisat2",
-        "parse_hisat2_metrics",
-        "scan_genome_files"
+        "parse_hisat2_metrics"
     ],
     "featurecounts": [
         "run_nextflow_featurecounts",
-        "parse_featurecounts_metrics",
-        "scan_genome_files"
+        "parse_featurecounts_metrics"
     ],
     "analysis": [
         "parse_fastp_results",

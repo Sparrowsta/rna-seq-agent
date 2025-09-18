@@ -10,7 +10,8 @@ from ..prompts import FEATURECOUNTS_OPTIMIZATION_PROMPT
 from ..tools import (
     run_nextflow_featurecounts,
     parse_featurecounts_metrics,
-    scan_genome_files
+    scan_genome_files,
+    extract_genome_paths
 )
 from ..logging_bootstrap import get_logger, log_llm_preview
 import json
@@ -173,18 +174,12 @@ async def _call_featurecounts_optimization_agent(state: AgentState) -> Featureco
     logger = get_logger("rna.nodes.featurecounts")
     
     # 获取基因组配置信息（从detect节点的query_results中获取）
+    # 动态提取基因组路径信息
+    genome_paths = extract_genome_paths(state)
     genome_version = state.nextflow_config.get("genome_version")
-    genome_info = {}
-    if genome_version and state.query_results:
-        try:
-            # 从detect节点已经收集的结果中获取基因组配置
-            genome_scan_result = state.query_results.get("verify_genome_setup", {})
-            if isinstance(genome_scan_result, dict):
-                genomes_dict = genome_scan_result.get("genomes", {})
-                if isinstance(genomes_dict, dict) and genome_version in genomes_dict:
-                    genome_info = genomes_dict[genome_version]
-        except Exception as e:
-            logger.warning(f"从query_results获取基因组配置失败: {e}")
+    
+    # 提取GTF路径用于工具调用
+    gtf_path = genome_paths.get("gtf_path", "")
     
     user_context = {
         "execution_mode": state.execution_mode,
@@ -192,7 +187,7 @@ async def _call_featurecounts_optimization_agent(state: AgentState) -> Featureco
             "genome_version": genome_version,
             "paired_end": state.nextflow_config.get("paired_end")
         },
-        "genome_info": genome_info,  # 添加genome_info传递
+        "gtf_path": gtf_path,  # 简化传递，只提供GTF路径
         "current_featurecounts_params": state.featurecounts_params,
         "star_results": state.star_results,
         "hisat2_results": getattr(state, 'hisat2_results', {}),

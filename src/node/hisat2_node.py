@@ -12,7 +12,8 @@ from ..tools import (
     scan_genome_files,
     build_hisat2_index,
     run_nextflow_hisat2,
-    parse_hisat2_metrics
+    parse_hisat2_metrics,
+    extract_genome_paths
 )
 from ..logging_bootstrap import get_logger, log_llm_preview
 import json
@@ -166,18 +167,9 @@ async def _call_hisat2_optimization_agent(state: AgentState) -> Hisat2Response:
     """调用HISAT2优化Agent进行智能参数优化"""
 
     # 获取基因组配置信息（从detect节点的query_results中获取）
+    # 动态提取基因组路径信息
+    genome_paths = extract_genome_paths(state)
     genome_version = state.nextflow_config.get("genome_version")
-    genome_info = {}
-    if genome_version and state.query_results:
-        try:
-            # 从detect节点已经收集的结果中获取基因组配置
-            genome_scan_result = state.query_results.get("verify_genome_setup", {})
-            if isinstance(genome_scan_result, dict):
-                genomes_dict = genome_scan_result.get("genomes", {})
-                if isinstance(genomes_dict, dict) and genome_version in genomes_dict:
-                    genome_info = genomes_dict[genome_version]
-        except Exception as e:
-            logger.warning(f"从query_results获取基因组配置失败: {e}")
 
     # 组织数据上下文（仅数据，不重复流程与指南，遵循系统提示）
     sample_info = {
@@ -197,7 +189,7 @@ async def _call_hisat2_optimization_agent(state: AgentState) -> Hisat2Response:
             "genome_version": genome_version,
             "paired_end": state.nextflow_config.get("paired_end")
         },
-        "genome_info": genome_info,
+        "genome_paths": genome_paths,
         "sample_info": sample_info,
         "current_hisat2_params": state.hisat2_params,
         "fastp_results": state.fastp_results,  # 完整传递FastP结果

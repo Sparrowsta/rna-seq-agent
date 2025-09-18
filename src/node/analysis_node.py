@@ -20,6 +20,7 @@ from ..prompts import ANALYSIS_LLM_SYSTEM_PROMPT
 from ..tools import (
     parse_fastp_results, 
     parse_star_metrics, 
+    parse_hisat2_metrics,
     parse_featurecounts_metrics,
     write_analysis_markdown
 )
@@ -63,7 +64,8 @@ async def analysis_node(state: AgentState) -> Dict[str, Any]:
             return _create_error_response(f"指标解析失败: {parsing_result['error']}")
         
         fastp_data = parsing_result["fastp"]
-        star_data = parsing_result["star"] 
+        star_data = parsing_result["star"]
+        hisat2_data = parsing_result["hisat2"]
         featurecounts_data = parsing_result["featurecounts"]
         parsing_status = parsing_result.get("parsing_status", {})
         parsing_errors = parsing_result.get("parsing_errors", {})
@@ -72,7 +74,7 @@ async def analysis_node(state: AgentState) -> Dict[str, Any]:
         logger.debug("样本ID归一化和指标对齐...")
         alignment_result = _align_sample_metrics(
             state.nextflow_config.get("sample_groups", []),
-            fastp_data, star_data, featurecounts_data
+            fastp_data, star_data, hisat2_data, featurecounts_data
         )
         
         # 4. 指标合并与健康度评估
@@ -82,7 +84,7 @@ async def analysis_node(state: AgentState) -> Dict[str, Any]:
         # 5. 构建基础报告结构
         base_report = _build_base_report(
             state, results_dir, timestamp, 
-            fastp_data, star_data, featurecounts_data,
+            fastp_data, star_data, hisat2_data, featurecounts_data,
             alignment_result, assessment_result
         )
         
@@ -143,12 +145,14 @@ def _validate_input_results(state: AgentState) -> Dict[str, Any]:
     """前置校验：检查所有步骤的结果状态"""
     fastp_results = state.fastp_results or {}
     star_results = state.star_results or {}
+    hisat2_results = state.hisat2_results or {}
     featurecounts_results = state.featurecounts_results or {}
     
     # 检查至少有一个步骤成功
     any_success = (
         fastp_results.get("success") or
-        star_results.get("success") or  
+        star_results.get("success") or
+        hisat2_results.get("success") or
         featurecounts_results.get("success")
     )
     
@@ -158,9 +162,9 @@ def _validate_input_results(state: AgentState) -> Dict[str, Any]:
             "error": "所有流水线步骤均未成功执行，无法进行综合分析"
         }
     
-    # 确定结果目录优先级：featurecounts > star > fastp
+    # 确定结果目录优先级：featurecounts > star/hisat2 > fastp
     results_dir = None
-    for results in [featurecounts_results, star_results, fastp_results]:
+    for results in [featurecounts_results, star_results, hisat2_results, fastp_results]:
         if results.get("success") and results.get("results_dir"):
             results_dir = results["results_dir"]
             break
@@ -185,7 +189,7 @@ def _validate_input_results(state: AgentState) -> Dict[str, Any]:
 
 def _parse_pipeline_metrics(results_dir: str) -> Dict[str, Any]:
     """解析三个流水线步骤的指标，增强错误可观测性"""
-    parsing_status = {"fastp": False, "star": False, "featurecounts": False}
+    parsing_status = {"fastp": False, "star": False, "hisat2": False, "featurecounts": False}
     parsing_errors = {}
     
     try:
@@ -210,6 +214,16 @@ def _parse_pipeline_metrics(results_dir: str) -> Dict[str, Any]:
             star_result = {"success": False, "error": f"STAR解析异常: {str(e)}"}
             parsing_errors["star"] = str(e)
             
+        logger.debug("解析HISAT2结果...")
+        try:
+            hisat2_result = parse_hisat2_metrics.invoke({"results_directory": results_dir})
+            parsing_status["hisat2"] = hisat2_result.get("success", False)
+            if not parsing_status["hisat2"]:
+                parsing_errors["hisat2"] = hisat2_result.get("error", "未知HISAT2解析错误")
+        except Exception as e:
+            hisat2_result = {"success": False, "error": f"HISAT2解析异常: {str(e)}"}
+            parsing_errors["hisat2"] = str(e)
+            
         logger.debug("解析FeatureCounts结果...")
         try:
             fc_result = parse_featurecounts_metrics.invoke({"results_directory": results_dir})
@@ -231,7 +245,8 @@ def _parse_pipeline_metrics(results_dir: str) -> Dict[str, Any]:
         return {
             "success": True,
             "fastp": fastp_result,
-            "star": star_result, 
+            "star": star_result,
+            "hisat2": hisat2_result,
             "featurecounts": fc_result,
             "parsing_status": parsing_status,
             "parsing_errors": parsing_errors
@@ -246,7 +261,7 @@ def _parse_pipeline_metrics(results_dir: str) -> Dict[str, Any]:
         }
 
 
-def _align_sample_metrics(sample_groups: List[Dict], fastp_data: Dict, star_data: Dict, fc_data: Dict) -> Dict[str, Any]:
+def _align_sample_metrics(sample_groups: List[Dict], fastp_data: Dict, star_data: Dict, hisat2_data: Dict, fc_data: Dict) -> Dict[str, Any]:
     """样本指标对齐（简化版）
 
     依赖各步骤返回的 sample_id 已一致（FeatureCounts 由参数文件提供权威样本顺序），
@@ -263,6 +278,7 @@ def _align_sample_metrics(sample_groups: List[Dict], fastp_data: Dict, star_data
     # 各步骤样本指标映射
     fastp_samples = {s.get("sample_id"): s for s in fastp_data.get("sample_metrics", []) if s.get("sample_id")}
     star_samples = {s.get("sample_id"): s for s in star_data.get("sample_metrics", []) if s.get("sample_id")}
+    hisat2_samples = {s.get("sample_id"): s for s in hisat2_data.get("sample_metrics", []) if s.get("sample_id")}
     fc_samples = {s.get("sample_id"): s for s in fc_data.get("sample_metrics", []) if s.get("sample_id")}
 
     # 合并
@@ -272,6 +288,7 @@ def _align_sample_metrics(sample_groups: List[Dict], fastp_data: Dict, star_data
             "sample_id": sid,
             "fastp": fastp_samples.get(sid, {"error": "未找到FastP数据"}),
             "star": star_samples.get(sid, {"error": "未找到STAR数据"}),
+            "hisat2": hisat2_samples.get(sid, {"error": "未找到HISAT2数据"}),
             "featurecounts": fc_samples.get(sid, {"error": "未找到FeatureCounts数据"}),
             "notes": []
         }
@@ -280,6 +297,8 @@ def _align_sample_metrics(sample_groups: List[Dict], fastp_data: Dict, star_data
             sample_data["notes"].append("FastP数据缺失")
         if "error" in sample_data["star"]:
             sample_data["notes"].append("STAR数据缺失")
+        if "error" in sample_data["hisat2"]:
+            sample_data["notes"].append("HISAT2数据缺失")
         if "error" in sample_data["featurecounts"]:
             sample_data["notes"].append("FeatureCounts数据缺失")
 
@@ -290,6 +309,7 @@ def _align_sample_metrics(sample_groups: List[Dict], fastp_data: Dict, star_data
         "expected_count": len(expected_sample_ids),
         "fastp_available": len(fastp_samples),
         "star_available": len(star_samples),
+        "hisat2_available": len(hisat2_samples),
         "featurecounts_available": len(fc_samples)
     }
 
@@ -332,7 +352,8 @@ def _assess_sample_health(alignment_data: Dict[str, Any]) -> Dict[str, Any]:
     for sample in alignment_data["samples"]:
         sample_id = sample["sample_id"]
         fastp_metrics = sample.get("fastp", {})
-        star_metrics = sample.get("star", {})  
+        star_metrics = sample.get("star", {})
+        hisat2_metrics = sample.get("hisat2", {})
         fc_metrics = sample.get("featurecounts", {})
         
         # 评估各步骤
@@ -378,6 +399,29 @@ def _assess_sample_health(alignment_data: Dict[str, Any]) -> Dict[str, Any]:
             )
             evaluations.append(star_status)
         
+        # HISAT2评估 (使用与STAR相同的阈值)
+        if "error" not in hisat2_metrics:
+            mapping_status = _evaluate_metric(
+                hisat2_metrics.get("mapping_rate"),
+                thresholds["star"]["mapping_good"],
+                thresholds["star"]["mapping_warn"]
+            )
+            unique_status = _evaluate_metric(
+                hisat2_metrics.get("unique_mapping_rate"),
+                thresholds["star"]["unique_good"], 
+                thresholds["star"]["unique_warn"]
+            )
+            mismatch_status = _evaluate_metric(
+                hisat2_metrics.get("mismatch_rate"),
+                thresholds["star"]["mismatch_good"],
+                thresholds["star"]["mismatch_warn"],
+                reverse=True
+            )
+            hisat2_status = "FAIL" if "FAIL" in [mapping_status, unique_status, mismatch_status] else (
+                "WARN" if "WARN" in [mapping_status, unique_status, mismatch_status] else "PASS"
+            )
+            evaluations.append(hisat2_status)
+        
         # FeatureCounts评估
         if "error" not in fc_metrics:
             assignment_status = _evaluate_metric(
@@ -405,6 +449,7 @@ def _assess_sample_health(alignment_data: Dict[str, Any]) -> Dict[str, Any]:
             "health": overall_health,
             "fastp": fastp_metrics,
             "star": star_metrics,
+            "hisat2": hisat2_metrics,
             "featurecounts": fc_metrics,
             "notes": sample.get("notes", [])
         }
@@ -435,7 +480,7 @@ def _assess_sample_health(alignment_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _build_base_report(state: AgentState, results_dir: str, timestamp: str, 
-                      fastp_data: Dict, star_data: Dict, fc_data: Dict,
+                      fastp_data: Dict, star_data: Dict, hisat2_data: Dict, fc_data: Dict,
                       alignment_result: Dict, assessment_result: Dict) -> Dict[str, Any]:
     """构建基础报告结构"""
     
@@ -443,7 +488,7 @@ def _build_base_report(state: AgentState, results_dir: str, timestamp: str,
     
     return {
         "pipeline": {
-            "steps": ["fastp", "star", "featurecounts"],
+            "steps": ["fastp", "star", "hisat2", "featurecounts"],
             "species": nextflow_config.get("species", "unknown"),
             "genome_version": nextflow_config.get("genome_version", "unknown")
         },
@@ -460,6 +505,10 @@ def _build_base_report(state: AgentState, results_dir: str, timestamp: str,
             "star": {
                 "overall": star_data.get("overall_statistics", {}),
                 "samples": star_data.get("sample_metrics", [])
+            },
+            "hisat2": {
+                "overall": hisat2_data.get("overall_statistics", {}),
+                "samples": hisat2_data.get("sample_metrics", [])
             },
             "featurecounts": {
                 "overall": fc_data.get("overall_statistics", {}),

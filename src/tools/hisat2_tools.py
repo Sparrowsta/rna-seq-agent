@@ -25,40 +25,34 @@ logger = get_logger("rna.tools.hisat2")
 def run_nextflow_hisat2(
     hisat2_params: Dict[str, Any],
     fastp_results: Dict[str, Any],
-    genome_id: str
+    genome_paths: Dict[str, str]
 ) -> Dict[str, Any]:
-    """执行 HISAT2 比对（精简版）
+    """执行 HISAT2 比对
 
     Args:
         hisat2_params: HISAT2执行参数
         fastp_results: FastP质控结果
-        genome_id: 基因组ID（如"dm6", "hg38"等）
+        genome_paths: 简化的基因组路径信息（从节点动态提取）
 
     约束（与路径契约一致）:
     - 仅在 fastp_results.success 为真且包含 per_sample_outputs 时放行
     - 统一复用 FastP 的 results_dir 作为运行根目录
-    - 基于genome_id从genomes.json获取配置并构建HISAT2索引路径
+    - 直接使用 genome_paths["hisat2_index_path"] 获取HISAT2索引路径
     - sample_inputs 仅来源于 fastp_results.per_sample_outputs（不再扫描目录）
     - per_sample_outputs 路径与 hisat2.nf 产出一致（样本子目录 + 默认文件名）
     """
     try:
         tools_config = get_tools_config()
 
-        # 读取genomes.json获取基因组配置
-        genomes_config_path = tools_config.genomes_config_path
-        if not genomes_config_path.exists():
-            return {"success": False, "error": f"基因组配置文件不存在: {genomes_config_path}"}
+        # 直接从传入的路径信息中提取所需字段
+        genome_id = genome_paths.get("genome_id", "unknown")
+        hisat2_index_path = genome_paths.get("hisat2_index_path", "")
 
-        try:
-            with open(genomes_config_path, 'r', encoding='utf-8') as f:
-                genomes_config = json.load(f)
-        except Exception as exception:
-            return {"success": False, "error": f"读取基因组配置失败: {exception}"}
-
-        if genome_id not in genomes_config:
-            return {"success": False, "error": f"基因组配置中不存在: {genome_id}"}
-
-        genome_info = genomes_config[genome_id]
+        if not hisat2_index_path:
+            return {
+                "success": False,
+                "error": f"基因组路径信息缺少HISAT2索引路径: {genome_id}"
+            }
 
         # 1) 校验 FastP 结果与运行根目录
         if not (fastp_results and fastp_results.get("success")):
@@ -80,13 +74,8 @@ def run_nextflow_hisat2(
         work_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"HISAT2启动:samples={len(fastp_per_sample_outputs)} results={results_dir} work={work_dir}")
 
-        # 3) 直接构建HISAT2索引路径（detect节点已验证索引存在性）
-        species = genome_info.get("species")
-        version = genome_info.get("version")
-        if not species or not version:
-            return {"success": False, "error": f"基因组配置缺少species或version字段: {genome_id}"}
-
-        hisat2_index_path = tools_config.settings.data_dir / "genomes" / species / version / "hisat2_index" / "genome"
+        # 3) 直接使用预处理的HISAT2索引路径
+        # hisat2_index_path 已在前面从 genome_paths 中获取
         sample_inputs: List[Dict[str, Any]] = []
         for index, fastp_sample_output in enumerate(fastp_per_sample_outputs):
             sample_id = fastp_sample_output.get("sample_id", f"sample_{index + 1}")

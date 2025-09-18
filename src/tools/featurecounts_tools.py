@@ -26,7 +26,7 @@ logger = get_logger("rna.tools.featurecounts")
 def run_nextflow_featurecounts(
     featurecounts_params: Dict[str, Any],
     star_results: Dict[str, Any],
-    genome_info: Dict[str, Any],
+    gtf_path: str,
     results_timestamp: Optional[str] = None,
     base_results_dir: Optional[str] = None,
     hisat2_results: Optional[Dict[str, Any]] = None,
@@ -36,7 +36,7 @@ def run_nextflow_featurecounts(
     Args:
         featurecounts_params: FeatureCounts参数字典（可包含 -T/-s/-p/-M 等风格键）
         star_results: STAR节点结果（可为空），需包含 per_sample_outputs 中的 BAM 路径
-        genome_info: 基因组信息（需提供 GTF 路径，如 gtf_path）
+        gtf_path: GTF注释文件的绝对路径（从节点预处理提供）
         results_timestamp: 可选的时间戳，优先用于结果目录
         base_results_dir: 可选的基底结果目录（来自Detect节点）
         hisat2_results: HISAT2节点结果（可为空），与 star_results 二选一
@@ -62,16 +62,16 @@ def run_nextflow_featurecounts(
             return {"success": False, "error": "比对结果缺少 per_sample_outputs 信息"}
 
 
-        # 解析并归一化 GTF 注释文件路径（容器内）
-        gtf_file_raw = (
-            genome_info.get("gtf_path")
-            or genome_info.get("gtf")
-            or genome_info.get("annotation_gtf")
-            or ""
-        )
-        if not gtf_file_raw:
-            return {"success": False, "error": "genome_info 未提供 GTF 注释文件路径 (gtf_path)"}
-        gtf_file = gtf_file_raw
+        # 直接使用传入的GTF路径
+        gtf_file = gtf_path
+
+        if not gtf_file:
+            return {
+                "success": False,
+                "error": "GTF路径为空，无法执行FeatureCounts"
+            }
+
+        # 验证GTF文件是否存在
         if not Path(gtf_file).exists():
             return {
                 "success": False,

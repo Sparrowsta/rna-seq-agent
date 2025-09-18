@@ -265,5 +265,74 @@ def enhance_tool_result_with_debug(result: dict, cmd: str = "",
     
     except Exception as e:
         logger.warning(f"添加调试信息失败: {e}")
-    
+
     return result
+
+
+def extract_genome_paths(state: AgentState) -> Dict[str, str]:
+    """从 AgentState 中动态提取简化的基因组路径信息
+
+    Args:
+        state: Agent状态，包含nextflow_config和query_results
+
+    Returns:
+        简化的基因组路径信息字典，包含各种路径的直接引用
+        {
+            "genome_id": "hg38",
+            "species": "human", 
+            "version": "hg38",
+            "gtf_path": "/data/genomes/human/hg38/annotation.gtf",
+            "index_path": "/data/genomes/human/hg38/star_index",
+            "hisat2_index_path": "/data/genomes/human/hg38/hisat2_index"
+        }
+    """
+    try:
+        # 获取目标基因组ID
+        genome_version = state.nextflow_config.get("genome_version") if state.nextflow_config else None
+        if not genome_version:
+            logger.warning("未在nextflow_config中找到genome_version")
+            return {}
+
+        # 从query_results中提取基因组信息
+        query_results = state.query_results or {}
+        genome_scan_result = query_results.get("verify_genome_setup", {})
+        genomes_dict = genome_scan_result.get("genomes", {})
+
+        # 获取目标基因组信息
+        genome_info = genomes_dict.get(genome_version, {})
+
+        if not genome_info:
+            logger.warning(f"未找到基因组信息: {genome_version}, 可用基因组: {list(genomes_dict.keys())}")
+            return {}
+
+        # 提取文件路径信息
+        files_info = genome_info.get("files", {})
+        
+        # 构建简化的路径字典
+        paths = {
+            "genome_id": genome_info.get("genome_id", genome_version),
+            "species": genome_info.get("species", ""),
+            "version": genome_info.get("version", genome_version),
+            "gtf_path": files_info.get("gtf", {}).get("path", ""),
+            "index_path": files_info.get("star_index", {}).get("path", ""),
+            "hisat2_index_path": files_info.get("hisat2_index", {}).get("path", "")
+        }
+
+        # 验证关键路径是否存在
+        missing_paths = []
+        if not paths["gtf_path"]:
+            missing_paths.append("gtf_path")
+        if not paths["index_path"]:
+            missing_paths.append("index_path") 
+        if not paths["hisat2_index_path"]:
+            missing_paths.append("hisat2_index_path")
+
+        if missing_paths:
+            logger.warning(f"基因组 {genome_version} 缺少路径信息: {missing_paths}")
+
+        logger.info(f"成功提取基因组路径信息: {genome_version}")
+        return paths
+
+    except Exception as e:
+        logger.error(f"提取基因组路径信息失败: {e}")
+        return {}
