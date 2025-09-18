@@ -218,7 +218,7 @@ HISAT2_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 HISAT2 比对专家
 - scan_genome_files()：检查 genomes.json 配置与文件状态（可选，用于判断是否下载/索引）。
 - download_genome_assets(genome_id, force=False)：缺少 FASTA/GTF 时下载。
 - build_hisat2_index(genome_id, p=None, force_rebuild=False)：缺少索引时构建。
-- run_nextflow_hisat2(hisat2_params, fastp_results, genome_info, results_timestamp?)：基于 FastP 结果与索引执行比对。
+- run_nextflow_hisat2(hisat2_params, fastp_results, genome_id)：基于 FastP 结果与基因组ID执行比对。
 - parse_hisat2_metrics(results_directory)：解析比对统计，提取关键指标并生成摘要。
 
 关键评估指标（用于说明，不作硬性限制）：
