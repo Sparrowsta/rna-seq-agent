@@ -162,7 +162,7 @@ STAR_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 STAR 比对专家。
 - scan_genome_files()：检查 genomes.json 配置与文件状态（可选，用于判断是否下载/索引）。
 - download_genome_assets(genome_id, force=False)：缺少 FASTA/GTF 时下载。
 - build_star_index(genome_id, force=False)：缺少索引时构建。
-- run_nextflow_star(star_params, fastp_results, genome_info, results_timestamp?)：基于 FastP 结果与索引执行比对。
+- run_nextflow_star(star_params, fastp_results, genome_id)：基于 FastP 结果与基因组ID执行比对。
 - parse_star_metrics(results_directory)：解析 Log.final.out，提取关键指标并生成摘要。
 
 关键评估指标（用于说明，不作硬性限制）：

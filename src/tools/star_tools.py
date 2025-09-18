@@ -9,15 +9,14 @@ RNA-seq智能分析助手 - STAR比对工具
 import json
 import subprocess
 import re
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
 # 使用官方工具装饰器
 from langchain_core.tools import tool
 
-# 导入配置模块  
-from ..config import get_tools_config, Settings
+# 导入配置模块
+from ..config import get_tools_config
 from ..logging_bootstrap import get_logger
 
 logger = get_logger("rna.tools.star")
@@ -27,20 +26,40 @@ logger = get_logger("rna.tools.star")
 def run_nextflow_star(
     star_params: Dict[str, Any],
     fastp_results: Dict[str, Any],
-    genome_info: Dict[str, Any],
-    results_timestamp: Optional[str] = None
+    genome_id: str
 ) -> Dict[str, Any]:
     """执行 STAR 比对（精简版）
+
+    Args:
+        star_params: STAR执行参数
+        fastp_results: FastP质控结果
+        genome_id: 基因组ID（如"dm6", "hg38"等）
 
     约束（与路径契约一致）:
     - 仅在 fastp_results.success 为真且包含 per_sample_outputs 时放行
     - 统一复用 FastP 的 results_dir 作为运行根目录
-    - STAR 索引优先使用 genome_info.star_index_dir；否则由 genome_info.fasta_path 推导
+    - 基于genome_id从genomes.json获取配置并构建STAR索引路径
     - sample_inputs 仅来源于 fastp_results.per_sample_outputs（不再扫描目录）
     - per_sample_outputs 路径与 star.nf 产出一致（样本子目录 + 默认文件名）
     """
     try:
         tools_config = get_tools_config()
+
+        # 读取genomes.json获取基因组配置
+        genomes_config_path = tools_config.genomes_config_path
+        if not genomes_config_path.exists():
+            return {"success": False, "error": f"基因组配置文件不存在: {genomes_config_path}"}
+
+        try:
+            with open(genomes_config_path, 'r', encoding='utf-8') as f:
+                genomes_config = json.load(f)
+        except Exception as exception:
+            return {"success": False, "error": f"读取基因组配置失败: {exception}"}
+
+        if genome_id not in genomes_config:
+            return {"success": False, "error": f"基因组配置中不存在: {genome_id}"}
+
+        genome_info = genomes_config[genome_id]
 
         # 1) 校验 FastP 结果与运行根目录
         if not (fastp_results and fastp_results.get("success")):
@@ -50,63 +69,61 @@ def run_nextflow_star(
         if not fastp_results_dir:
             return {"success": False, "error": "FastP结果缺少results_dir"}
 
-        per_sample = fastp_results.get("per_sample_outputs") or []
-        if not per_sample:
+        fastp_per_sample_outputs = fastp_results.get("per_sample_outputs") or []
+        if not fastp_per_sample_outputs:
             return {"success": False, "error": "FastP结果缺少per_sample_outputs"}
 
         # 2) 运行根目录与工作目录
-        timestamp = results_timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
         results_dir = Path(fastp_results_dir)
-        run_id = results_dir.name or timestamp
+        run_id = results_dir.name
         work_dir = tools_config.settings.data_dir / "work" / f"star_{run_id}"
         results_dir.mkdir(parents=True, exist_ok=True)
         work_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"STAR启动：samples={len(per_sample)} results={results_dir} work={work_dir}")
+        logger.info(f"STAR启动:samples={len(fastp_per_sample_outputs)} results={results_dir} work={work_dir}")
 
-        # 3) 解析 STAR 索引目录 - 直接基于fasta路径目录
-        star_index_dir = ""
-        if isinstance(genome_info, dict):
-            star_index_dir = genome_info.get("star_index_dir") or genome_info.get("index_dir") or ""
-            if not star_index_dir:
-                fasta_path_raw = genome_info.get("fasta_path") or genome_info.get("fasta")
-                if fasta_path_raw:
-                    fasta_path = fasta_path_raw
-                    # 直接基于fasta路径的父目录构建索引目录
-                    star_index_dir = str(Path(fasta_path).parent / "star_index")
+        # 3) 直接构建STAR索引路径（detect节点已验证索引存在性）
+        species = genome_info.get("species")
+        version = genome_info.get("version")
+        if not species or not version:
+            return {"success": False, "error": f"基因组配置缺少species或version字段: {genome_id}"}
 
-        if not star_index_dir:
-            return {"success": False, "error": "缺少STAR索引目录（genome_info.star_index_dir 或 fasta_path 必须提供）"}
+        star_index_path = tools_config.settings.data_dir / "genomes" / species / version / "star_index"
 
-        star_index_path = Path(star_index_dir)
-        if not star_index_path.exists():
-            logger.warning(f"STAR索引不存在: {star_index_path}")
-            return {"success": False, "error": f"STAR索引不存在: {star_index_path}"}
-
-        # 4) 构造 sample_inputs（仅使用 FastP 返回的结构）
+        # 4) 构造 sample_inputs（直接使用 FastP 返回的结构）
         sample_inputs: List[Dict[str, Any]] = []
-        for i, fp in enumerate(per_sample):
-            sid = fp.get("sample_id", f"sample_{i+1}")
-            r1 = fp.get("trimmed_single") or fp.get("trimmed_r1")
-            r2 = fp.get("trimmed_r2")
-            if not r1:
+        for index, fastp_sample_output in enumerate(fastp_per_sample_outputs):
+            sample_id = fastp_sample_output.get("sample_id", f"sample_{index + 1}")
+            trimmed_read1_path = fastp_sample_output.get("trimmed_single") or fastp_sample_output.get("trimmed_r1")
+            trimmed_read2_path = fastp_sample_output.get("trimmed_r2")
+            if not trimmed_read1_path:
                 continue
-            sample_inputs.append({
-                "sample_id": sid,
-                "is_paired": bool(r2),
-                "read1": r1,
-                **({"read2": r2} if r2 else {})
-            })
+            is_paired_sample = fastp_sample_output.get("paired_end")
+            if is_paired_sample is None:
+                is_paired_sample = bool(trimmed_read2_path)
+            else:
+                is_paired_sample = bool(is_paired_sample)
+            sample_input_entry = {
+                "sample_id": sample_id,
+                "is_paired": is_paired_sample,
+                "read1": trimmed_read1_path,
+            }
+            if is_paired_sample and trimmed_read2_path:
+                sample_input_entry["read2"] = trimmed_read2_path
+            elif not is_paired_sample and trimmed_read2_path:
+                # 兜底：fastp 结果声明为单端但仍给出了 read2，保留文件以便排查
+                sample_input_entry["read2"] = trimmed_read2_path
+            sample_inputs.append(sample_input_entry)
         if not sample_inputs:
             return {"success": False, "error": "未从FastP结果构造到任何样本输入"}
 
         # 5) 组装 Nextflow 参数
         cleaned_params: Dict[str, Any] = {}
-        for k, v in (star_params or {}).items():
-            if v is None or k in {"star_cpus", "outFileNamePrefix"}:
+        for parameter_name, parameter_value in (star_params or {}).items():
+            if parameter_value is None or parameter_name in {"star_cpus", "outFileNamePrefix"}:
                 continue
-            cleaned_params[k.lstrip('-')] = v
+            cleaned_params[parameter_name.lstrip('-')] = parameter_value
 
-        nf_params = {
+        nextflow_params = {
             "sample_inputs": json.dumps(sample_inputs, ensure_ascii=False),
             "star_index": str(star_index_path),
             "results_dir": str(results_dir),
@@ -114,33 +131,23 @@ def run_nextflow_star(
             **cleaned_params,
         }
 
-        # 参数版本化 - 使用新的接口直接传递results_dir
-        versioned_params_file = None
+        # 参数版本化
         try:
             from .utils_tools import write_params_file
-            # 直接传递results_dir，不需要创建临时state
             versioned_params_file = write_params_file(
                 "star",
-                nf_params,
+                nextflow_params,
                 results_dir=str(results_dir)
             )
-            logger.info(f"STAR实际运行参数版本化文件已写入: {versioned_params_file}")
 
-        except Exception as e:
-            logger.warning(f"STAR参数版本化写入失败 (不影响执行): {e}")
+            if not versioned_params_file or not versioned_params_file.exists():
+                raise Exception("版本化参数文件创建失败")
 
-        # 使用版本化文件作为参数文件，如果失败则降级到临时文件
-        if versioned_params_file and versioned_params_file.exists():
+            logger.info(f"STAR参数版本化文件: {versioned_params_file}")
             params_file = versioned_params_file
-            logger.info(f"使用版本化参数文件运行STAR: {params_file}")
-        else:
-            # 降级方案：生成临时参数文件
-            logger.warning("版本化参数文件不可用，使用临时参数文件")
-            star_dir = results_dir / "star"
-            star_dir.mkdir(parents=True, exist_ok=True)
-            params_file = star_dir / "star_params.json"
-            with open(params_file, "w", encoding="utf-8") as f:
-                json.dump(nf_params, f, indent=2, ensure_ascii=False)
+
+        except Exception as exception:
+            return {"success": False, "error": f"STAR参数版本化失败: {exception}"}
 
         # 6) 定位并执行 Nextflow
         nextflow_script = tools_config.settings.nextflow_scripts_dir / "star.nf"
@@ -152,37 +159,37 @@ def run_nextflow_star(
             }
 
         logger.info(f"执行STAR比对 - 参数文件: {params_file}")
-        logger.info(f"STAR索引: {nf_params['star_index']}")
-        cmd = [
+        logger.info(f"STAR索引: {nextflow_params['star_index']}")
+        command = [
             "nextflow", "run", str(nextflow_script),
             "-params-file", str(params_file),
             "-work-dir", str(work_dir),
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200, cwd=tools_config.settings.project_root)
+        execution_result = subprocess.run(command, capture_output=True, text=True, timeout=7200, cwd=tools_config.settings.project_root)
 
         # 7) 组装每样本输出路径（与 star.nf publishDir 对齐）
-        star_out = results_dir / "star"
+        star_output_dir = results_dir / "star"
         per_sample_outputs: List[Dict[str, Any]] = []
-        for item in sample_inputs:
-            sid = item["sample_id"]
-            sdir = star_out / sid
-            entry = {
-                "sample_id": sid,
-                "aligned_bam": str(sdir / f"{sid}.Aligned.sortedByCoord.out.bam"),
-                "log_final": str(sdir / f"{sid}.Log.final.out"),
-                "log_out": str(sdir / f"{sid}.Log.out"),
-                "log_progress": str(sdir / f"{sid}.Log.progress.out"),
-                "splice_junctions": str(sdir / f"{sid}.SJ.out.tab"),
+        for sample_input in sample_inputs:
+            sample_id = sample_input["sample_id"]
+            sample_dir = star_output_dir / sample_id
+            sample_result_entry = {
+                "sample_id": sample_id,
+                "aligned_bam": str(sample_dir / f"{sample_id}.Aligned.sortedByCoord.out.bam"),
+                "log_final": str(sample_dir / f"{sample_id}.Log.final.out"),
+                "log_out": str(sample_dir / f"{sample_id}.Log.out"),
+                "log_progress": str(sample_dir / f"{sample_id}.Log.progress.out"),
+                "splice_junctions": str(sample_dir / f"{sample_id}.SJ.out.tab"),
             }
-            qm = str(nf_params.get("quantMode", ""))
-            if "TranscriptomeSAM" in qm:
-                entry["transcriptome_bam"] = str(sdir / f"{sid}.Aligned.toTranscriptome.out.bam")
-            if "GeneCounts" in qm:
-                entry["gene_counts"] = str(sdir / f"{sid}.ReadsPerGene.out.tab")
-            per_sample_outputs.append(entry)
+            quant_mode = str(nextflow_params.get("quantMode", ""))
+            if "TranscriptomeSAM" in quant_mode:
+                sample_result_entry["transcriptome_bam"] = str(sample_dir / f"{sample_id}.Aligned.toTranscriptome.out.bam")
+            if "GeneCounts" in quant_mode:
+                sample_result_entry["gene_counts"] = str(sample_dir / f"{sample_id}.ReadsPerGene.out.tab")
+            per_sample_outputs.append(sample_result_entry)
 
-        payload = {
-            "success": result.returncode == 0,
+        results = {
+            "success": execution_result.returncode == 0,
             "results_dir": str(results_dir),
             "work_dir": str(work_dir),
             "params_file": str(params_file),
@@ -190,35 +197,39 @@ def run_nextflow_star(
             "per_sample_outputs": per_sample_outputs,
         }
         if get_tools_config().settings.debug_mode:
-            payload.update({"stderr": result.stderr, "cmd": " ".join(cmd)})
-        # 记录完成/失败日志
-        if payload["success"]:
-            logger.info(f"STAR完成：samples={len(sample_inputs)} results={results_dir}")
+            results.update({"stderr": execution_result.stderr, "cmd": " ".join(command)})
+        if results["success"]:
+            logger.info(f"STAR完成:samples={len(sample_inputs)} results={results_dir}")
         else:
-            logger.warning(f"STAR失败：rc={result.returncode} stderr={(result.stderr or '')[:400]}")
-        return payload
+            logger.warning(f"STAR失败:rc={execution_result.returncode} stderr={(execution_result.stderr or '')[:400]}")
+            # 失败时也添加调试信息
+            results.update({
+                "return_code": execution_result.returncode,
+                "stderr": execution_result.stderr[:1000] if execution_result.stderr else "",
+                "cmd": " ".join(command),
+                "work_dir": str(work_dir)
+            })
+        return results
 
-    except Exception as e:
-        logger.error(f"STAR异常：{e}")
-        return {"success": False, "error": f"执行STAR比对失败: {str(e)}"}
+    except Exception as exception:
+        logger.error(f"STAR异常：{exception}")
+        return {"success": False, "error": f"执行STAR比对失败: {str(exception)}"}
 
 
 @tool
 def parse_star_metrics(results_directory: str) -> Dict[str, Any]:
-    """解析STAR比对结果文件，提取比对指标
+    """解析STAR比对结果文件，返回原始日志文件内容
     
     Args:
         results_directory: STAR结果目录路径
     
     Returns:
-        Dict: 解析后的比对指标数据
+        Dict: 包含原始日志文件内容的数据
         {
             "success": bool,
             "total_samples": int,
             "results_directory": str,
-            "per_sample_metrics": List[Dict],    # 每个样本的详细指标
-            "overall_statistics": Dict,          # 总体统计信息
-            "quality_assessment": Dict           # 质量评估
+            "sample_logs": List[Dict]  # 每个样本的原始日志内容
         }
     """
     try:
@@ -228,18 +239,6 @@ def parse_star_metrics(results_directory: str) -> Dict[str, Any]:
                 "success": False,
                 "error": f"STAR结果目录不存在: {results_directory}"
             }
-        
-        sample_metrics = []
-        overall_stats = {
-            "total_input_reads": 0,
-            "total_mapped_reads": 0,
-            "total_uniquely_mapped": 0,
-            "total_multi_mapped": 0,
-            "mapping_rates": [],
-            "unique_mapping_rates": [],
-            "multi_mapping_rates": [],
-            "mismatch_rates": []
-        }
         
         # 查找STAR输出目录
         star_dir = results_path / "star"
@@ -253,136 +252,71 @@ def parse_star_metrics(results_directory: str) -> Dict[str, Any]:
                 "error": f"STAR输出目录不存在: {star_dir}"
             }
         
-        # 遍历样本目录，查找Log.final.out文件
+        sample_logs = []
+        
+        # 遍历样本目录，收集Log.final.out文件内容
         for sample_dir in star_dir.iterdir():
             if not sample_dir.is_dir():
                 continue
                 
-            # 与 star.nf 中 outFileNamePrefix 保持一致：{sample_id}/{sample_id}.*
-            log_final_file = sample_dir / f"{sample_dir.name}.Log.final.out"
+            sample_id = sample_dir.name
+            log_final_file = sample_dir / f"{sample_id}.Log.final.out"
+            
             if not log_final_file.exists():
-                sample_metrics.append({
-                    "sample_id": sample_dir.name,
+                sample_logs.append({
+                    "sample_id": sample_id,
+                    "log_file": str(log_final_file),
                     "error": "Log.final.out文件不存在"
                 })
                 continue
             
             try:
-                # 解析Log.final.out文件
+                # 读取Log.final.out原始内容
                 with open(log_final_file, 'r', encoding='utf-8') as f:
                     log_content = f.read()
                 
-                # 提取关键指标（使用正则表达式）
-                input_reads = _extract_metric(log_content, r"Number of input reads.*?(\d+)")
-                uniquely_mapped = _extract_metric(log_content, r"Uniquely mapped reads number.*?(\d+)")
-                multi_mapped = _extract_metric(log_content, r"Number of reads mapped to multiple loci.*?(\d+)")
-                unmapped = _extract_metric(log_content, r"Number of reads unmapped.*?(\d+)")
-                
-                # 计算比率
-                if input_reads > 0:
-                    mapping_rate = (uniquely_mapped + multi_mapped) / input_reads
-                    unique_mapping_rate = uniquely_mapped / input_reads
-                    multi_mapping_rate = multi_mapped / input_reads
-                else:
-                    mapping_rate = unique_mapping_rate = multi_mapping_rate = 0
-                
-                # 提取mismatch率
-                mismatch_rate = _extract_metric(log_content, r"Mismatch rate per base.*?([\d.]+)%") / 100
-                
-                sample_metric = {
-                    "sample_id": sample_dir.name,
-                    "input_reads": input_reads,
-                    "uniquely_mapped": uniquely_mapped,
-                    "multi_mapped": multi_mapped,
-                    "unmapped": unmapped,
-                    "mapping_rate": round(mapping_rate, 4),
-                    "unique_mapping_rate": round(unique_mapping_rate, 4),
-                    "multi_mapping_rate": round(multi_mapping_rate, 4),
-                    "mismatch_rate": round(mismatch_rate, 4),
-                    "log_file": str(log_final_file)
-                }
-                
-                sample_metrics.append(sample_metric)
-                
-                # 累加到总体统计
-                overall_stats["total_input_reads"] += input_reads
-                overall_stats["total_mapped_reads"] += (uniquely_mapped + multi_mapped)
-                overall_stats["total_uniquely_mapped"] += uniquely_mapped
-                overall_stats["total_multi_mapped"] += multi_mapped
-                overall_stats["mapping_rates"].append(mapping_rate)
-                overall_stats["unique_mapping_rates"].append(unique_mapping_rate)
-                overall_stats["multi_mapping_rates"].append(multi_mapping_rate)
-                overall_stats["mismatch_rates"].append(mismatch_rate)
-                
-            except Exception as e:
-                sample_metrics.append({
-                    "sample_id": sample_dir.name,
+                sample_logs.append({
+                    "sample_id": sample_id,
                     "log_file": str(log_final_file),
-                    "error": f"解析失败: {str(e)}"
+                    "content": log_content
+                })
+                
+            except Exception as exception:
+                sample_logs.append({
+                    "sample_id": sample_id,
+                    "log_file": str(log_final_file),
+                    "error": f"读取失败: {str(exception)}"
                 })
         
-        # 计算总体指标
-        total_samples = len([m for m in sample_metrics if "error" not in m])
-        if total_samples > 0:
-            overall_mapping_rate = overall_stats["total_mapped_reads"] / overall_stats["total_input_reads"]
-            overall_unique_rate = overall_stats["total_uniquely_mapped"] / overall_stats["total_input_reads"]
-            overall_multi_rate = overall_stats["total_multi_mapped"] / overall_stats["total_input_reads"]
-            avg_mismatch_rate = sum(overall_stats["mismatch_rates"]) / len(overall_stats["mismatch_rates"])
-        else:
-            overall_mapping_rate = overall_unique_rate = overall_multi_rate = avg_mismatch_rate = 0
+        if not sample_logs:
+            return {
+                "success": False,
+                "error": "未找到任何样本日志文件"
+            }
         
-        # 质量评估
-        quality_assessment = {
-            "overall_quality": "good" if overall_mapping_rate > 0.85 else "moderate" if overall_mapping_rate > 0.7 else "poor",
-            "unique_mapping_status": "good" if overall_unique_rate > 0.8 else "moderate" if overall_unique_rate > 0.6 else "poor",
-            "multi_mapping_status": "good" if overall_multi_rate < 0.2 else "moderate" if overall_multi_rate < 0.3 else "high"
-        }
+        # 计算成功读取的样本数
+        successful_samples = len([log for log in sample_logs if "error" not in log])
         
         result = {
             "success": True,
-            "total_samples": total_samples,
+            "total_samples": successful_samples,
             "results_directory": results_directory,
-            "sample_metrics": sample_metrics,
-            "overall_statistics": {
-                "total_input_reads": overall_stats["total_input_reads"],
-                "total_mapped_reads": overall_stats["total_mapped_reads"],
-                "total_uniquely_mapped": overall_stats["total_uniquely_mapped"],
-                "total_multi_mapped": overall_stats["total_multi_mapped"],
-                "overall_mapping_rate": round(overall_mapping_rate, 4),
-                "overall_unique_mapping_rate": round(overall_unique_rate, 4),
-                "overall_multi_mapping_rate": round(overall_multi_rate, 4),
-                "average_mismatch_rate": round(avg_mismatch_rate, 4)
-            },
-            "quality_assessment": quality_assessment
+            "sample_logs": sample_logs
         }
+        
         try:
-            logger.info(
-                f"STAR结果: samples={result['total_samples']} map={result['overall_statistics']['overall_mapping_rate']} "
-                f"unique={result['overall_statistics']['overall_unique_mapping_rate']} multi={result['overall_statistics']['overall_multi_mapping_rate']}"
-            )
-            if sample_metrics:
-                logger.debug(f"STAR样本预览：{sample_metrics[0]}")
+            logger.info(f"STAR日志收集完成: {successful_samples}个样本，目录={results_directory}")
         except Exception:
             pass
+        
         return result
         
-    except Exception as e:
+    except Exception as exception:
         try:
-            logger.error(f"解析STAR结果失败：{e}")
+            logger.error(f"收集STAR日志失败：{exception}")
         except Exception:
             pass
         return {
             "success": False,
-            "error": f"解析STAR结果失败: {str(e)}"
+            "error": f"收集STAR日志失败: {str(exception)}"
         }
-
-
-def _extract_metric(text: str, pattern: str) -> float:
-    """从文本中提取数值指标的辅助函数"""
-    match = re.search(pattern, text)
-    if match:
-        try:
-            return float(match.group(1))
-        except ValueError:
-            return 0.0
-    return 0.0

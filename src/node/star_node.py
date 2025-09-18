@@ -63,6 +63,7 @@ def append_star_optimization_history(state: AgentState, optimization_params: Dic
         state.star_optimization_history = state.star_optimization_history[-5:]
 
     logger.info(f"[STAR] 已追加优化历史记录，当前保存{len(state.star_optimization_history)}次历史")
+    logger.info(f"[STAR] 最新优化历史记录：{state.star_optimization_history[-1]}")
 
 
 async def star_node(state: AgentState) -> Dict[str, Any]:
@@ -184,7 +185,21 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
 
 async def _call_star_optimization_agent(state: AgentState) -> StarResponse:
     """调用STAR优化Agent进行智能参数优化"""
-    
+
+    # 获取基因组配置信息（从detect节点的query_results中获取）
+    genome_version = state.nextflow_config.get("genome_version")
+    genome_info = {}
+    if genome_version and state.query_results:
+        try:
+            # 从detect节点已经收集的结果中获取基因组配置
+            genome_scan_result = state.query_results.get("verify_genome_setup", {})
+            if isinstance(genome_scan_result, dict):
+                genomes_dict = genome_scan_result.get("genomes", {})
+                if isinstance(genomes_dict, dict) and genome_version in genomes_dict:
+                    genome_info = genomes_dict[genome_version]
+        except Exception as e:
+            logger.warning(f"从query_results获取基因组配置失败: {e}")
+
     # 组织数据上下文（仅数据，不重复流程与指南，遵循系统提示）
     sample_info = {
         "sample_groups": state.nextflow_config.get("sample_groups", []),
@@ -199,10 +214,15 @@ async def _call_star_optimization_agent(state: AgentState) -> StarResponse:
 
     user_context = {
         "execution_mode": state.execution_mode,
+        "genome_config": {
+            "genome_version": genome_version,
+            "paired_end": state.nextflow_config.get("paired_end")
+        },
+        "genome_info": genome_info,
         "sample_info": sample_info,
-        "nextflow_config": state.nextflow_config,
         "current_star_params": state.star_params,
         "fastp_results": state.fastp_results,
+        "star_results": state.star_results,  # 新增：历史执行结果
         "optimization_history": {
             "star": state.star_optimization_history,  # 完整历史列表
             "fastp": state.fastp_optimization_params,
