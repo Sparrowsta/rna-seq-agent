@@ -308,45 +308,48 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
                 import os
                 genome_dir = os.path.dirname(fasta_path)
 
-                # 检查STAR索引 - 基于fasta路径推断索引目录
+                # 检查STAR索引 - 基于fasta路径推断索引目录（轻量：签名文件存在性+非空校验）
                 star_index_dir = f"{genome_dir}/star_index"
                 star_index_full_path = config.settings.data_dir / star_index_dir
                 if star_index_full_path.exists():
-                    with tempfile.TemporaryDirectory() as tmp_dir:
-                        try:
-                            result = subprocess.run(
-                                ["micromamba", "run", "-n", "align_env", "STAR",
-                                 "--genomeDir", str(star_index_full_path),
-                                 "--genomeLoad", "LoadAndExit",
-                                 "--outFileNamePrefix", f"{tmp_dir}/"],
-                                capture_output=True, text=True, timeout=30,
-                                cwd=tmp_dir
-                            )
-                            if result.returncode == 0:
-                                available_star_index.append(gid)
-                        except Exception:
-                            pass
+                    try:
+                        required_files = [
+                            "Genome", "SA", "SAindex", "genomeParameters.txt",
+                            "chrLength.txt", "chrName.txt", "chrNameLength.txt", "chrStart.txt"
+                        ]
+                        def _exists_nonempty(p: Path) -> bool:
+                            try:
+                                return p.exists() and p.is_file() and p.stat().st_size > 0
+                            except Exception:
+                                return False
+                        ok = all(_exists_nonempty(star_index_full_path / fname) for fname in required_files)
+                        if ok:
+                            available_star_index.append(gid)
+                    except Exception:
+                        pass
 
-                # 检查HISAT2索引 - 基于fasta路径推断索引目录
+                # 检查HISAT2索引 - 基于fasta路径推断索引目录（轻量：签名文件存在性+非空校验）
                 hisat2_index_dir = f"{genome_dir}/hisat2_index"
                 hisat2_index_full_path = config.settings.data_dir / hisat2_index_dir
                 if hisat2_index_full_path.exists():
-                    # 查找索引文件前缀 (通常是genome或基因组名称)
-                    ht2_files = list(hisat2_index_full_path.glob("*.1.ht2"))
-                    if ht2_files:
-                        # 提取索引前缀：从 "genome.1.ht2" 得到 "genome"
-                        index_prefix = ht2_files[0].stem.replace(".1", "")
-                        try:
-                            # 使用hisat2-inspect-s验证索引（二进制程序，无Python依赖）
-                            result = subprocess.run(
-                                ["micromamba", "run", "-n", "align_env", "hisat2-inspect-s", index_prefix],
-                                cwd=str(hisat2_index_full_path),
-                                capture_output=True, text=True, timeout=30
+                    try:
+                        # 以 *.1.ht2 推断前缀，然后验证 1..8 所有分片是否存在且非空
+                        ht2_files = list(hisat2_index_full_path.glob("*.1.ht2"))
+                        if ht2_files:
+                            index_prefix = ht2_files[0].stem.replace(".1", "")
+                            def _exists_nonempty(p: Path) -> bool:
+                                try:
+                                    return p.exists() and p.is_file() and p.stat().st_size > 0
+                                except Exception:
+                                    return False
+                            parts_ok = all(
+                                _exists_nonempty(hisat2_index_full_path / f"{index_prefix}.{i}.ht2")
+                                for i in range(1, 9)
                             )
-                            if result.returncode == 0:
+                            if parts_ok:
                                 available_hisat2_index.append(gid)
-                        except Exception:
-                            pass
+                    except Exception:
+                        pass
 
             # 重新评估available状态 - 必须至少有一个可用索引
             if status["available"]:  # 如果基础文件都存在
