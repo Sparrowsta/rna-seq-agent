@@ -3,6 +3,7 @@ Modify Node - 智能配置修改节点
 负责解析用户修改需求并更新所有相关配置参数
 """
 from typing import Dict, Any, List
+from pathlib import Path
 from datetime import datetime
 from pydantic import BaseModel, Field
 from ..state import AgentState
@@ -318,6 +319,43 @@ FeatureCounts参数：
         
         logger.info("配置修改完成")
         logger.info(f"修改原因: {modify_request.modification_reason}")
+
+        # 直接更新 Prepare 节点生成的参数文件（不做版本管理）
+        try:
+            # 目标目录：仅使用 state.results_dir（不再从 nextflow_config 获取）
+            target_results_dir = getattr(state, "results_dir", "")
+            if target_results_dir:
+                params_dir = Path(target_results_dir) / "params"
+                params_dir.mkdir(parents=True, exist_ok=True)
+
+                # 查找最新的 prepare_params_*.json；若不存在则使用固定文件名
+                prepare_files = sorted(params_dir.glob("prepare_params_*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+                if prepare_files:
+                    prepare_path = prepare_files[0]
+                else:
+                    prepare_path = params_dir / "prepare_params.json"
+
+                # 载入原文件（如存在），仅更新 nextflow_config 与 resource_config
+                payload: Dict[str, Any] = {}
+                if prepare_path.exists():
+                    try:
+                        with open(prepare_path, "r", encoding="utf-8") as f:
+                            payload = json.load(f) or {}
+                    except Exception:
+                        payload = {}
+
+                payload["nextflow_config"] = updated_nextflow
+                payload["resource_config"] = updated_resource
+
+                with open(prepare_path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2, ensure_ascii=False)
+
+                logger.info(f"已更新 Prepare 参数文件: {prepare_path}")
+            else:
+                logger.warning("无法定位 results_dir，跳过更新 Prepare 参数文件")
+        except Exception as e:
+            logger.warning(f"更新 Prepare 参数文件失败（不影响流程）: {e}")
+
         logger.info("返回到确认节点查看更新后的配置")
         
         # 返回更新后的状态
