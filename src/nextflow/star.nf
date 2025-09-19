@@ -23,7 +23,6 @@ params.quantMode = "TranscriptomeSAM GeneCounts"
 params.outSAMtype = "BAM SortedByCoordinate"
 params.outSAMstrandField = "intronMotif"
 params.twopassMode = "None"
-params.runThreadN = 4
 params.limitBAMsortRAM = 4000000000
 
 // 补充常用可调参数（与工具层对齐）
@@ -46,6 +45,8 @@ if (!params.results_dir) error "Missing required parameter: results_dir"
 
 // STAR比对进程
 process STAR_ALIGN {
+    cpus (params.resources?.star?.cpus ?: 8)
+    memory (params.resources?.star?.memory ?: '32 GB')
     publishDir "${params.results_dir}/star", mode: 'copy'
     
     input:
@@ -70,7 +71,7 @@ process STAR_ALIGN {
         --genomeDir ${star_index} \
         --readFilesIn ${read1}${is_paired ? ' ' + read2 : ''} \
         --readFilesCommand ${params.readFilesCommand ?: 'zcat'} \
-        --runThreadN ${params.runThreadN} \
+        --runThreadN ${task.cpus} \
         --outFilterMultimapNmax ${params.outFilterMultimapNmax} \
         --outFilterMismatchNoverReadLmax ${params.outFilterMismatchNoverReadLmax} \
         --outFilterMismatchNmax ${params.outFilterMismatchNmax} \

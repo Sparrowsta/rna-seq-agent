@@ -17,7 +17,7 @@ params.work_dir = ""
 // HISAT2比对基础参数
 params.rna_strandness = "unstranded"        // 链特异性: unstranded/RF/FR
 params.dta = true                           // 启用下游转录本组装模式
-params.p = 4                                // 线程数
+// 线程数由 process 指令 cpus 管理，命令行使用 ${task.cpus}
 params.max_intronlen = 500000               // 最大内含子长度
 params.min_intronlen = 20                   // 最小内含子长度
 
@@ -53,6 +53,8 @@ if (!params.results_dir) error "Missing required parameter: results_dir"
 
 // HISAT2比对进程
 process HISAT2_ALIGN {
+    cpus (params.resources?.hisat2?.cpus ?: 8)
+    memory (params.resources?.hisat2?.memory ?: '32 GB')
     publishDir "${params.results_dir}/hisat2", mode: 'copy'
     
     input:
@@ -72,7 +74,7 @@ process HISAT2_ALIGN {
     def hisat2_cmd = "micromamba run -n align_env hisat2"
     def basic_params = [
         "-x ${hisat2_index_prefix}",
-        "-p ${params.p}",
+        "-p ${task.cpus}",
         "--max-intronlen ${params.max_intronlen}",
         "--min-intronlen ${params.min_intronlen}"
     ]
@@ -128,8 +130,8 @@ process HISAT2_ALIGN {
         2> ${sample_id}/${sample_id}.align_summary.txt
     
     # 转换SAM为BAM并排序
-    micromamba run -n align_env samtools view -@ ${params.p} -bS ${sample_id}/${sample_id}.hisat2.sam | \\
-    micromamba run -n align_env samtools sort -@ ${params.p} -o ${sample_id}/${sample_id}.hisat2.bam
+    micromamba run -n align_env samtools view -@ ${task.cpus} -bS ${sample_id}/${sample_id}.hisat2.sam | \\
+    micromamba run -n align_env samtools sort -@ ${task.cpus} -o ${sample_id}/${sample_id}.hisat2.bam
     
     # 删除中间SAM文件节省空间
     rm ${sample_id}/${sample_id}.hisat2.sam

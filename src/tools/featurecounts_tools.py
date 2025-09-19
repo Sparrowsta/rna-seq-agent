@@ -30,6 +30,7 @@ def run_nextflow_featurecounts(
     results_timestamp: Optional[str] = None,
     base_results_dir: Optional[str] = None,
     hisat2_results: Optional[Dict[str, Any]] = None,
+    resource_config: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """执行Nextflow FeatureCounts定量流程
 
@@ -94,7 +95,7 @@ def run_nextflow_featurecounts(
         # 将 STAR 输出的 BAM 列表转换为JSON字符串（Nextflow 端会 echo 后再解析）
         bam_entries = []
         for item in per_sample:
-            sid = item.get("sample_id") or "sample"
+            sample_id = item.get("sample_id") or "sample"
             bam = item.get("aligned_bam") or item.get("bam")
             if not bam:
                 continue
@@ -104,40 +105,40 @@ def run_nextflow_featurecounts(
                     "success": False,
                     "error": f"BAM文件不存在: {bam_norm}",
                 }
-            bam_entries.append({"sample_id": sid, "bam_file": bam_norm})
+            bam_entries.append({"sample_id": sample_id, "bam_file": bam_norm})
         if not bam_entries:
             return {"success": False, "error": "未从STAR结果中收集到任何BAM路径"}
 
         # 参数映射：Python风格/短旗标 → Nextflow params 名称
         mapped: Dict[str, Any] = {}
-        p = featurecounts_params or {}
+        params_raw = featurecounts_params or {}
 
         def pick_bool(key: str) -> Optional[bool]:
-            v = p.get(key)
-            if isinstance(v, bool):
-                return v
+            value = params_raw.get(key)
+            if isinstance(value, bool):
+                return value
             return None
 
         def pick_int(key: str) -> Optional[int]:
-            v = p.get(key)
+            value = params_raw.get(key)
             try:
-                return int(v) if v is not None else None
+                return int(value) if value is not None else None
             except Exception:
                 return None
 
         # 线程/链特异性/特征/属性/质量阈
-        mapped["threads"] = pick_int("-T") or p.get("threads") or 4
-        mapped["strand_specificity"] = pick_int("-s") or p.get("strand_specificity") or 0
-        mapped["feature_type"] = p.get("-t") or p.get("feature_type") or "exon"
-        mapped["attribute_type"] = p.get("-g") or p.get("attribute_type") or "gene_id"
-        mapped["min_mapping_quality"] = pick_int("-Q") or p.get("min_mapping_quality") or 10
+        mapped["threads"] = pick_int("-T") or params_raw.get("threads") or 4
+        mapped["strand_specificity"] = pick_int("-s") or params_raw.get("strand_specificity") or 0
+        mapped["feature_type"] = params_raw.get("-t") or params_raw.get("feature_type") or "exon"
+        mapped["attribute_type"] = params_raw.get("-g") or params_raw.get("attribute_type") or "gene_id"
+        mapped["min_mapping_quality"] = pick_int("-Q") or params_raw.get("min_mapping_quality") or 10
 
         # 布尔开关 - 修改count_reads_pairs默认值为false
-        mapped["count_reads_pairs"] = pick_bool("-p") if pick_bool("-p") is not None else (p.get("count_reads_pairs") if isinstance(p.get("count_reads_pairs"), bool) else False)
-        mapped["count_multi_mapping_reads"] = pick_bool("-M") if pick_bool("-M") is not None else bool(p.get("count_multi_mapping_reads", False))
-        mapped["ignore_duplicates"] = bool(p.get("--ignoreDup", False) or p.get("ignore_duplicates", False))
-        mapped["require_both_ends_mapped"] = bool(p.get("-B", False) or p.get("require_both_ends_mapped", False))
-        mapped["exclude_chimeric"] = bool(p.get("-C", False) or p.get("exclude_chimeric", False))
+        mapped["count_reads_pairs"] = pick_bool("-p") if pick_bool("-p") is not None else (params_raw.get("count_reads_pairs") if isinstance(params_raw.get("count_reads_pairs"), bool) else False)
+        mapped["count_multi_mapping_reads"] = pick_bool("-M") if pick_bool("-M") is not None else bool(params_raw.get("count_multi_mapping_reads", False))
+        mapped["ignore_duplicates"] = bool(params_raw.get("--ignoreDup", False) or params_raw.get("ignore_duplicates", False))
+        mapped["require_both_ends_mapped"] = bool(params_raw.get("-B", False) or params_raw.get("require_both_ends_mapped", False))
+        mapped["exclude_chimeric"] = bool(params_raw.get("-C", False) or params_raw.get("exclude_chimeric", False))
 
         # 组装 Nextflow 参数文件
         nf_params = {
@@ -147,6 +148,11 @@ def run_nextflow_featurecounts(
             "work_dir": str(work_dir),
             **mapped,
         }
+
+        # 资源配置：直接内联通过 -params 传入
+        from .utils_tools import build_stage_resources_map
+        resource_config_map = resource_config or {}
+        resources_map = build_stage_resources_map(resource_config_map, ["featurecounts"])
 
         # M4: 参数版本化 - 使用新的接口直接传递results_dir
         versioned_params_file = None
@@ -195,6 +201,12 @@ def run_nextflow_featurecounts(
             "-work-dir",
             str(work_dir),
         ]
+        # 通过 -params 内联注入资源配置
+        try:
+            inline_params = json.dumps({"resources": resources_map}, ensure_ascii=False)
+            cmd.extend(["-params", inline_params])
+        except Exception as e:
+            logger.warning(f"构建FeatureCounts内联资源参数失败，将不注入资源: {e}")
 
         logger.info("执行Nextflow FeatureCounts流水线")
         logger.info(f"参数文件: {params_file}")
@@ -222,9 +234,9 @@ def run_nextflow_featurecounts(
         
         # 为兼容性生成per_sample_outputs结构，指向批量文件
         for entry in bam_entries:
-            sid = entry["sample_id"]
+            sample_id = entry["sample_id"]
             sample_output = {
-                "sample_id": sid,
+                "sample_id": sample_id,
                 "counts_file": str(fc_root / "all_samples.featureCounts"),  # 指向批量文件
                 "summary_file": str(fc_root / "all_samples.featureCounts.summary"),  # 指向批量文件
             }
@@ -371,8 +383,8 @@ def parse_featurecounts_metrics(results_directory: str) -> Dict[str, Any]:
                             input_bam_list = json.loads(input_bam_list)
                         if isinstance(input_bam_list, list):
                             for ent in input_bam_list:
-                                sid = ent.get("sample_id") or _normalize_sample_id(ent.get("bam_file", ""))
-                                sample_ids.append(_normalize_sample_id(sid))
+                                sample_id = ent.get("sample_id") or _normalize_sample_id(ent.get("bam_file", ""))
+                                sample_ids.append(_normalize_sample_id(sample_id))
                 except Exception:
                     # 若读取或解析失败，忽略并回退到header
                     sample_ids = []
@@ -383,10 +395,10 @@ def parse_featurecounts_metrics(results_directory: str) -> Dict[str, Any]:
                     sample_ids = [_normalize_sample_id(nm) for nm in sample_names]
 
                 # 初始化每个样本的指标
-                for sid in sample_ids:
-                    
+                for sample_id in sample_ids:
+
                     sample_metrics.append({
-                        "sample_id": sid,
+                        "sample_id": sample_id,
                         "assigned": 0,
                         "unassigned_unmapped": 0,
                         "unassigned_mappingquality": 0,

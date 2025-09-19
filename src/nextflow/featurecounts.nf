@@ -21,7 +21,6 @@ params.feature_type = params.feature_type ?: "exon"
 params.attribute_type = params.attribute_type ?: "gene_id"
 params.strand_specificity = (params.strand_specificity != null ? params.strand_specificity as int : 0)
 params.min_mapping_quality = (params.min_mapping_quality != null ? params.min_mapping_quality as int : 10)
-params.threads = (params.threads != null ? params.threads as int : 4)
 params.count_reads_pairs = (params.count_reads_pairs != null ? params.count_reads_pairs as boolean : false)
 params.count_multi_mapping_reads = (params.count_multi_mapping_reads != null ? params.count_multi_mapping_reads as boolean : false)
 params.ignore_duplicates = (params.ignore_duplicates != null ? params.ignore_duplicates as boolean : false)
@@ -36,6 +35,8 @@ if (!params.results_dir) error "Missing required parameter: results_dir"
 
 // ---------------- 进程：一次性处理全部样本 ----------------
 process FEATURECOUNTS_ALL {
+    cpus (params.resources?.featurecounts?.cpus ?: 4)
+    memory (params.resources?.featurecounts?.memory ?: '16 GB')
     publishDir "${params.results_dir}/featurecounts", mode: 'copy'
 
     input:
@@ -65,7 +66,7 @@ process FEATURECOUNTS_ALL {
         -t ${params.feature_type} \\
         -g ${params.attribute_type} \\
         -Q ${params.min_mapping_quality} \\
-        -T ${params.threads} \\
+        -T ${task.cpus} \\
         -s ${params.strand_specificity} \\
         ${params.count_reads_pairs ? '-p' : ''} \\
         ${params.count_multi_mapping_reads ? '-M' : ''} \\
@@ -100,4 +101,3 @@ workflow {
 
     FEATURECOUNTS_ALL(bam_files_ch, gtf_file_ch, sample_ids_ch)
 }
-

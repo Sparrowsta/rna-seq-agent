@@ -12,7 +12,7 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 # 使用官方工具装饰器
 from langchain_core.tools import tool
@@ -336,3 +336,66 @@ def extract_genome_paths(state: AgentState) -> Dict[str, str]:
     except Exception as e:
         logger.error(f"提取基因组路径信息失败: {e}")
         return {}
+
+
+def normalize_resources(stage_name: str, resource_config: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """归一化资源配置为Nextflow可用的格式（仅支持工具同名键）
+
+    Args:
+        stage_name: 工具/阶段名称（fastp/star/hisat2/featurecounts）
+        resource_config: 状态中的资源配置字典，键必须为工具名
+
+    Returns:
+        归一化后的资源配置字典 {cpus: int, memory: str}
+    """
+    try:
+        resource_config_map = resource_config or {}
+        stage_config = resource_config_map.get(stage_name, {})
+        
+        # 提取并验证cpus参数
+        cpus = None
+        if stage_config.get("cpus"):
+            try:
+                cpus = int(stage_config["cpus"])
+            except (ValueError, TypeError):
+                logger.warning(f"无效的cpus值 {config_key}: {stage_config.get('cpus')}")
+        
+        # 提取并验证memory参数
+        memory = stage_config.get("memory")
+        if memory and not isinstance(memory, str):
+            memory = str(memory)
+        
+        # 构建归一化结果（只包含有效值）
+        normalized = {}
+        if cpus is not None:
+            normalized["cpus"] = cpus
+        if memory:
+            normalized["memory"] = memory
+            
+        logger.debug(f"归一化资源配置 {stage_name}: {normalized}")
+        return normalized
+        
+    except Exception as e:
+        logger.error(f"归一化资源配置失败 {stage_name}: {e}")
+        return {}
+
+        
+
+
+def build_stage_resources_map(resource_config: Dict[str, Dict[str, Any]],
+                              stage_names: List[str]) -> Dict[str, Dict[str, Any]]:
+    """根据给定阶段名列表构建 resources 映射（单一映射源由 normalize_resources 维护）
+
+    Args:
+        resource_config: 来自 AgentState 的资源配置（可为 run_* 或工具名键）
+        stage_names: 需要输出的阶段名列表，如 ["fastp"] 或 ["star", "hisat2"]
+
+    Returns:
+        {stage_name: {cpus, memory}, ...}，仅包含有效值
+    """
+    result: Dict[str, Dict[str, Any]] = {}
+    for stage_name in (stage_names or []):
+        normalized = normalize_resources(stage_name, resource_config)
+        if normalized:
+            result[stage_name] = normalized
+    return result

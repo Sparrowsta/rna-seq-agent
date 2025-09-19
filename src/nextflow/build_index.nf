@@ -13,7 +13,6 @@ params.genome_fasta = ""
 params.genome_gtf = ""
 params.star_index_dir = ""
 params.sjdb_overhang = 100
-params.runThreadN = 4
 params.limitGenomeGenerateRAM = 32000000000
 
 // 输入验证
@@ -24,6 +23,8 @@ if (!params.star_index_dir) error "Missing required parameter: star_index_dir"
 
 // STAR索引构建进程
 process BUILD_STAR_INDEX {
+    cpus (params.resources?.star?.cpus ?: 8)
+    memory (params.resources?.star?.memory ?: '32 GB')
     publishDir "${params.star_index_dir}", mode: 'copy'
     
     input:
@@ -47,6 +48,7 @@ process BUILD_STAR_INDEX {
         --genomeFastaFiles \$FASTA_FILE \\
         --sjdbGTFfile \$GTF_FILE \\
         --sjdbOverhang ${params.sjdb_overhang} \\
+        --runThreadN ${task.cpus} \\
         --limitGenomeGenerateRAM ${params.limitGenomeGenerateRAM}
     
     # 创建完成标记

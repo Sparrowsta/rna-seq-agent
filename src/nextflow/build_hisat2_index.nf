@@ -25,6 +25,8 @@ if (!params.hisat2_index_dir) error "Missing required parameter: hisat2_index_di
 
 // 从GTF提取剪接位点和外显子信息进程
 process EXTRACT_SPLICE_SITES {
+    cpus (params.resources?.hisat2?.cpus ?: 4)
+    memory (params.resources?.hisat2?.memory ?: '8 GB')
     input:
     path genome_gtf
     
@@ -56,6 +58,8 @@ process EXTRACT_SPLICE_SITES {
 
 // HISAT2索引构建进程
 process BUILD_HISAT2_INDEX {
+    cpus (params.resources?.hisat2?.cpus ?: 8)
+    memory (params.resources?.hisat2?.memory ?: '16 GB')
     publishDir "${params.hisat2_index_dir}", mode: 'copy'
     
     input:
@@ -81,7 +85,7 @@ process BUILD_HISAT2_INDEX {
     echo "Starting HISAT2 index build at \$(date)" > build_hisat2_index.log
     echo "Genome FASTA: \$FASTA_FILE" >> build_hisat2_index.log
     echo "Index basename: ${params.index_basename}" >> build_hisat2_index.log
-    echo "Threads: ${params.p}" >> build_hisat2_index.log
+    echo "Threads: ${task.cpus}" >> build_hisat2_index.log
     
     # 清理当前目录的输入文件软链接
     rm -f ${genome_fasta}
@@ -98,7 +102,7 @@ process BUILD_HISAT2_INDEX {
         ${exons_param} \\
         ${snp_param} \\
         ${haplotype_param} \\
-        -p ${params.p} \\
+        -p ${task.cpus} \\
         \$FASTA_FILE \\
         ${params.index_basename} \\
         2>&1 | tee -a build_hisat2_index.log

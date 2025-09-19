@@ -93,6 +93,11 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
             **fastp_params
         }
 
+        # 资源配置：直接内联通过 -params 传入，不写任何配置文件
+        from .utils_tools import build_stage_resources_map
+        resource_config = sample_info.get("resource_config", {}) or {}
+        resources_map = build_stage_resources_map(resource_config, ["fastp"])
+
         # 写入参数版本化文件
         versioned_params_file = None
         try:
@@ -137,6 +142,12 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
             "-work-dir", str(work_dir),
             "-resume"
         ]
+        # 通过 -params 内联注入资源配置（始终传入）
+        try:
+            inline_params = json.dumps({"resources": resources_map}, ensure_ascii=False)
+            cmd.extend(["-params", inline_params])
+        except Exception as e:
+            logger.warning(f"构建内联资源参数失败，将不注入资源: {e}")
         
         logger.info(f"执行FastP: {' '.join(cmd)}")
         

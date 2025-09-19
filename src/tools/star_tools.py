@@ -26,7 +26,8 @@ logger = get_logger("rna.tools.star")
 def run_nextflow_star(
     star_params: Dict[str, Any],
     fastp_results: Dict[str, Any],
-    genome_paths: Dict[str, str]
+    genome_paths: Dict[str, str],
+    resource_config: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """执行 STAR 比对（精简版）
 
@@ -120,6 +121,11 @@ def run_nextflow_star(
             **cleaned_params,
         }
 
+        # 资源配置：直接内联通过 -params 传入
+        from .utils_tools import build_stage_resources_map
+        resource_config_map = resource_config or {}
+        resources_map = build_stage_resources_map(resource_config_map, ["star"])
+
         # 参数版本化
         try:
             from .utils_tools import write_params_file
@@ -154,6 +160,12 @@ def run_nextflow_star(
             "-params-file", str(params_file),
             "-work-dir", str(work_dir),
         ]
+        # 通过 -params 内联注入资源配置
+        try:
+            inline_params = json.dumps({"resources": resources_map}, ensure_ascii=False)
+            command.extend(["-params", inline_params])
+        except Exception as e:
+            logger.warning(f"构建STAR内联资源参数失败，将不注入资源: {e}")
         execution_result = subprocess.run(command, capture_output=True, text=True, timeout=7200, cwd=tools_config.settings.project_root)
 
         # 7) 组装每样本输出路径（与 star.nf publishDir 对齐）

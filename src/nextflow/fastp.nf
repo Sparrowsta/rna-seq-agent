@@ -18,7 +18,6 @@ params.length_required = 15                 // 最小read长度 - RNA-seq推荐�
 params.adapter_trimming = true              // 默认启用adapter修剪
 params.quality_filtering = true             // 默认启用质量过滤
 params.length_filtering = true              // 默认启用长度过滤
-params.threads = 4                          // 默认线程数
 
 // 高级参数 - 硬编码最佳实践
 // 若未由Agent显式指定，以下多数参数维持空值或合理默认，脚本中按需拼接
@@ -75,7 +74,8 @@ params.overrepresentation_sampling = null
 
 // FastP 质控process - 使用硬编码最佳实践模板
 process fastp_quality_control {
-    cpus params.fastp_cpus ?: 4
+    cpus (params.resources?.fastp?.cpus ?: 4)
+    memory (params.resources?.fastp?.memory ?: '4 GB')
     tag "FastP质控: ${sample_id}"
     
     publishDir "${params.results_dir}/fastp/${sample_id}", mode: 'copy', pattern: "*.{html,json,fastq.gz}"
@@ -102,7 +102,7 @@ process fastp_quality_control {
             --out2 ${sample_id}_2.trimmed.fastq.gz \\
             --html ${sample_id}.fastp.html \\
             --json ${sample_id}.fastp.json \\
-            --thread ${params.threads} \\
+            --thread ${task.cpus} \\
             --qualified_quality_phred ${params.qualified_quality_phred} \\
             --unqualified_percent_limit ${params.unqualified_percent_limit} \\
             --n_base_limit ${params.n_base_limit} \\
@@ -160,7 +160,7 @@ process fastp_quality_control {
             --out1 ${sample_id}.single.trimmed.fastq.gz \\
             --html ${sample_id}.fastp.html \\
             --json ${sample_id}.fastp.json \\
-            --thread ${params.threads} \\
+            --thread ${task.cpus} \\
             --qualified_quality_phred ${params.qualified_quality_phred} \\
             --unqualified_percent_limit ${params.unqualified_percent_limit} \\
             --n_base_limit ${params.n_base_limit} \\
@@ -225,4 +225,3 @@ workflow {
     // 执行FastP质控
     fastp_quality_control(fastq_samples_ch)
 }
-
