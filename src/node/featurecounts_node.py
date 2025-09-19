@@ -193,11 +193,9 @@ async def _call_featurecounts_optimization_agent(state: AgentState) -> Featureco
         "gtf_path": gtf_path,  # 简化传递，只提供GTF路径
         "featurecounts_resource_config": featurecounts_resource_config,
         "current_featurecounts_params": state.featurecounts_params,
-        "star_results": state.star_results,
+        "star_results": getattr(state, 'star_results', {}),
         "hisat2_results": getattr(state, 'hisat2_results', {}),
-        "optimization_history": {
-            "featurecounts": state.featurecounts_optimization_history,  # 完整历史列表
-        },
+        "optimization_history": state.featurecounts_optimization_history
     }
     
     user_prompt = json.dumps(user_context, ensure_ascii=False, indent=2)

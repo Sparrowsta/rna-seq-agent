@@ -185,10 +185,7 @@ async def _call_hisat2_optimization_agent(state: AgentState) -> Hisat2Response:
         "current_hisat2_params": state.hisat2_params,
         "fastp_results": state.fastp_results,  # 完整传递FastP结果
         "hisat2_results": state.hisat2_results,  # 历史执行结果
-        "optimization_history": {
-            "hisat2": state.hisat2_optimization_history,  # 完整历史列表
-            "fastp": state.fastp_optimization_params,
-        },
+        "optimization_history": state.hisat2_optimization_history
     }
 
     user_prompt = json.dumps(user_context, ensure_ascii=False, indent=2)

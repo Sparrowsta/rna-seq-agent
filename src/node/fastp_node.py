@@ -182,11 +182,7 @@ async def _call_fastp_optimization_agent(state: AgentState) -> FastpResponse:
         "sample_info": sample_info,
         "fastp_resource_config": fastp_resource_config,
         "current_fastp_params": state.fastp_params,
-        "optimization_history": {
-            "fastp": state.fastp_optimization_history,  # 完整历史列表
-            "star": state.star_optimization_params,     # 暂时保持兼容
-            "featurecounts": state.featurecounts_optimization_params,
-        },
+        "optimization_history": state.fastp_optimization_history
     }
 
     user_prompt = json.dumps(user_context, ensure_ascii=False, indent=2)
