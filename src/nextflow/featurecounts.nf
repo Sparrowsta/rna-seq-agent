@@ -50,37 +50,52 @@ process FEATURECOUNTS_ALL {
     path "all_samples.featureCounts.summary", emit: summary_all
     path "*/*.featureCounts", emit: per_sample_counts, optional: true
     path "*/*.featureCounts.summary", emit: per_sample_summaries, optional: true
-    path "merged_counts_matrix.txt", emit: matrix_compat
 
     script:
-    // 使用原始 BAM 文件名（已包含 sample_id 前缀），避免任何内部软链接
+    // 使用原始BAM文件名，执行完成后处理输出文件表头
     def sample_count = sample_ids.size()
     def bams_arg = bam_files.collect { it.name }.join(' ')
     """
     set -e
     echo "一次性执行 featureCounts，样本数: ${sample_count}"
-
-    micromamba run -n quant_env featureCounts \\
-        -a ${gtf_file} \\
-        -o all_samples.featureCounts \\
-        -t ${params.feature_type} \\
-        -g ${params.attribute_type} \\
-        -Q ${params.min_mapping_quality} \\
-        -T ${task.cpus} \\
-        -s ${params.strand_specificity} \\
-        ${params.count_reads_pairs ? '-p' : ''} \\
-        ${params.count_multi_mapping_reads ? '-M' : ''} \\
-        ${params.ignore_duplicates ? '--ignoreDup' : ''} \\
-        ${params.require_both_ends_mapped ? '-B' : ''} \\
-        ${params.exclude_chimeric ? '-C' : ''} \\
+    
+    # 执行FeatureCounts，使用原始BAM文件
+    micromamba run -n quant_env featureCounts \
+        -a ${gtf_file} \
+        -o all_samples.featureCounts \
+        -t ${params.feature_type} \
+        -g ${params.attribute_type} \
+        -Q ${params.min_mapping_quality} \
+        -T ${task.cpus} \
+        -s ${params.strand_specificity} \
+        ${params.count_reads_pairs ? '-p' : ''} \
+        ${params.count_multi_mapping_reads ? '-M' : ''} \
+        ${params.ignore_duplicates ? '--ignoreDup' : ''} \
+        ${params.require_both_ends_mapped ? '-B' : ''} \
+        ${params.exclude_chimeric ? '-C' : ''} \
         ${bams_arg}
 
     if [ -f "all_samples.featureCounts" ]; then
-        cp all_samples.featureCounts merged_counts_matrix.txt
-        echo "FeatureCounts批量计数完成"
+        echo "FeatureCounts执行成功，开始处理输出文件表头"
+        
+        
+        # 处理计数矩阵表头：将BAM文件路径替换为样本ID
+        ${sample_ids.withIndex().collect { sample_id, i -> 
+            def bam_name = bam_files[i].name
+            "sed -i '1s|${bam_name}|${sample_id}|g' all_samples.featureCounts"
+        }.join('
+        ')}
+        
+        # 处理summary文件表头：将BAM文件路径替换为样本ID  
+        ${sample_ids.withIndex().collect { sample_id, i -> 
+            def bam_name = bam_files[i].name
+            "sed -i '1s|${bam_name}|${sample_id}|g' all_samples.featureCounts.summary"
+        }.join('
+        ')}
+        
+        echo "表头处理完成，FeatureCounts批量计数完成"
     else
         echo "错误: FeatureCounts执行失败"
-        touch merged_counts_matrix.txt
     fi
     """
 }

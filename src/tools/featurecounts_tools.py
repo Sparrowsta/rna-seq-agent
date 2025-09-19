@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
+import pandas as pd
+
 # 使用官方工具装饰器
 from langchain_core.tools import tool
 
@@ -28,7 +30,6 @@ def run_nextflow_featurecounts(
     star_results: Dict[str, Any],
     gtf_path: str,
     results_timestamp: Optional[str] = None,
-    base_results_dir: Optional[str] = None,
     hisat2_results: Optional[Dict[str, Any]] = None,
     resource_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -39,7 +40,6 @@ def run_nextflow_featurecounts(
         star_results: STAR节点结果（可为空），需包含 per_sample_outputs 中的 BAM 路径
         gtf_path: GTF注释文件的绝对路径（从节点预处理提供）
         results_timestamp: 可选的时间戳，优先用于结果目录
-        base_results_dir: 可选的基底结果目录（来自Detect节点）
         hisat2_results: HISAT2节点结果（可为空），与 star_results 二选一
 
     Returns:
@@ -81,7 +81,7 @@ def run_nextflow_featurecounts(
 
         # 运行根目录（results_dir）：复用比对步骤的 results_dir，保持同一运行根目录
         timestamp = results_timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_root = Path(align_results.get("results_dir") or base_results_dir or tools_config.results_dir / f"{timestamp}")
+        run_root = Path(align_results.get("results_dir") or tools_config.results_dir / f"{timestamp}")
         results_dir = run_root
         # 统一 Nextflow 工作目录到 /data/work，使用运行ID区分
         run_id = results_dir.name or timestamp
@@ -92,7 +92,7 @@ def run_nextflow_featurecounts(
         logger.info(f"FeatureCounts启动：bam={len(per_sample)} results={results_dir} work={work_dir}")
 
         # 构建 Nextflow 参数（与 featurecounts.nf 对齐）
-        # 将 STAR 输出的 BAM 列表转换为JSON字符串（Nextflow 端会 echo 后再解析）
+        # 将对齐结果（STAR/HISAT2）产出的 BAM 列表转换为 JSON 字符串（Nextflow 端会 echo 后再解析）
         bam_entries = []
         for item in per_sample:
             sample_id = item.get("sample_id") or "sample"
@@ -107,46 +107,15 @@ def run_nextflow_featurecounts(
                 }
             bam_entries.append({"sample_id": sample_id, "bam_file": bam_norm})
         if not bam_entries:
-            return {"success": False, "error": "未从STAR结果中收集到任何BAM路径"}
+            return {"success": False, "error": "未从对齐结果中收集到任何BAM路径"}
+        params_raw = (featurecounts_params or {}).copy()
 
-        # 参数映射：Python风格/短旗标 → Nextflow params 名称
-        mapped: Dict[str, Any] = {}
-        params_raw = featurecounts_params or {}
-
-        def pick_bool(key: str) -> Optional[bool]:
-            value = params_raw.get(key)
-            if isinstance(value, bool):
-                return value
-            return None
-
-        def pick_int(key: str) -> Optional[int]:
-            value = params_raw.get(key)
-            try:
-                return int(value) if value is not None else None
-            except Exception:
-                return None
-
-        # 线程/链特异性/特征/属性/质量阈
-        mapped["threads"] = pick_int("-T") or params_raw.get("threads") or 4
-        mapped["strand_specificity"] = pick_int("-s") or params_raw.get("strand_specificity") or 0
-        mapped["feature_type"] = params_raw.get("-t") or params_raw.get("feature_type") or "exon"
-        mapped["attribute_type"] = params_raw.get("-g") or params_raw.get("attribute_type") or "gene_id"
-        mapped["min_mapping_quality"] = pick_int("-Q") or params_raw.get("min_mapping_quality") or 10
-
-        # 布尔开关 - 修改count_reads_pairs默认值为false
-        mapped["count_reads_pairs"] = pick_bool("-p") if pick_bool("-p") is not None else (params_raw.get("count_reads_pairs") if isinstance(params_raw.get("count_reads_pairs"), bool) else False)
-        mapped["count_multi_mapping_reads"] = pick_bool("-M") if pick_bool("-M") is not None else bool(params_raw.get("count_multi_mapping_reads", False))
-        mapped["ignore_duplicates"] = bool(params_raw.get("--ignoreDup", False) or params_raw.get("ignore_duplicates", False))
-        mapped["require_both_ends_mapped"] = bool(params_raw.get("-B", False) or params_raw.get("require_both_ends_mapped", False))
-        mapped["exclude_chimeric"] = bool(params_raw.get("-C", False) or params_raw.get("exclude_chimeric", False))
-
-        # 组装 Nextflow 参数文件
         nf_params = {
             "input_bam_list": json.dumps(bam_entries, ensure_ascii=False),
             "gtf_file": gtf_file,
             "results_dir": str(results_dir),
             "work_dir": str(work_dir),
-            **mapped,
+            **params_raw,
         }
 
         # 资源配置：仅接受 FeatureCounts 阶段片段，规范化后注入
@@ -169,18 +138,15 @@ def run_nextflow_featurecounts(
         except Exception as e:
             logger.warning(f"FeatureCounts参数版本化写入失败 (不影响执行): {e}")
 
-        # 使用版本化文件作为参数文件，如果失败则降级到临时文件
-        if versioned_params_file and versioned_params_file.exists():
-            params_file = versioned_params_file
-            logger.info(f"使用版本化参数文件运行FeatureCounts: {params_file}")
-        else:
-            # 降级方案：生成临时参数文件
-            logger.warning("版本化参数文件不可用，使用临时参数文件")
-            fc_dir = results_dir / "featurecounts"
-            fc_dir.mkdir(parents=True, exist_ok=True)
-            params_file = fc_dir / "featurecounts_params.json"
-            with open(params_file, "w", encoding="utf-8") as f:
-                json.dump(nf_params, f, indent=2, ensure_ascii=False)
+        # 使用版本化参数文件
+        if not versioned_params_file or not versioned_params_file.exists():
+            return {
+                "success": False,
+                "error": "版本化参数文件生成失败，无法执行FeatureCounts"
+            }
+        
+        params_file = versioned_params_file
+        logger.info(f"使用版本化参数文件运行FeatureCounts: {params_file}")
 
         # 定位 Nextflow 脚本
         nextflow_script = tools_config.settings.nextflow_scripts_dir / "featurecounts.nf"
@@ -221,54 +187,28 @@ def run_nextflow_featurecounts(
             cwd=tools_config.settings.project_root,
         )
 
-        # 构建输出结构 - 适配新的批量输出格式
+        # 构建输出结构 - 聚合输出格式
         sample_count = len(bam_entries)
-        per_sample_outputs: List[Dict[str, Any]] = []
         fc_root = results_dir / "featurecounts"
         
-        # 新的featurecounts.nf脚本生成批量文件，不再有每个样本的单独目录
-        # 主要输出文件：
-        # - all_samples.featureCounts (完整计数矩阵)
-        # - all_samples.featureCounts.summary (统计摘要)
-        # - merged_counts_matrix.txt (兼容格式的矩阵)
-        
-        # 为兼容性生成per_sample_outputs结构，指向批量文件
-        for entry in bam_entries:
-            sample_id = entry["sample_id"]
-            sample_output = {
-                "sample_id": sample_id,
-                "counts_file": str(fc_root / "all_samples.featureCounts"),  # 指向批量文件
-                "summary_file": str(fc_root / "all_samples.featureCounts.summary"),  # 指向批量文件
-            }
-            per_sample_outputs.append(sample_output)
-
-        payload = {
-            "success": result.returncode == 0,
-            "message": f"FeatureCounts定量完成，处理了{sample_count}个样本" if result.returncode == 0 else "FeatureCounts执行失败",
-            "results_dir": str(results_dir),
-            "work_dir": str(work_dir),
-            "params_file": str(params_file),
-            "sample_count": sample_count,
-            "per_sample_outputs": per_sample_outputs,
-            "matrix_path": str(fc_root / "merged_counts_matrix.txt"),
-            "nextflow_params": nf_params,
+        # FeatureCounts聚合输出文件
+        output = {
+            "counts_file": str(fc_root / "all_samples.featureCounts"),
+            "summary_file": str(fc_root / "all_samples.featureCounts.summary"),
         }
-        try:
-            if get_tools_config().settings.debug_mode:
-                payload.update({
-                    "stderr": result.stderr,
-                    "cmd": " ".join(cmd),
-                })
-            else:
-                # 非调试模式去掉 nextflow_params 以减小负载
-                payload.pop("nextflow_params", None)
-        except Exception:
-            pass
-        if payload["success"]:
+
+        results = {
+            "success": result.returncode == 0,
+            "results_dir": str(results_dir),
+            "sample_count": sample_count,
+            "output": output
+        }
+        
+        if results["success"]:
             logger.info(f"FeatureCounts完成：samples={sample_count} results={results_dir}")
         else:
             logger.warning(f"FeatureCounts失败：rc={result.returncode} stderr={(result.stderr or '')[:400]}")
-        return payload
+        return results
 
     except subprocess.TimeoutExpired:
         logger.warning("FeatureCounts执行超时：30分钟")
@@ -286,213 +226,113 @@ def run_nextflow_featurecounts(
 
 @tool
 def parse_featurecounts_metrics(results_directory: str) -> Dict[str, Any]:
-    """解析FeatureCounts定量结果，输出样本级与总体指标
-    
+    """解析 FeatureCounts 定量结果为 JSON，保留样本级颗粒度
+
+    - 读取 featurecounts/all_samples.featureCounts.summary
+    - 返回每个样本的完整 Status→数值映射（不丢失任何状态）
+    - 同时提供基础派生值（total_reads、assignment_rate）与总体统计
+
     Args:
-        results_directory: FeatureCounts结果目录（包含 featurecounts 子目录）
-    
-    Returns:
-        解析后的指标（assignment rates、未分配原因等）
+        results_directory: FeatureCounts 结果目录（包含 featurecounts 子目录）
     """
     try:
         results_path = Path(results_directory)
         if not results_path.exists():
             return {"success": False, "error": f"结果目录不存在: {results_directory}"}
-        
+
         fc_dir = results_path / "featurecounts"
         if not fc_dir.exists():
             return {"success": False, "error": f"缺少特征计数目录: {fc_dir}"}
-        
-        # 查找批量输出的汇总文件
+
+        # 汇总与计数矩阵
         summary_file = fc_dir / "all_samples.featureCounts.summary"
         counts_file = fc_dir / "all_samples.featureCounts"
-        
+
         if not summary_file.exists():
             return {"success": False, "error": f"未找到FeatureCounts汇总文件: {summary_file}"}
-        
         if not counts_file.exists():
             return {"success": False, "error": f"未找到FeatureCounts计数文件: {counts_file}"}
-        
-        # 解析批量汇总文件
-        sample_metrics: List[Dict[str, Any]] = []
-        totals = {
-            "assigned": 0,
-            "nofeatures": 0,
-            "multimapping": 0,
-            "ambiguous": 0,
-            "mappingquality": 0,
-            "other": 0,
-            "total": 0,
-        }
-        
+
+
+
+
         try:
-            # 规范化样本ID的内部工具：
-            # - 兼容列名为BAM文件路径/文件名/带STAR后缀的多种情况
-            # - 目标：与样本ID（如 SRRxxxx、样本目录名）对齐
-            def _normalize_sample_id(name: str) -> str:
-                s = str(name or "").strip()
-                if not s:
-                    return s
-                # 去除可能的路径前缀（同时支持 / 与 \\ 分隔符）
-                if "/" in s:
-                    s = s.split("/")[-1]
-                if "\\" in s:
-                    s = s.split("\\")[-1]
-                # 去除常见扩展名
-                for ext in [".bam", ".cram", ".sam", ".txt"]:
-                    if s.endswith(ext):
-                        s = s[: -len(ext)]
-                        break
-                # 去除常见后缀（STAR/HISAT2 的命名后缀，点/下划线变体）
-                star_suffixes = [
-                    ".Aligned.sortedByCoord.out",
-                    ".Aligned.out",
-                    ".Aligned",
-                    "_Aligned.sortedByCoord.out",
-                    "_Aligned.out",
-                    "_Aligned",
-                    ".hisat2",  # 来自 HISAT2 的常见后缀（在移除 .bam 后可能残留）
-                    "_hisat2",
-                ]
-                for suf in star_suffixes:
-                    if s.endswith(suf):
-                        s = s[: -len(suf)]
-                        break
-                return s
+            # 使用pandas读取tab分隔的summary文件
+            summary_df = pd.read_csv(summary_file, sep='	', index_col=0)
+            
+            if summary_df.empty:
+                return {"success": False, "error": "汇总文件为空"}
 
-            with open(summary_file, "r", encoding="utf-8", errors="ignore") as f:
-                lines = f.readlines()
-                
-                if len(lines) < 2:
-                    return {"success": False, "error": "汇总文件格式错误"}
-                
-                # 解析标题行获取样本名称（用于回退）
-                header = lines[0].strip().split('\t')
-                if len(header) < 2:
-                    return {"success": False, "error": "汇总文件标题行格式错误"}
 
-                # 优先从参数文件读取样本ID顺序（与执行输入一致）
-                sample_ids: List[str] = []
-                try:
-                    params_path = results_path / "featurecounts" / "featurecounts_params.json"
-                    if params_path.exists():
-                        with open(params_path, "r", encoding="utf-8") as pf:
-                            pf_json = json.load(pf)
-                        input_bam_list = pf_json.get("input_bam_list")
-                        if isinstance(input_bam_list, str):
-                            input_bam_list = json.loads(input_bam_list)
-                        if isinstance(input_bam_list, list):
-                            for ent in input_bam_list:
-                                sample_id = ent.get("sample_id") or _normalize_sample_id(ent.get("bam_file", ""))
-                                sample_ids.append(_normalize_sample_id(sample_id))
-                except Exception:
-                    # 若读取或解析失败，忽略并回退到header
-                    sample_ids = []
+            # 获取样本ID列表（列名）和状态列表（索引）
+            sample_ids = summary_df.columns.tolist()
+            statuses_in_file = summary_df.index.tolist()
+            
+            # 使用pandas直接计算统计数据
+            # 添加Total行（每个样本的总reads）
+            summary_df.loc['Total'] = summary_df.sum(axis=0)
+            
+            # 添加assignment_rate行（分配率）
+            if 'Assigned' in summary_df.index:
+                summary_df.loc['Assignment_Rate'] = summary_df.loc['Assigned'] / summary_df.loc['Total']
+            else:
+                summary_df.loc['Assignment_Rate'] = 0
+            
+            # 添加Overall_Total列（每个状态的总计）
+            summary_df['Overall_Total'] = summary_df.drop(['Total', 'Assignment_Rate'], axis=1).sum(axis=1)
+            
+            # 添加Overall_Assignment_Rate行
+            if 'Assigned' in summary_df.index:
+                overall_total = summary_df.loc['Total', 'Overall_Total']
+                overall_assigned = summary_df.loc['Assigned', 'Overall_Total'] 
+                summary_df.loc['Overall_Assignment_Rate', 'Overall_Total'] = (overall_assigned / overall_total) if overall_total > 0 else 0.0
 
-                # 校验样本数是否与汇总列数一致；否则回退到header列名
-                if not sample_ids or len(sample_ids) != (len(header) - 1):
-                    sample_names = header[1:]  # 第一列是Status，后面是样本名（通常为输入BAM的文件名）
-                    sample_ids = [_normalize_sample_id(nm) for nm in sample_names]
 
-                # 初始化每个样本的指标
-                for sample_id in sample_ids:
-
-                    sample_metrics.append({
-                        "sample_id": sample_id,
-                        "assigned": 0,
-                        "unassigned_unmapped": 0,
-                        "unassigned_mappingquality": 0,
-                        "unassigned_nofeatures": 0,
-                        "unassigned_ambiguity": 0,
-                        "total_reads": 0
-                    })
-                
-                # 解析每一行统计数据
-                for line in lines[1:]:
-                    parts = line.strip().split('\t')
-                    if len(parts) < 2:
-                        continue
-                        
-                    status = parts[0]
-                    values = [int(v) for v in parts[1:]]
-                    
-                    # 更新每个样本的指标
-                    for i, value in enumerate(values):
-                        if i < len(sample_metrics):
-                            if status == "Assigned":
-                                sample_metrics[i]["assigned"] = value
-                                totals["assigned"] += value
-                            elif status == "Unassigned_Unmapped":
-                                sample_metrics[i]["unassigned_unmapped"] = value
-                            elif status == "Unassigned_MappingQuality":
-                                sample_metrics[i]["unassigned_mappingquality"] = value
-                                totals["mappingquality"] += value
-                            elif status == "Unassigned_NoFeatures":
-                                sample_metrics[i]["unassigned_nofeatures"] = value
-                                totals["nofeatures"] += value
-                            elif status == "Unassigned_Ambiguity":
-                                sample_metrics[i]["unassigned_ambiguity"] = value
-                                totals["ambiguous"] += value
-                
-                # 计算每个样本的总读数和分配率
-                for sample_metric in sample_metrics:
-                    sample_metric["total_reads"] = (
-                        sample_metric["assigned"] +
-                        sample_metric["unassigned_unmapped"] +
-                        sample_metric["unassigned_mappingquality"] +
-                        sample_metric["unassigned_nofeatures"] +
-                        sample_metric["unassigned_ambiguity"]
-                    )
-                    
-                    if sample_metric["total_reads"] > 0:
-                        sample_metric["assignment_rate"] = round(
-                            sample_metric["assigned"] / sample_metric["total_reads"], 4
-                        )
-                    else:
-                        sample_metric["assignment_rate"] = 0.0
-                    
-                    totals["total"] += sample_metric["total_reads"]
-        
         except Exception as e:
             return {"success": False, "error": f"解析汇总文件失败: {str(e)}"}
-        
-        # 计算总体统计
-        total_assignment_rate = totals["assigned"] / totals["total"] if totals["total"] > 0 else 0.0
-        
-        # 读取计数矩阵获取基因数量
+
+        # 基因数（行数-表头-注释）
         gene_count = 0
         try:
             with open(counts_file, "r", encoding="utf-8") as f:
-                # 跳过注释行
                 for line in f:
                     if not line.startswith('#'):
                         gene_count += 1
                 gene_count -= 1  # 减去标题行
         except Exception:
             gene_count = 0
-        
-        # 重要文件路径（若存在合并矩阵，则优先提供）
-        matrix_file = fc_dir / "merged_counts_matrix.txt"
 
-        return {
+        # 构建标准列表格式的sample_metrics
+        sample_metrics = []
+        for sample_id in sample_ids:
+            if sample_id in summary_df.columns:
+                sample_data = summary_df[sample_id].to_dict()
+                sample_metrics.append({
+                    "sample_id": sample_id,
+                    "total_reads": sample_data.get("Total", 0),
+                    "assigned_reads": sample_data.get("Assigned", 0),
+                    "assignment_rate": sample_data.get("Assignment_Rate", 0.0),
+                    "unassigned_nofeatures": sample_data.get("Unassigned_NoFeatures", 0),
+                    "unassigned_ambiguity": sample_data.get("Unassigned_Ambiguity", 0),
+                    "unassigned_mappingquality": sample_data.get("Unassigned_MappingQuality", 0),
+                    "all_stats": sample_data  # 完整的统计数据
+                })
+        
+        result = {
             "success": True,
             "results_directory": results_directory,
             "summary_file": str(summary_file),
             "counts_file": str(counts_file),
-            "matrix_path": str(matrix_file) if matrix_file.exists() else str(counts_file),
-            "sample_count": len(sample_metrics),
+            "matrix_path": str(counts_file),
+            "sample_count": len(sample_ids),
             "gene_count": gene_count,
-            "sample_metrics": sample_metrics,
-            "overall_statistics": {
-                "total_reads": totals["total"],
-                "total_assigned": totals["assigned"],
-                "total_unassigned_nofeatures": totals["nofeatures"],
-                "total_unassigned_ambiguity": totals["ambiguous"],
-                "total_unassigned_mappingquality": totals["mappingquality"],
-                "overall_assignment_rate": round(total_assignment_rate, 4)
-            }
+            "statuses": statuses_in_file,
+            "sample_metrics": sample_metrics,  # 标准列表格式
+            "summary_data": summary_df.to_dict()  # 保留完整的pandas数据供其他用途
         }
-    
+        
+        return result
+
     except Exception as e:
         return {
             "success": False,

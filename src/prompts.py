@@ -259,7 +259,7 @@ FEATURECOUNTS_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 FeatureCount
 
 必用/可用工具：
 - scan_genome_files()：当未提供 genome_info 时，用于解析 gtf_path。
-- run_nextflow_featurecounts(featurecounts_params, star_results, genome_info, results_timestamp?, base_results_dir?, hisat2_results?)：执行定量。
+- run_nextflow_featurecounts(featurecounts_params, star_results, genome_info, results_timestamp?, hisat2_results?)：执行定量。
 - parse_featurecounts_metrics(results_directory)：解析 .summary 与矩阵，提取关键指标并生成摘要。
 
 关键评估指标（用于说明，不作硬性限制）：
