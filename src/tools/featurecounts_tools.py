@@ -30,7 +30,7 @@ def run_nextflow_featurecounts(
     results_timestamp: Optional[str] = None,
     base_results_dir: Optional[str] = None,
     hisat2_results: Optional[Dict[str, Any]] = None,
-    resource_config: Optional[Dict[str, Dict[str, Any]]] = None,
+    resource_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """执行Nextflow FeatureCounts定量流程
 
@@ -149,10 +149,10 @@ def run_nextflow_featurecounts(
             **mapped,
         }
 
-        # 资源配置：直接内联通过 -params 传入
-        from .utils_tools import build_stage_resources_map
-        resource_config_map = resource_config or {}
-        resources_map = build_stage_resources_map(resource_config_map, ["featurecounts"])
+        # 资源配置：仅接受 FeatureCounts 阶段片段，规范化后注入
+        from .utils_tools import normalize_resources
+        normalized_fc = normalize_resources("featurecounts", {"featurecounts": resource_config or {}})
+        resources_map: Dict[str, Dict[str, Any]] = {"featurecounts": normalized_fc} if normalized_fc else {}
 
         # M4: 参数版本化 - 使用新的接口直接传递results_dir
         versioned_params_file = None

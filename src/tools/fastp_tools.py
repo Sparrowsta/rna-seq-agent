@@ -11,7 +11,7 @@ import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # 使用官方工具装饰器
 from langchain_core.tools import tool
@@ -24,7 +24,11 @@ logger = get_logger("rna.tools.fastp")
 
 
 @tool
-def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]) -> Dict[str, Any]:
+def run_nextflow_fastp(
+    fastp_params: Dict[str, Any],
+    sample_info: Dict[str, Any],
+    resource_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """执行Nextflow FastP质控流程
     
     Args:
@@ -93,10 +97,10 @@ def run_nextflow_fastp(fastp_params: Dict[str, Any], sample_info: Dict[str, Any]
             **fastp_params
         }
 
-        # 资源配置：直接内联通过 -params 传入，不写任何配置文件
-        from .utils_tools import build_stage_resources_map
-        resource_config = sample_info.get("resource_config", {}) or {}
-        resources_map = build_stage_resources_map(resource_config, ["fastp"])
+        # 资源配置：仅接受 FastP 阶段的片段，规范化后内联注入
+        from .utils_tools import normalize_resources
+        normalized_fastp = normalize_resources("fastp", {"fastp": resource_config or {}})
+        resources_map: Dict[str, Dict[str, Any]] = {"fastp": normalized_fastp} if normalized_fastp else {}
 
         # 写入参数版本化文件
         versioned_params_file = None

@@ -181,6 +181,9 @@ async def _call_featurecounts_optimization_agent(state: AgentState) -> Featureco
     # 提取GTF路径用于工具调用
     gtf_path = genome_paths.get("gtf_path", "")
     
+    # 提取资源配置片段（仅 FeatureCounts）
+    featurecounts_resource_config = state.resource_config.get("featurecounts") if state.resource_config else {}
+
     user_context = {
         "execution_mode": state.execution_mode,
         "genome_config": {
@@ -188,6 +191,7 @@ async def _call_featurecounts_optimization_agent(state: AgentState) -> Featureco
             "paired_end": state.nextflow_config.get("paired_end")
         },
         "gtf_path": gtf_path,  # 简化传递，只提供GTF路径
+        "featurecounts_resource_config": featurecounts_resource_config,
         "current_featurecounts_params": state.featurecounts_params,
         "star_results": state.star_results,
         "hisat2_results": getattr(state, 'hisat2_results', {}),

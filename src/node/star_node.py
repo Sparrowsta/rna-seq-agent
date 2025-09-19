@@ -184,7 +184,8 @@ async def _call_star_optimization_agent(state: AgentState) -> StarResponse:
     # 动态提取基因组路径信息
     genome_paths = extract_genome_paths(state)
     genome_version = state.nextflow_config.get("genome_version")
-
+    star_resource_config = state.resource_config.get("star") if state.resource_config else {}
+    
     user_context = {
         "execution_mode": state.execution_mode,
         "genome_config": {
@@ -192,6 +193,7 @@ async def _call_star_optimization_agent(state: AgentState) -> StarResponse:
             "paired_end": state.nextflow_config.get("paired_end")
         },
         "genome_paths": genome_paths,
+        "star_resource_config": star_resource_config,
         "current_star_params": state.star_params,
         "fastp_results": state.fastp_results,  # 完整传递FastP结果
         "star_results": state.star_results,  # 历史执行结果

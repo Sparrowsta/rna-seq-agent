@@ -26,7 +26,7 @@ def run_nextflow_hisat2(
     hisat2_params: Dict[str, Any],
     fastp_results: Dict[str, Any],
     genome_paths: Dict[str, str],
-    resource_config: Optional[Dict[str, Dict[str, Any]]] = None,
+    resource_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """执行 HISAT2 比对
 
@@ -119,9 +119,10 @@ def run_nextflow_hisat2(
         }
 
         # 资源配置：直接内联通过 -params 传入
-        from .utils_tools import build_stage_resources_map
-        resource_config_map = resource_config or {}
-        resources_map = build_stage_resources_map(resource_config_map, ["hisat2"])
+        # 仅接受 HISAT2 阶段片段，规范化后注入
+        from .utils_tools import normalize_resources
+        normalized_hisat2 = normalize_resources("hisat2", {"hisat2": resource_config or {}})
+        resources_map: Dict[str, Dict[str, Any]] = {"hisat2": normalized_hisat2} if normalized_hisat2 else {}
 
         # 参数版本化
         try:

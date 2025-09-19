@@ -174,10 +174,13 @@ async def _call_fastp_optimization_agent(state: AgentState) -> FastpResponse:
         }
     }
 
+    # 提取资源配置片段（仅 FastP）
+    fastp_resource_config = state.resource_config.get("fastp") if state.resource_config else {}
+
     user_context = {
         "execution_mode": state.execution_mode,
         "sample_info": sample_info,
-        "nextflow_config": state.nextflow_config,
+        "fastp_resource_config": fastp_resource_config,
         "current_fastp_params": state.fastp_params,
         "optimization_history": {
             "fastp": state.fastp_optimization_history,  # 完整历史列表

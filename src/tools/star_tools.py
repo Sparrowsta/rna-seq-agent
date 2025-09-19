@@ -27,7 +27,7 @@ def run_nextflow_star(
     star_params: Dict[str, Any],
     fastp_results: Dict[str, Any],
     genome_paths: Dict[str, str],
-    resource_config: Optional[Dict[str, Dict[str, Any]]] = None,
+    resource_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """执行 STAR 比对（精简版）
 
@@ -35,6 +35,7 @@ def run_nextflow_star(
         star_params: STAR执行参数
         fastp_results: FastP质控结果
         genome_paths: 简化的基因组路径信息（从节点动态提取）
+        resource_config: 仅包含 STAR 阶段的资源配置片段，如 {"cpus": 8, "memory": "32 GB"}
 
     约束（与路径契约一致）:
     - 仅在 fastp_results.success 为真且包含 per_sample_outputs 时放行
@@ -122,9 +123,10 @@ def run_nextflow_star(
         }
 
         # 资源配置：直接内联通过 -params 传入
-        from .utils_tools import build_stage_resources_map
-        resource_config_map = resource_config or {}
-        resources_map = build_stage_resources_map(resource_config_map, ["star"])
+        # 仅接受 STAR 本阶段的资源配置片段；规范化后注入到 -params 中
+        from .utils_tools import normalize_resources
+        normalized_star = normalize_resources("star", {"star": resource_config or {}})
+        resources_map: Dict[str, Dict[str, Any]] = {"star": normalized_star} if normalized_star else {}
 
         # 参数版本化
         try:

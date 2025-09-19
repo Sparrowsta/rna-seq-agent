@@ -171,17 +171,7 @@ async def _call_hisat2_optimization_agent(state: AgentState) -> Hisat2Response:
     genome_paths = extract_genome_paths(state)
     genome_version = state.nextflow_config.get("genome_version")
 
-    # 组织数据上下文（仅数据，不重复流程与指南，遵循系统提示）
-    sample_info = {
-        "sample_groups": state.nextflow_config.get("sample_groups", []),
-        # 结果目录可选提供，工具内部会自动兜底
-        **({"results_dir": state.results_dir} if state.results_dir else {}),
-        # 添加state信息用于参数版本化
-        "state_info": {
-            "results_dir": state.results_dir,
-            "results_timestamp": state.results_timestamp
-        }
-    }
+    hisat2_resource_config = state.resource_config.get("hisat2") if state.resource_config else {}
 
     user_context = {
         "execution_mode": state.execution_mode,
@@ -190,7 +180,8 @@ async def _call_hisat2_optimization_agent(state: AgentState) -> Hisat2Response:
             "paired_end": state.nextflow_config.get("paired_end")
         },
         "genome_paths": genome_paths,
-        "sample_info": sample_info,
+        # 注入 nextflow 全局配置与资源配置，让 LLM 基于全局设置做决策
+        "hisat2_resource_config": hisat2_resource_config,
         "current_hisat2_params": state.hisat2_params,
         "fastp_results": state.fastp_results,  # 完整传递FastP结果
         "hisat2_results": state.hisat2_results,  # 历史执行结果
