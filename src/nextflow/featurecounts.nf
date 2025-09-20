@@ -83,15 +83,13 @@ process FEATURECOUNTS_ALL {
         ${sample_ids.withIndex().collect { sample_id, i -> 
             def bam_name = bam_files[i].name
             "sed -i '1s|${bam_name}|${sample_id}|g' all_samples.featureCounts"
-        }.join('
-        ')}
+        }.join("\n        ")}
         
         # 处理summary文件表头：将BAM文件路径替换为样本ID  
         ${sample_ids.withIndex().collect { sample_id, i -> 
             def bam_name = bam_files[i].name
             "sed -i '1s|${bam_name}|${sample_id}|g' all_samples.featureCounts.summary"
-        }.join('
-        ')}
+        }.join("\n        ")}
         
         echo "表头处理完成，FeatureCounts批量计数完成"
     else

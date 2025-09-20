@@ -13,7 +13,7 @@ import psutil
 import subprocess
 import tempfile
 from typing import Dict, Any, Optional
-
+from pathlib import Path
 # 使用官方工具装饰器
 from langchain_core.tools import tool
 
@@ -301,55 +301,76 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
                     status["missing_files"].append("gtf")
                     status["available"] = False
             
-            # 智能推断索引路径 - 基于fasta_path自动推断
-            fasta_path = genome_info.get("fasta_path", "")
-            if fasta_path:
-                # 从fasta路径推断基因组目录: genomes/human/hg19/hg19.fa -> genomes/human/hg19/
-                import os
-                genome_dir = os.path.dirname(fasta_path)
+            # 优先从 genomes.json 获取索引路径；缺失时才回退到基于 fasta 的推断
+            def _exists_nonempty(file_path: Path) -> bool:
+                try:
+                    return file_path.exists() and file_path.is_file() and file_path.stat().st_size > 0
+                except Exception:
+                    return False
 
-                # 检查STAR索引 - 基于fasta路径推断索引目录（轻量：签名文件存在性+非空校验）
-                star_index_dir = f"{genome_dir}/star_index"
-                star_index_full_path = config.settings.data_dir / star_index_dir
-                if star_index_full_path.exists():
-                    try:
-                        required_files = [
-                            "Genome", "SA", "SAindex", "genomeParameters.txt",
-                            "chrLength.txt", "chrName.txt", "chrNameLength.txt", "chrStart.txt"
-                        ]
-                        def _exists_nonempty(p: Path) -> bool:
-                            try:
-                                return p.exists() and p.is_file() and p.stat().st_size > 0
-                            except Exception:
-                                return False
-                        ok = all(_exists_nonempty(star_index_full_path / fname) for fname in required_files)
-                        if ok:
-                            available_star_index.append(gid)
-                    except Exception:
-                        pass
+            # STAR 索引路径
+            star_index_rel = genome_info.get("star_index_path", "")
+            star_index_full_path = None
+            if star_index_rel:
+                star_index_full_path = config.settings.data_dir / star_index_rel
+                status["files"]["star_index"] = {
+                    "path": str(star_index_full_path),
+                    "relative_path": star_index_rel,
+                    "exists": star_index_full_path.exists()
+                }
+            else:
+                # 不再基于 FASTA 路径推断索引目录，保持为空以便上游感知缺失
+                status["files"]["star_index"] = {
+                    "path": "",
+                    "relative_path": "",
+                    "exists": False
+                }
 
-                # 检查HISAT2索引 - 基于fasta路径推断索引目录（轻量：签名文件存在性+非空校验）
-                hisat2_index_dir = f"{genome_dir}/hisat2_index"
-                hisat2_index_full_path = config.settings.data_dir / hisat2_index_dir
-                if hisat2_index_full_path.exists():
-                    try:
-                        # 以 *.1.ht2 推断前缀，然后验证 1..8 所有分片是否存在且非空
-                        ht2_files = list(hisat2_index_full_path.glob("*.1.ht2"))
-                        if ht2_files:
-                            index_prefix = ht2_files[0].stem.replace(".1", "")
-                            def _exists_nonempty(p: Path) -> bool:
-                                try:
-                                    return p.exists() and p.is_file() and p.stat().st_size > 0
-                                except Exception:
-                                    return False
-                            parts_ok = all(
-                                _exists_nonempty(hisat2_index_full_path / f"{index_prefix}.{i}.ht2")
-                                for i in range(1, 9)
-                            )
-                            if parts_ok:
-                                available_hisat2_index.append(gid)
-                    except Exception:
-                        pass
+            # 校验 STAR 索引有效性（关键文件存在且非空）
+            if star_index_full_path and star_index_full_path.exists():
+                try:
+                    required_files = [
+                        "Genome", "SA", "SAindex", "genomeParameters.txt",
+                        "chrLength.txt", "chrName.txt", "chrNameLength.txt", "chrStart.txt"
+                    ]
+                    is_valid = all(_exists_nonempty(star_index_full_path / fname) for fname in required_files)
+                    if is_valid:
+                        available_star_index.append(gid)
+                except Exception:
+                    pass
+
+            # HISAT2 索引路径
+            hisat2_index_rel = genome_info.get("hisat2_index_path", "")
+            hisat2_index_full_path = None
+            if hisat2_index_rel:
+                hisat2_index_full_path = config.settings.data_dir / hisat2_index_rel
+                status["files"]["hisat2_index"] = {
+                    "path": str(hisat2_index_full_path),
+                    "relative_path": hisat2_index_rel,
+                    "exists": hisat2_index_full_path.exists()
+                }
+            else:
+                # 不再基于 FASTA 路径推断索引目录，保持为空以便上游感知缺失
+                status["files"]["hisat2_index"] = {
+                    "path": "",
+                    "relative_path": "",
+                    "exists": False
+                }
+
+            # 校验 HISAT2 索引有效性（*.1..8.ht2 存在且非空）
+            if hisat2_index_full_path and hisat2_index_full_path.exists():
+                try:
+                    ht2_files = list(hisat2_index_full_path.glob("*.1.ht2"))
+                    if ht2_files:
+                        index_prefix = ht2_files[0].stem.replace(".1", "")
+                        parts_ok = all(
+                            _exists_nonempty(hisat2_index_full_path / f"{index_prefix}.{part_index}.ht2")
+                            for part_index in range(1, 9)
+                        )
+                        if parts_ok:
+                            available_hisat2_index.append(gid)
+                except Exception:
+                    pass
 
             # 重新评估available状态 - 必须至少有一个可用索引
             if status["available"]:  # 如果基础文件都存在

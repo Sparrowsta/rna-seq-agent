@@ -103,7 +103,12 @@ def run_nextflow_hisat2(
         if not sample_inputs:
             return {"success": False, "error": "未从FastP结果构造到任何样本输入"}
 
-        # 5) 组装 Nextflow 参数
+        # 5) 资源与 Nextflow 参数
+        # 先归一化并构建资源映射，再写入参数文件，避免引用顺序问题
+        from .utils_tools import normalize_resources
+        normalized_hisat2 = normalize_resources("hisat2", {"hisat2": resource_config or {}})
+        resources_map: Dict[str, Dict[str, Any]] = {"hisat2": normalized_hisat2} if normalized_hisat2 else {}
+
         cleaned_params: Dict[str, Any] = {}
         for parameter_name, parameter_value in (hisat2_params or {}).items():
             if parameter_value is None or parameter_name in {"hisat2_cpus", "threads", "p"}:
@@ -115,14 +120,10 @@ def run_nextflow_hisat2(
             "hisat2_index": str(hisat2_index_path),
             "results_dir": str(results_dir),
             "work_dir": str(work_dir),
+            # 将资源配置并入 params-file，避免对 -params 的版本依赖
+            "resources": resources_map,
             **cleaned_params,
         }
-
-        # 资源配置：直接内联通过 -params 传入
-        # 仅接受 HISAT2 阶段片段，规范化后注入
-        from .utils_tools import normalize_resources
-        normalized_hisat2 = normalize_resources("hisat2", {"hisat2": resource_config or {}})
-        resources_map: Dict[str, Dict[str, Any]] = {"hisat2": normalized_hisat2} if normalized_hisat2 else {}
 
         # 参数版本化
         try:
@@ -158,12 +159,7 @@ def run_nextflow_hisat2(
             "-params-file", str(params_file),
             "-work-dir", str(work_dir),
         ]
-        # 通过 -params 内联注入资源配置
-        try:
-            inline_params = json.dumps({"resources": resources_map}, ensure_ascii=False)
-            command.extend(["-params", inline_params])
-        except Exception as e:
-            logger.warning(f"构建HISAT2内联资源参数失败，将不注入资源: {e}")
+        # 不再使用 -params 内联注入，统一通过 params-file 传递资源
         execution_result = subprocess.run(command, capture_output=True, text=True, timeout=7200, cwd=tools_config.settings.project_root)
 
         # 7) 组装每样本输出路径（与 hisat2.nf publishDir 对齐）

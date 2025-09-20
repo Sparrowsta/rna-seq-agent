@@ -282,7 +282,7 @@ def extract_genome_paths(state: AgentState) -> Dict[str, str]:
             "species": "human", 
             "version": "hg38",
             "gtf_path": "/data/genomes/human/hg38/annotation.gtf",
-            "index_path": "/data/genomes/human/hg38/star_index",
+            "star_index_path": "/data/genomes/human/hg38/star_index",
             "hisat2_index_path": "/data/genomes/human/hg38/hisat2_index"
         }
     """
@@ -314,7 +314,7 @@ def extract_genome_paths(state: AgentState) -> Dict[str, str]:
             "species": genome_info.get("species", ""),
             "version": genome_info.get("version", genome_version),
             "gtf_path": files_info.get("gtf", {}).get("path", ""),
-            "index_path": files_info.get("star_index", {}).get("path", ""),
+            "star_index_path": files_info.get("star_index", {}).get("path", ""),
             "hisat2_index_path": files_info.get("hisat2_index", {}).get("path", "")
         }
 
@@ -322,8 +322,8 @@ def extract_genome_paths(state: AgentState) -> Dict[str, str]:
         missing_paths = []
         if not paths["gtf_path"]:
             missing_paths.append("gtf_path")
-        if not paths["index_path"]:
-            missing_paths.append("index_path") 
+        if not paths["star_index_path"]:
+            missing_paths.append("star_index_path")
         if not paths["hisat2_index_path"]:
             missing_paths.append("hisat2_index_path")
 
@@ -358,7 +358,7 @@ def normalize_resources(stage_name: str, resource_config: Dict[str, Dict[str, An
             try:
                 cpus = int(stage_config["cpus"])
             except (ValueError, TypeError):
-                logger.warning(f"无效的cpus值 {config_key}: {stage_config.get('cpus')}")
+                logger.warning(f"无效的cpus值: {stage_config.get('cpus')}")
         
         # 提取并验证memory参数
         memory = stage_config.get("memory")

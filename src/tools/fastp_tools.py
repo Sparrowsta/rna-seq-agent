@@ -87,6 +87,11 @@ def run_nextflow_fastp(
         except Exception as e:
             logger.warning(f"创建结果目录失败: {e}")
         
+        # 资源配置：仅接受 FastP 阶段的片段，规范化后内联注入
+        from .utils_tools import normalize_resources
+        normalized_fastp = normalize_resources("fastp", {"fastp": resource_config or {}})
+        resources_map: Dict[str, Dict[str, Any]] = {"fastp": normalized_fastp} if normalized_fastp else {}
+
         # 准备Nextflow配置（用于 -params-file）
         nextflow_config = {
             "work_dir": str(work_dir),
@@ -94,13 +99,10 @@ def run_nextflow_fastp(
             "data_dir": base_data_path,
             "sample_groups": sample_info["sample_groups"],
             "paired_end": bool(paired_end_value),
+            # 将资源配置并入 params-file，避免对 -params 的版本依赖
+            "resources": resources_map,
             **fastp_params
         }
-
-        # 资源配置：仅接受 FastP 阶段的片段，规范化后内联注入
-        from .utils_tools import normalize_resources
-        normalized_fastp = normalize_resources("fastp", {"fastp": resource_config or {}})
-        resources_map: Dict[str, Dict[str, Any]] = {"fastp": normalized_fastp} if normalized_fastp else {}
 
         # 写入参数版本化文件
         versioned_params_file = None
@@ -146,12 +148,6 @@ def run_nextflow_fastp(
             "-work-dir", str(work_dir),
             "-resume"
         ]
-        # 通过 -params 内联注入资源配置（始终传入）
-        try:
-            inline_params = json.dumps({"resources": resources_map}, ensure_ascii=False)
-            cmd.extend(["-params", inline_params])
-        except Exception as e:
-            logger.warning(f"构建内联资源参数失败，将不注入资源: {e}")
         
         logger.info(f"执行FastP: {' '.join(cmd)}")
         

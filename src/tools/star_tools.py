@@ -40,7 +40,7 @@ def run_nextflow_star(
     约束（与路径契约一致）:
     - 仅在 fastp_results.success 为真且包含 per_sample_outputs 时放行
     - 统一复用 FastP 的 results_dir 作为运行根目录
-    - 直接使用 genome_paths["index_path"] 获取STAR索引路径
+    - 直接使用 genome_paths["star_index_path"] 获取STAR索引路径
     - sample_inputs 仅来源于 fastp_results.per_sample_outputs（不再扫描目录）
     - per_sample_outputs 路径与 star.nf 产出一致（样本子目录 + 默认文件名）
     """
@@ -49,7 +49,7 @@ def run_nextflow_star(
 
         # 直接从传入的路径信息中提取所需字段
         genome_id = genome_paths.get("genome_id", "unknown")
-        star_index_path = genome_paths.get("index_path", "")
+        star_index_path = genome_paths.get("star_index_path", "")
 
         if not star_index_path:
             return {
@@ -107,7 +107,12 @@ def run_nextflow_star(
         if not sample_inputs:
             return {"success": False, "error": "未从FastP结果构造到任何样本输入"}
 
-        # 5) 组装 Nextflow 参数
+        # 5) 资源与 Nextflow 参数
+        # 先归一化并构建资源映射，再写入参数文件，避免引用顺序问题
+        from .utils_tools import normalize_resources
+        normalized_star = normalize_resources("star", {"star": resource_config or {}})
+        resources_map: Dict[str, Dict[str, Any]] = {"star": normalized_star} if normalized_star else {}
+
         cleaned_params: Dict[str, Any] = {}
         for parameter_name, parameter_value in (star_params or {}).items():
             if parameter_value is None or parameter_name in {"star_cpus", "outFileNamePrefix"}:
@@ -119,14 +124,10 @@ def run_nextflow_star(
             "star_index": str(star_index_path),
             "results_dir": str(results_dir),
             "work_dir": str(work_dir),
+            # 将资源配置并入 params-file，避免对 -params 的版本依赖
+            "resources": resources_map,
             **cleaned_params,
         }
-
-        # 资源配置：直接内联通过 -params 传入
-        # 仅接受 STAR 本阶段的资源配置片段；规范化后注入到 -params 中
-        from .utils_tools import normalize_resources
-        normalized_star = normalize_resources("star", {"star": resource_config or {}})
-        resources_map: Dict[str, Dict[str, Any]] = {"star": normalized_star} if normalized_star else {}
 
         # 参数版本化
         try:
@@ -162,12 +163,7 @@ def run_nextflow_star(
             "-params-file", str(params_file),
             "-work-dir", str(work_dir),
         ]
-        # 通过 -params 内联注入资源配置
-        try:
-            inline_params = json.dumps({"resources": resources_map}, ensure_ascii=False)
-            command.extend(["-params", inline_params])
-        except Exception as e:
-            logger.warning(f"构建STAR内联资源参数失败，将不注入资源: {e}")
+        # 不再使用 -params 内联注入，统一通过 params-file 传递资源
         execution_result = subprocess.run(command, capture_output=True, text=True, timeout=7200, cwd=tools_config.settings.project_root)
 
         # 7) 组装每样本输出路径（与 star.nf publishDir 对齐）
@@ -424,7 +420,8 @@ def parse_star_metrics(results_directory: str) -> Dict[str, Any]:
 
         for sample_dir in sample_dirs:
             sample_id = sample_dir.name
-            log_final_path = sample_dir / "Log.final.out"
+            # 仅接受与 star.nf 一致的命名：<sample_id>.Log.final.out（不再保留无前缀回退）
+            log_final_path = sample_dir / f"{sample_id}.Log.final.out"
 
             if not log_final_path.exists():
                 logger.warning(f"未找到STAR日志文件: {log_final_path}")

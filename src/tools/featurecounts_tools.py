@@ -110,18 +110,20 @@ def run_nextflow_featurecounts(
             return {"success": False, "error": "未从对齐结果中收集到任何BAM路径"}
         params_raw = (featurecounts_params or {}).copy()
 
+        # 资源配置：仅接受 FeatureCounts 阶段片段，规范化后注入
+        from .utils_tools import normalize_resources
+        normalized_fc = normalize_resources("featurecounts", {"featurecounts": resource_config or {}})
+        resources_map: Dict[str, Dict[str, Any]] = {"featurecounts": normalized_fc} if normalized_fc else {}
+
         nf_params = {
             "input_bam_list": json.dumps(bam_entries, ensure_ascii=False),
             "gtf_file": gtf_file,
             "results_dir": str(results_dir),
             "work_dir": str(work_dir),
+            # 将资源配置并入 params-file，避免对 -params 的版本依赖
+            "resources": resources_map,
             **params_raw,
         }
-
-        # 资源配置：仅接受 FeatureCounts 阶段片段，规范化后注入
-        from .utils_tools import normalize_resources
-        normalized_fc = normalize_resources("featurecounts", {"featurecounts": resource_config or {}})
-        resources_map: Dict[str, Dict[str, Any]] = {"featurecounts": normalized_fc} if normalized_fc else {}
 
         # M4: 参数版本化 - 使用新的接口直接传递results_dir
         versioned_params_file = None
@@ -167,12 +169,7 @@ def run_nextflow_featurecounts(
             "-work-dir",
             str(work_dir),
         ]
-        # 通过 -params 内联注入资源配置
-        try:
-            inline_params = json.dumps({"resources": resources_map}, ensure_ascii=False)
-            cmd.extend(["-params", inline_params])
-        except Exception as e:
-            logger.warning(f"构建FeatureCounts内联资源参数失败，将不注入资源: {e}")
+        # 不再使用 -params 内联注入，统一通过 params-file 传递资源
 
         logger.info("执行Nextflow FeatureCounts流水线")
         logger.info(f"参数文件: {params_file}")
@@ -268,24 +265,29 @@ def parse_featurecounts_metrics(results_directory: str) -> Dict[str, Any]:
             sample_ids = summary_df.columns.tolist()
             statuses_in_file = summary_df.index.tolist()
             
-            # 使用pandas直接计算统计数据
-            # 添加Total行（每个样本的总reads）
-            summary_df.loc['Total'] = summary_df.sum(axis=0)
-            
-            # 添加assignment_rate行（分配率）
+            # 计算每样本总reads并添加 Total 行
+            total_per_sample = summary_df.sum(axis=0)
+            summary_df.loc['Total'] = total_per_sample
+
+            # 添加 Assignment_Rate 行（每样本分配率），安全除法
             if 'Assigned' in summary_df.index:
-                summary_df.loc['Assignment_Rate'] = summary_df.loc['Assigned'] / summary_df.loc['Total']
+                assignment_rate = summary_df.loc['Assigned'] / summary_df.loc['Total'].replace({0: pd.NA})
+                summary_df.loc['Assignment_Rate'] = assignment_rate.fillna(0)
             else:
                 summary_df.loc['Assignment_Rate'] = 0
-            
-            # 添加Overall_Total列（每个状态的总计）
-            summary_df['Overall_Total'] = summary_df.drop(['Total', 'Assignment_Rate'], axis=1).sum(axis=1)
-            
-            # 添加Overall_Assignment_Rate行
-            if 'Assigned' in summary_df.index:
-                overall_total = summary_df.loc['Total', 'Overall_Total']
-                overall_assigned = summary_df.loc['Assigned', 'Overall_Total'] 
-                summary_df.loc['Overall_Assignment_Rate', 'Overall_Total'] = (overall_assigned / overall_total) if overall_total > 0 else 0.0
+
+            # 计算每个状态跨样本的总计（不包含派生行）并写入 Overall_Total 列
+            per_status_total = summary_df.drop(index=['Total', 'Assignment_Rate'], errors='ignore').sum(axis=1)
+            summary_df['Overall_Total'] = pd.NA
+            summary_df.loc[per_status_total.index, 'Overall_Total'] = per_status_total
+            # 为 Total 行设置总和
+            summary_df.loc['Total', 'Overall_Total'] = float(total_per_sample.sum())
+            # 计算总体分配率（写入新行 Overall_Assignment_Rate 的 Overall_Total 单元格）
+            if 'Assigned' in per_status_total.index:
+                overall_assigned = float(per_status_total.get('Assigned', 0) or 0)
+                overall_total_reads = float(total_per_sample.sum())
+                overall_rate = (overall_assigned / overall_total_reads) if overall_total_reads > 0 else 0.0
+                summary_df.loc['Overall_Assignment_Rate', 'Overall_Total'] = overall_rate
 
 
         except Exception as e:
@@ -295,10 +297,12 @@ def parse_featurecounts_metrics(results_directory: str) -> Dict[str, Any]:
         gene_count = 0
         try:
             with open(counts_file, "r", encoding="utf-8") as f:
+                non_comment_lines = 0
                 for line in f:
                     if not line.startswith('#'):
-                        gene_count += 1
-                gene_count -= 1  # 减去标题行
+                        non_comment_lines += 1
+                # 第一行通常为表头
+                gene_count = max(0, non_comment_lines - 1)
         except Exception:
             gene_count = 0
 

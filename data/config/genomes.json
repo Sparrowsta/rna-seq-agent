@@ -4,6 +4,8 @@
     "version": "hg38",
     "fasta_path": "genomes/human/hg38/hg38.fa",
     "gtf_path": "genomes/human/hg38/hg38.knownGene.gtf",
+    "star_index_path": "genomes/human/hg38/star_index",
+    "hisat2_index_path": "genomes/human/hg38/hisat2_index",
     "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/latest/hg38.fa.gz",
     "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/genes/hg38.knownGene.gtf.gz"
   },
@@ -12,6 +14,8 @@
     "version": "hg19",
     "fasta_path": "genomes/human/hg19/hg19.fa",
     "gtf_path": "genomes/human/hg19/hg19.knownGene.gtf",
+    "star_index_path": "genomes/human/hg19/star_index",
+    "hisat2_index_path": "genomes/human/hg19/hisat2_index",
     "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/bigZips/latest/hg19.fa.gz",
     "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/bigZips/genes/hg19.knownGene.gtf.gz"
   },
@@ -20,6 +24,8 @@
     "version": "mm39",
     "fasta_path": "genomes/mouse/mm39/mm39.fa",
     "gtf_path": "genomes/mouse/mm39/mm39.knownGene.gtf",
+    "star_index_path": "genomes/mouse/mm39/star_index",
+    "hisat2_index_path": "genomes/mouse/mm39/hisat2_index",
     "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/mm39/bigZips/mm39.fa.gz",
     "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/mm39/bigZips/genes/mm39.knownGene.gtf.gz"
   },
@@ -28,6 +34,8 @@
     "version": "mm10",
     "fasta_path": "genomes/mouse/mm10/mm10.fa",
     "gtf_path": "genomes/mouse/mm10/mm10.knownGene.gtf",
+    "star_index_path": "genomes/mouse/mm10/star_index",
+    "hisat2_index_path": "genomes/mouse/mm10/hisat2_index",
     "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/mm10/bigZips/latest/mm10.fa.gz",
     "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/mm10/bigZips/genes/mm10.knownGene.gtf.gz"
   },
@@ -36,6 +44,8 @@
     "version": "mm9",
     "fasta_path": "genomes/mouse/mm9/mm9.fa",
     "gtf_path": "genomes/mouse/mm9/mm9.knownGene.gtf",
+    "star_index_path": "genomes/mouse/mm9/star_index",
+    "hisat2_index_path": "genomes/mouse/mm9/hisat2_index",
     "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/mm9/bigZips/mm9.fa.gz",
     "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/mm9/bigZips/genes/mm9.knownGene.gtf.gz"
   },
@@ -44,6 +54,8 @@
     "version": "xenLae2",
     "fasta_path": "genomes/xenopus_laevis/xenLae2/xenLae2.fa",
     "gtf_path": "genomes/xenopus_laevis/xenLae2/xenLae2.ncbiRefSeq.gtf",
+    "star_index_path": "genomes/xenopus_laevis/xenLae2/star_index",
+    "hisat2_index_path": "genomes/xenopus_laevis/xenLae2/hisat2_index",
     "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/xenLae2/bigZips/xenLae2.fa.gz",
     "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/xenLae2/bigZips/genes/xenLae2.ncbiRefSeq.gtf.gz"
   },
@@ -52,6 +64,8 @@
     "version": "danRer11",
     "fasta_path": "genomes/zebrafish/danRer11/danRer11.fa",
     "gtf_path": "genomes/zebrafish/danRer11/danRer11.ncbiRefSeq.gtf",
+    "star_index_path": "genomes/zebrafish/danRer11/star_index",
+    "hisat2_index_path": "genomes/zebrafish/danRer11/hisat2_index",
     "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/danRer11/bigZips/danRer11.fa.gz",
     "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/danRer11/bigZips/genes/danRer11.ncbiRefSeq.gtf.gz"
   },
@@ -60,6 +74,8 @@
     "version": "dm6",
     "fasta_path": "genomes/drosophila/dm6/dm6.fa",
     "gtf_path": "genomes/drosophila/dm6/dm6.gtf",
+    "star_index_path": "genomes/drosophila/dm6/star_index",
+    "hisat2_index_path": "genomes/drosophila/dm6/hisat2_index",
     "fasta_url": "https://hgdownload.soe.ucsc.edu/goldenPath/dm6/bigZips/dm6.fa.gz",
     "gtf_url": "https://hgdownload.soe.ucsc.edu/goldenPath/dm6/bigZips/genes/dm6.ncbiRefSeq.gtf.gz"
   }
