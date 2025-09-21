@@ -45,7 +45,7 @@ def get_project_overview() -> Dict[str, Any]:
                 "fastq_files": fastq_info.get("total_files", 0),
                 "fastq_samples": fastq_info.get("total_samples", 0),
                 "sequencing_type": fastq_info.get("sequencing_type", "unknown"),
-                "available_genomes": genome_info.get("available_genomes", 0),
+                "available_genomes": genome_info.get("summary", {}).get("available_count", 0),
                 "system_memory_gb": system_info.get("memory", {}).get("total_gb", 0),
                 "system_cores": system_info.get("cpu", {}).get("logical_cores", 0),
                 "historical_analyses": history_info.get("total_analyses", 0)
@@ -58,14 +58,14 @@ def get_project_overview() -> Dict[str, Any]:
             }
         }
         
-        logger.info(f"项目概览: {fastq_info.get('total_samples', 0)}个样本, {genome_info.get('available_genomes', 0)}个基因组可用")
+        logger.info(f"项目概览: {fastq_info.get('total_samples', 0)}个样本, {genome_info.get('summary', {}).get('available_count', 0)}个基因组可用")
         return overview
         
-    except Exception as e:
-        logger.error(f"获取项目概览失败: {e}")
+    except Exception as error:
+        logger.error(f"获取项目概览失败: {error}")
         return {
             "detection_status": "failed",
-            "error": str(e),
+            "error": str(error),
             "timestamp": time.time()
         }
 
@@ -120,7 +120,7 @@ def list_analysis_history() -> Dict[str, Any]:
                 
                 # 计算完整度
                 total_stages = 4  # fastp, star, featurecounts, reports
-                completed_stages = sum(1 for v in analysis_info["files"].values() if v)
+                completed_stages = sum(1 for value in analysis_info["files"].values() if value)
                 analysis_info["completion_rate"] = (completed_stages / total_stages) * 100
                 
                 analyses.append(analysis_info)
@@ -156,11 +156,11 @@ def list_analysis_history() -> Dict[str, Any]:
             pass
         return result
         
-    except Exception as e:
-        logger.error(f"获取分析历史失败: {e}")
+    except Exception as error:
+        logger.error(f"获取分析历史失败: {error}")
         return {
             "detection_status": "failed",
-            "error": str(e),
+            "error": str(error),
             "total_analyses": 0,
             "analyses": []
         }
@@ -205,68 +205,26 @@ def write_params_file(step: str, params: dict, state: AgentState = None,
         data_to_write = params
         
         # 写入文件
-        with open(params_file, 'w', encoding='utf-8') as f:
-            json.dump(data_to_write, f, indent=2, ensure_ascii=False)
+        with open(params_file, 'w', encoding='utf-8') as file_handle:
+            json.dump(data_to_write, file_handle, indent=2, ensure_ascii=False)
         
         logger.info(f"参数文件已写入: {params_file}")
         return params_file
         
-    except Exception as e:
-        logger.error(f"写入参数文件失败: {e}")
-        # 返回默认路径，避免中断流程
-        fallback_path = config.settings.temp_dir / f"{step}_params_error.json"
+    except Exception as error:
+        logger.error(f"写入参数文件失败: {error}")
+        # 返回默认路径，避免中断流程（在异常中安全确定临时目录）
+        try:
+            tools_config = get_tools_config()
+            temporary_directory = Path(tools_config.settings.temp_dir)
+        except Exception:
+            temporary_directory = Path("/tmp")
+        try:
+            temporary_directory.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        fallback_path = temporary_directory / f"{step}_params_error.json"
         return fallback_path
-
-
-def enhance_tool_result_with_debug(result: dict, cmd: str = "", 
-                                  params_file: str = "", stdout: str = "", 
-                                  stderr: str = "", execution_time: float = 0,
-                                  additional_info: dict = None) -> dict:
-    """为工具结果添加调试和执行信息
-    
-    Args:
-        result: 原始结果字典
-        cmd: 执行的命令
-        params_file: 参数文件路径
-        stdout: 标准输出
-        stderr: 标准错误
-        execution_time: 执行时间
-        additional_info: 额外信息
-    
-    Returns:
-        增强后的结果字典
-    """
-    try:
-        # 构建调试信息
-        debug_info = {}
-        
-        if cmd:
-            debug_info["command"] = cmd
-        if params_file:
-            debug_info["params_file"] = params_file
-        if execution_time > 0:
-            debug_info["execution_time_seconds"] = round(execution_time, 2)
-        if stdout:
-            debug_info["stdout_preview"] = stdout[:500] + "..." if len(stdout) > 500 else stdout
-        if stderr:
-            debug_info["stderr_preview"] = stderr[:500] + "..." if len(stderr) > 500 else stderr
-        if additional_info:
-            debug_info.update(additional_info)
-        
-        # 添加时间戳
-        debug_info["debug_timestamp"] = datetime.now().isoformat()
-        
-        # 将调试信息添加到结果中
-        if debug_info:
-            result["debug_info"] = debug_info
-        
-        # 记录调试日志
-        logger.debug(f"工具调试信息已添加: {len(debug_info)} 项")
-    
-    except Exception as e:
-        logger.warning(f"添加调试信息失败: {e}")
-
-    return result
 
 
 def extract_genome_paths(state: AgentState) -> Dict[str, str]:
@@ -381,21 +339,3 @@ def normalize_resources(stage_name: str, resource_config: Dict[str, Dict[str, An
 
         
 
-
-def build_stage_resources_map(resource_config: Dict[str, Dict[str, Any]],
-                              stage_names: List[str]) -> Dict[str, Dict[str, Any]]:
-    """根据给定阶段名列表构建 resources 映射（单一映射源由 normalize_resources 维护）
-
-    Args:
-        resource_config: 来自 AgentState 的资源配置（可为 run_* 或工具名键）
-        stage_names: 需要输出的阶段名列表，如 ["fastp"] 或 ["star", "hisat2"]
-
-    Returns:
-        {stage_name: {cpus, memory}, ...}，仅包含有效值
-    """
-    result: Dict[str, Dict[str, Any]] = {}
-    for stage_name in (stage_names or []):
-        normalized = normalize_resources(stage_name, resource_config)
-        if normalized:
-            result[stage_name] = normalized
-    return result

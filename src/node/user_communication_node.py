@@ -11,14 +11,16 @@ from ..state import AgentState
 async def user_communication_node(state: AgentState) -> Dict[str, Any]:
     """User Communication节点 - 用户交互入口"""
     
+    # 若有上一轮Normal节点返回的结果，先清晰展示并暂停
+    if getattr(state, 'query_response', None):
+        _display_last_result(state.query_response)
+        try:
+            input("按回车返回主菜单...")
+        except Exception:
+            pass
+
     # 显示入口菜单
     _display_main_menu()
-    
-    # 检查并显示来自normal节点的结果
-    if hasattr(state, 'query_response') and state.query_response:
-        print("")
-        print(f"🎯 {state.query_response}")
-        print("")
     
     # 获取用户输入并解析
     try:
@@ -41,6 +43,12 @@ async def user_communication_node(state: AgentState) -> Dict[str, Any]:
         }
 
 
+def _display_last_result(text: str) -> None:
+    """以清晰分隔的区块显示上一轮结果"""
+    header = ["\n" + "-" * 60, "✅ 上一步结果", "-" * 60]
+    body = [text.strip(), ""]
+    print("\n".join(header + body))
+
 def _display_main_menu():
     """显示主入口菜单（使用新样式组件）"""
     lines = []
@@ -48,10 +56,9 @@ def _display_main_menu():
     lines.append("📋 请选择操作")
     lines += [
         "  1) 执行分析",
-        "  2) 项目概览",
+        "  2) 项目概览", 
         "  3) 基因组配置（仅添加）",
-        "  4) 帮助",
-        "  5) 退出",
+        "  4) 退出",
         "",
         "💡 使用提示:",
         "  • 数字选择：输入对应数字进行操作",
@@ -92,18 +99,15 @@ def _handle_numeric_choice(choice: int, state: AgentState) -> Dict[str, Any]:
     
     elif choice == 3:
         # 基因组配置管理
-        return _handle_genome_config_management(state)
-    
-    elif choice == 4:
-        # 查看帮助
         return {
-            "response": "正在获取帮助信息...",
-            "input": "帮助",
-            "status": "normal", 
-            "routing_decision": "normal"
+            "response": "正在检查基因组配置状态...",
+            "input": "基因组配置管理",
+            "status": "normal",
+            "routing_decision": "normal",
+            "request_type": "genome_management"
         }
     
-    elif choice == 5:
+    elif choice == 4:
         # 退出程序
         print("\n👋 感谢使用RNA-seq智能分析助手！")
         return {
@@ -114,7 +118,7 @@ def _handle_numeric_choice(choice: int, state: AgentState) -> Dict[str, Any]:
     
     else:
         # 无效选择
-        print(f"❌ 无效选择：{choice}。请输入 1-5 选择操作")
+        print(f"❌ 无效选择：{choice}。请输入 1-4 选择操作")
         return {
             "response": f"无效选择：{choice}",
             "status": "error",
@@ -205,22 +209,6 @@ def _handle_requirements_input(state: AgentState) -> Dict[str, Any]:
         print("\n返回执行向导")
         return _handle_execute_mode_entry(state)
 
-
-def _handle_genome_config_management(state: AgentState) -> Dict[str, Any]:
-    """处理基因组配置管理"""
-    
-    # 使用state参数避免未使用警告
-    _ = state
-    
-    # 这里先返回一个查询基因组状态的请求
-    # 实际的子菜单会在normal节点中由工具调用来处理
-    return {
-        "response": "正在检查基因组配置状态...",
-        "input": "基因组配置管理",
-        "status": "normal",
-        "routing_decision": "normal",
-        "request_type": "genome_management"
-    }
 
 
 def _handle_free_query(user_input: str, state: AgentState) -> Dict[str, Any]:

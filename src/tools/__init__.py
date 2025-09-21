@@ -54,7 +54,6 @@ from .utils_tools import (
     get_project_overview,
     list_analysis_history,
     write_params_file,
-    enhance_tool_result_with_debug,
     extract_genome_paths
 )
 
@@ -94,7 +93,6 @@ __all__ = [
     "get_project_overview",
     "list_analysis_history",
     "write_params_file",
-    "enhance_tool_result_with_debug",
     "extract_genome_paths"
 ]
 

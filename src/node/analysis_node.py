@@ -9,8 +9,6 @@ Analysis节点 - LLM驱动的智能分析实现
 """
 
 from typing import Any, Dict, List
-from pydantic import BaseModel, Field
-from pathlib import Path
 
 from langgraph.prebuilt import create_react_agent
 
@@ -729,37 +727,7 @@ def _generate_quality_metrics_section(pipeline_data: Dict[str, Any], analysis_te
     return analysis_text or "质量指标分析完成，各步骤表现良好。"
 
 
-def _extract_key_metrics(pipeline_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    保留原有函数以保持兼容性
-    
-    Args:
-        pipeline_data: 流水线解析数据
-    
-    Returns:
-        关键指标字典
-    """
-    return _extract_enhanced_key_metrics(pipeline_data)
-
-
-def _format_list_content(items: List[str]) -> str:
-    """
-    格式化列表内容为Markdown
-    
-    Args:
-        items: 列表项
-    
-    Returns:
-        Markdown格式的列表内容
-    """
-    if not items:
-        return "无相关内容"
-    
-    formatted_lines = []
-    for i, item in enumerate(items, 1):
-        formatted_lines.append(f"{i}. {item}")
-    
-    return "\n".join(formatted_lines)
+ 
 
 def _create_error_response(error_message: str) -> Dict[str, Any]:
     """创建错误响应"""
@@ -770,5 +738,4 @@ def _create_error_response(error_message: str) -> Dict[str, Any]:
         "analysis_report_path": "",
         "rna_seq_complete": False
     }
-
 
