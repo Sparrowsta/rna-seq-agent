@@ -37,9 +37,11 @@ def add_genome_config(genome_info: Dict[str, Any]) -> Dict[str, Any]:
       "version": "通常与 genome_id 相同",
       "fasta_url": "FASTA 完整下载 URL",
       "gtf_url": "GTF 完整下载 URL",
-      // 可选：当需要自定义时可传入以下两项；否则自动按规范路径生成
+      // 可选：当需要自定义时可传入以下路径；未提供时按规范目录生成
       "fasta_path": "genomes/<species>/<version>/<version>.fa",
-      "gtf_path": "genomes/<species>/<version>/<version>.gtf"
+      "gtf_path": "genomes/<species>/<version>/<version>.gtf",
+      "star_index_path": "genomes/<species>/<version>/star_index",
+      "hisat2_index_path": "genomes/<species>/<version>/hisat2_index"
     }
     """
     try:
@@ -68,15 +70,21 @@ def add_genome_config(genome_info: Dict[str, Any]) -> Dict[str, Any]:
         # 规范化本地存放路径（允许外部覆盖）
         fasta_path_raw = genome_info.get("fasta_path") or f"genomes/{species}/{version}/{version}.fa"
         gtf_path_raw = genome_info.get("gtf_path") or f"genomes/{species}/{version}/{version}.gtf"
-        
-        fasta_path = fasta_path_raw
-        gtf_path = gtf_path_raw
+        star_index_path_raw = genome_info.get("star_index_path") or f"genomes/{species}/{version}/star_index"
+        hisat2_index_path_raw = genome_info.get("hisat2_index_path") or f"genomes/{species}/{version}/hisat2_index"
+
+        fasta_path = str(fasta_path_raw)
+        gtf_path = str(gtf_path_raw)
+        star_index_path = str(star_index_path_raw)
+        hisat2_index_path = str(hisat2_index_path_raw)
 
         new_genome_config = {
             "species": species,
             "version": version,
             "fasta_path": fasta_path,
             "gtf_path": gtf_path,
+            "star_index_path": star_index_path,
+            "hisat2_index_path": hisat2_index_path,
             "fasta_url": genome_info["fasta_url"],
             "gtf_url": genome_info["gtf_url"]
         }
