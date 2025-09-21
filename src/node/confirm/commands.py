@@ -88,7 +88,6 @@ def _convert_command_to_decision(
             decision='execute',
             execution_mode=None,  # 需要进一步选择模式
             payload={
-                'raw_input': raw_input,
                 'needs_mode_selection': True,
                 'command_description': command.description
             }
@@ -99,8 +98,7 @@ def _convert_command_to_decision(
             decision='execute',
             execution_mode='yolo',
             payload={
-                'mode_description': '🎯 YOLO自动模式：全程自动执行分析流程',
-                'raw_input': raw_input
+                'mode_description': '🎯 YOLO自动模式：全程自动执行分析流程'
             }
         )
     
@@ -119,14 +117,14 @@ def _convert_command_to_decision(
         
         return ConfirmDecision(
             decision=decision,
-            payload={'raw_input': raw_input}
+            payload={}
         )
     
     elif command.command == "/restart":
         return ConfirmDecision(
             decision='execute',
             execution_mode='single',
-            payload={'restart': True, 'raw_input': raw_input}
+            payload={'restart': True}
         )
     
     elif command.command == "/re_opt":
@@ -147,8 +145,7 @@ def _convert_command_to_decision(
             execution_mode='optimized',
             payload={
                 're_optimization': True,
-                'target_step': target_step,
-                'raw_input': raw_input
+                'target_step': target_step
             }
         )
     
@@ -156,7 +153,6 @@ def _convert_command_to_decision(
         return ConfirmDecision(
             decision='modify',
             payload={
-                'raw_input': raw_input,
                 'needs_modify_content': True  # 标记需要二次输入
             }
         )
@@ -164,17 +160,17 @@ def _convert_command_to_decision(
     elif command.command == "/cancel":
         return ConfirmDecision(
             decision='cancel',
-            payload={'raw_input': raw_input}
+            payload={}
         )
     
     elif command.command == "/quit":
         return ConfirmDecision(
             decision='quit',
-            payload={'raw_input': raw_input}
+            payload={}
         )
     
     else:
-        # 未知命令
+        # 未知命令（错误分支：保留原始输入便于提示）
         return ConfirmDecision(
             decision='cancel',
             payload={
