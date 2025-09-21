@@ -7,6 +7,9 @@ from typing import Optional
 from langchain_deepseek import ChatDeepSeek
 from langchain_core.messages import HumanMessage
 from .config.settings import Settings
+from .logging_bootstrap import get_logger, log_llm_preview
+
+logger = get_logger("rna.core")
 
 class LLMManager:
     """LLM管理器 - 负责创建和管理LLM实例"""
@@ -30,6 +33,8 @@ class LLMManager:
         try:
             llm = self.get_llm()
             test_response = llm.invoke([HumanMessage(content="测试连接，请回复'连接成功'")])
+            # 仅记录返回内容的预览（不记录提示/指令）
+            log_llm_preview(logger, "core.test", getattr(test_response, "content", test_response))
             # 处理不同的响应类型
             content = test_response.content
             if isinstance(content, str):

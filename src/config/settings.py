@@ -13,31 +13,56 @@ class Settings(BaseModel):
     # === 项目路径配置 ===
     project_root: Path = Field(default_factory=lambda: Path.cwd())
     
-    # === 环境检测 ===
     @property
-    def is_container_environment(self) -> bool:
-        """检测是否在容器环境中运行"""
-        return Path("/config").exists() and Path("/data").exists()
-    
+    def is_docker_environment(self) -> bool:
+        """检测是否在Docker容器中运行"""
+        # 检查.dockerenv文件（Docker官方标准方法）
+        return Path("/.dockerenv").exists()
+
     @property
-    def config_dir(self) -> Path:
-        """配置文件目录"""
-        if self.is_container_environment:
-            return Path("/config")
-        else:
-            return self.project_root / "config"
-    
-    @property 
     def data_dir(self) -> Path:
-        """数据文件目录"""
-        if self.is_container_environment:
-            return Path("/data")
+        """数据文件目录 - 自动适配Docker和本地环境"""
+        if self.is_docker_environment:
+            return Path("/data")  # Docker容器绝对路径
         else:
-            return self.project_root / "data"
+            return self.project_root / "data"  # 本地环境使用data子目录
+
+    @property
+    def work_dir(self) -> Path:
+        """Nextflow工作目录"""
+        return self.data_dir / "work"
+
+    @property
+    def logs_dir(self) -> Path:
+        """日志目录"""
+        return self.data_dir / "logs"
+
+    @property
+    def genomes_dir(self) -> Path:
+        """基因组文件目录"""
+        return self.data_dir / "genomes"
+
+    @property
+    def results_dir(self) -> Path:
+        """结果输出目录"""
+        return self.data_dir / "results"
+
+    @property
+    def temp_dir(self) -> Path:
+        """临时文件目录"""
+        return self.data_dir / "tmp"
+
+    @property
+    def nextflow_scripts_dir(self) -> Path:
+        """Nextflow脚本目录"""
+        if self.is_docker_environment:
+            return Path("/src/nextflow")  # Docker容器内固定路径
+        else:
+            return self.project_root / "src" / "nextflow"  # 本地相对路径
     
     # === API配置 ===
     deepseek_api_key: str = Field(default="", description="DeepSeek API密钥")
-    llm_temperature: float = Field(default=0.1, description="LLM温度参数")
+    llm_temperature: float = Field(default=0.0, description="LLM温度参数（默认0，确保确定性）")
     
     # === 系统配置 ===
     debug_mode: bool = Field(default=False, description="调试模式")
@@ -58,26 +83,8 @@ class Settings(BaseModel):
     @property
     def genomes_config_path(self) -> Path:
         """基因组配置文件路径"""
-        return self.config_dir / "genomes.json"
-    
-    @property
-    def runtime_config_path(self) -> Path:
-        """运行时配置文件路径"""
-        return self.config_dir / "runtime_config.json"
-    
-    @property
-    def nextflow_config_path(self) -> Path:
-        """Nextflow配置文件路径"""
-        return self.config_dir / "nextflow.config"
-    
-    @property
-    def templates_dir(self) -> Path:
-        """模板文件目录 - Docker环境兼容"""
-        if self.is_container_environment:
-            return Path("/src/templates")  # Docker中的绝对路径
-        else:
-            return self.project_root / "src" / "templates"  # 本地开发路径
-    
+        return self.data_dir / "config" / "genomes.json"
+
     def validate_environment(self) -> tuple[bool, list[str]]:
         """验证环境配置"""
         errors = []
@@ -86,10 +93,12 @@ class Settings(BaseModel):
         if not self.deepseek_api_key:
             errors.append("DEEPSEEK_API_KEY环境变量未设置")
         
-        # 检查关键目录
-        if not self.config_dir.exists():
-            errors.append(f"配置目录不存在: {self.config_dir}")
+        # 检查关键文件：genomes.json（新的统一位置）
+        gpath = self.genomes_config_path
+        if not gpath.exists():
+            errors.append(f"基因组配置文件不存在: {gpath}")
         
+        # 检查数据目录是否存在
         if not self.data_dir.exists():
             errors.append(f"数据目录不存在: {self.data_dir}")
         

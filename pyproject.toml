@@ -5,8 +5,6 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.110.0",
-    "jinja2>=3.1.6",
     "langchain>=0.2.0",
     "langchain-community>=0.3.27",
     "langchain-deepseek>=0.1.4",
@@ -19,8 +17,4 @@ dependencies = [
     "psutil>=7.0.0",
     "pydantic>=2.0.0",
     "python-dotenv>=1.1.1",
-    "requests>=2.32.4",
-    "rich>=14.1.0",
-    "sse-starlette>=3.0.2",
-    "tabulate>=0.9.0",
 ]

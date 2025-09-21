@@ -41,11 +41,6 @@ class ToolsConfig:
         """基因组配置文件路径"""
         return self.settings.genomes_config_path
     
-    @property
-    def runtime_config_path(self) -> Path:
-        """运行时配置文件路径"""
-        return self.settings.runtime_config_path
-    
     # === 索引目录路径 ===
     def get_star_index_dir(self, fasta_path: Path) -> Path:
         """获取STAR索引目录"""
@@ -55,19 +50,6 @@ class ToolsConfig:
         """获取HISAT2索引目录"""
         return fasta_path.parent / "hisat2_index"
     
-    # === 确保目录存在 ===
-    def ensure_directories(self):
-        """确保所有必要目录存在"""
-        directories = [
-            self.settings.config_dir,
-            self.settings.data_dir,
-            self.fastq_dir,
-            self.results_dir,
-            self.reports_dir
-        ]
-        
-        for directory in directories:
-            self.path_manager.ensure_directory(directory)
 
 # 全局工具配置实例
 _global_tools_config = None
