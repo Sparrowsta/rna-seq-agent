@@ -12,7 +12,6 @@ from ..tools import (
     build_star_index,
     run_nextflow_star,
     parse_star_metrics,
-    scan_genome_files,
     extract_genome_paths
 )
 from ..route_decider import decide_next_action_star
@@ -29,7 +28,6 @@ def create_star_agent():
 
     # 绑定STAR相关工具
     tools = [
-        scan_genome_files,
         download_genome_assets,
         build_star_index,
         run_nextflow_star,
