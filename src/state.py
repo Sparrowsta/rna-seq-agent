@@ -33,8 +33,8 @@ class AgentState(BaseModel):
     
     # === Modify修改字段 ===
     modification_history: List[Dict[str, Any]] = Field(default_factory=list, description="配置修改历史记录")
-    # Modify入口临时携带的修改需求（来自Confirm节点）
-    modify_requirements: Dict[str, Any] = Field(default_factory=dict, description="用户在/modify中输入的修改需求")
+    # Modify处理结果（记录解析后的变更）
+    modify_results: Dict[str, Any] = Field(default_factory=dict, description="修改处理结果和解析变更")
     
     # === UserConfirm确认字段 ===
     user_decision: str = Field(default="", description="用户决策: execute/replan/cancel")

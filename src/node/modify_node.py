@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from ..state import AgentState
 from ..logging_bootstrap import get_logger, log_llm_preview
 from ..core import get_shared_llm
+from ..prompts import MODIFY_NODE_PROMPT
 import json
 
 
@@ -29,6 +30,10 @@ class ModifyRequest(BaseModel):
     star_changes: Dict[str, Any] = Field(
         default={},
         description="STAR参数修改：outFilterMultimapNmax, twopassMode, quantMode等STAR特有参数。当用户明确提到STAR或这些参数时必须使用此字段！"
+    )
+    hisat2_changes: Dict[str, Any] = Field(
+        default={},
+        description="HISAT2参数修改：--mp, --rdg, --rfg, --score-min等HISAT2特有参数。当用户明确提到HISAT2或这些参数时必须使用此字段！"
     )
     featurecounts_changes: Dict[str, Any] = Field(
         default={},
@@ -63,98 +68,50 @@ async def modify_node(state: AgentState) -> Dict[str, Any]:
     logger = get_logger("rna.nodes.modify")
     logger.info("配置修改节点启动")
     
-    # 获取修改需求
-    modify_requirements = state.modify_requirements or {}
-    raw_input = modify_requirements.get("raw_input", "")
+    # 获取修改需求 - 从state.input获取用户输入
+    raw_input = state.input or ""
     
     # 获取当前配置
     current_nextflow = state.nextflow_config or {}
     current_resource = state.resource_config or {}
     current_fastp = state.fastp_params or {}
     current_star = state.star_params or {}
+    current_hisat2 = state.hisat2_params or {}
     current_featurecounts = state.featurecounts_params or {}
     
     logger.info(f"用户修改需求: {raw_input}")
     logger.debug(
-        "当前配置概览 | nextflow=%d 资源进程=%d fastp=%d star=%d featurecounts=%d",
-        len(current_nextflow), len(current_resource), len(current_fastp), len(current_star), len(current_featurecounts)
+        "当前配置概览 | nextflow=%d 资源进程=%d fastp=%d star=%d hisat2=%d featurecounts=%d",
+        len(current_nextflow), len(current_resource), len(current_fastp), len(current_star), len(current_hisat2), len(current_featurecounts)
     )
     
-    # 构建LLM提示
-    system_prompt = """你是RNA-seq分析配置专家。请解析用户的修改需求，将其转换为具体的参数修改。
+    # 分析当前执行上下文 - 获取工具选择
+    current_step = state.current_step or ""
+    completed_steps = state.completed_steps or []
+    nextflow_config = state.nextflow_config or {}
 
-‼️ **必须遵守的字段选择规则**：
-1. 如果用户提到"STAR"、"outFilterMultimapNmax"、"twopassMode"等STAR相关参数 → 使用star_changes字段
-2. 如果用户提到"FeatureCounts"、"-s"、"-p"、"-M"、"-Q"等FeatureCounts相关参数 → 使用featurecounts_changes字段
-3. 如果用户提到"FastP"、"qualified_quality_phred"、"length_required"等FastP相关参数 → 使用fastp_changes字段
+    # 获取所有工具配置
+    qc_tool = nextflow_config.get("qc_tool", "fastp")  # 默认FastP
+    align_tool = nextflow_config.get("align_tool", "star")  # 默认STAR
+    quant_tool = nextflow_config.get("quant_tool", "featurecounts")  # 默认FeatureCounts
 
-‼️ **绝对禁止**：不要说参数"不在配置范围内"！用户当前提供了完整的STAR和FeatureCounts参数，你必须使用对应的字段！
+    logger.info(f"执行上下文 | 当前步骤={current_step} 已完成={completed_steps}")
+    logger.info(f"工具配置 | 质控={qc_tool} 比对={align_tool} 定量={quant_tool}")
+    
+    # 构建上下文感知的LLM提示
+    context_analysis = []
+    if current_step:
+        context_analysis.append(f"- 当前正在执行: {current_step}")
+    if completed_steps:
+        context_analysis.append(f"- 已完成步骤: {', '.join(completed_steps)}")
+    context_analysis.append(f"- 配置的质控工具: {qc_tool}")
+    context_analysis.append(f"- 配置的比对工具: {align_tool}")
+    context_analysis.append(f"- 配置的定量工具: {quant_tool}")
+    
+    context_info = "\n".join(context_analysis) if context_analysis else "- 尚未开始执行"
 
-严格要求：请使用下方【精确键名】返回修改，禁止使用任何别名或同义词；布尔值请使用 true/false，数值使用数字。
-
-【Nextflow配置参数（键名必须精确）】
-- species, genome_version, qc_tool, align_tool, quant_tool, paired_end,
-- run_download_genome, run_build_star_index, run_build_hisat2_index
-
-【资源配置参数（按进程）】
-- 每个进程键名与字段：{"<process>": {"cpus": <int>, "memory": "<GB字符串>"}}
-- 进程：prepare_star_index, prepare_hisat2_index, run_alignment, run_quality_control, run_quantification, download_genome_fasta, download_genome_gtf
-
-【FastP参数（键名必须精确）】
-- qualified_quality_phred, unqualified_percent_limit, n_base_limit, length_required,
-- adapter_trimming, quality_filtering, length_filtering,
-- phred64, reads_to_process, fix_mgi_id, detect_adapter_for_pe,
-- trim_front1, trim_tail1, max_len1, trim_front2, trim_tail2, max_len2,
-- trim_poly_g, poly_g_min_len, disable_trim_poly_g, trim_poly_x, poly_x_min_len,
-- cut_front, cut_tail, cut_right, cut_window_size, cut_mean_quality,
-- cut_front_window_size, cut_front_mean_quality, cut_tail_window_size, cut_tail_mean_quality, cut_right_window_size, cut_right_mean_quality,
-- average_qual, disable_length_filtering, length_limit, low_complexity_filter, complexity_threshold,
-- correction, overlap_len_require, overlap_diff_limit, overlap_diff_percent_limit,
-- overrepresentation_analysis, overrepresentation_sampling
-
-【STAR参数（键名必须精确）】
-- outSAMtype, outSAMunmapped, outSAMattributes,
-- outFilterMultimapNmax, alignSJoverhangMin, alignSJDBoverhangMin, outFilterMismatchNmax, outFilterMismatchNoverReadLmax,
-- alignIntronMin, alignIntronMax, alignMatesGapMax, quantMode, twopassMode,
-- limitBAMsortRAM, outBAMsortingThreadN, genomeLoad, outFileNamePrefix,
-- readFilesCommand, outReadsUnmapped, outFilterIntronMotifs, outSAMstrandField,
-- outFilterType, sjdbGTFfile, sjdbOverhang, chimSegmentMin, chimOutType, chimMainSegmentMultNmax
-
-【FeatureCounts参数（键名必须精确）】
-- -s, -p, -B, -C, -t, -g, -M, -O, --fraction, -Q,
-- --minOverlap, --fracOverlap, -f, -J,
-- -a, -F, --primary, --ignoreDup, --splitOnly, --nonSplitOnly, --largestOverlap,
-- --readShiftType, --readShiftSize, -R, --readExtension5, --readExtension3,
-- --read2pos, --countReadPairs, --donotsort, --byReadGroup, --extraAttributes
-
-⚠️ **关键参数选择规则**：
-1. **质量相关参数** → 使用 fastp_changes：如"质量阈值"、"qualified_quality_phred"、"length_required"
-2. **比对相关参数** → 使用 star_changes：如"多重比对"、"两遍模式"、"outFilterMultimapNmax"、"twopassMode"  
-3. **计数相关参数** → 使用 featurecounts_changes：如"链特异性"、"双端模式"、"-s"、"-p"、"-M"
-4. **线程/CPU资源** → 使用 resource_changes：如"线程数"、"CPU核心"、"runThreadN"、"-T"参数
-5. **流程配置** → 使用 nextflow_changes：物种、基因组版本、工具选择
-
-⚠️ **重要提醒**：用户明确提到具体工具参数时，必须使用对应的工具参数字段！
-
-请分析用户需求，优先使用工具专用参数字段，返回需要修改的参数。只修改用户明确要求的部分，保持其他配置不变，并严格使用上述精确键名。
-"""
-
-    user_prompt = f"""当前配置状态：
-
-Nextflow配置：
-{json.dumps(current_nextflow, indent=2, ensure_ascii=False)}
-
-资源配置：
-{json.dumps(current_resource, indent=2, ensure_ascii=False)}
-
-FastP参数：
-{json.dumps(current_fastp, indent=2, ensure_ascii=False)}
-
-STAR参数：
-{json.dumps(current_star, indent=2, ensure_ascii=False)}
-
-FeatureCounts参数：
-{json.dumps(current_featurecounts, indent=2, ensure_ascii=False)}
+    user_prompt = f"""🎯 **当前执行上下文**：
+{context_info}
 
 用户修改需求：
 {raw_input}
@@ -169,7 +126,7 @@ FeatureCounts参数：
         
         # 构建LangGraph标准消息格式
         messages = [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": MODIFY_NODE_PROMPT},
             {"role": "user", "content": user_prompt}
         ]
         
@@ -185,6 +142,7 @@ FeatureCounts参数：
         updated_resource = current_resource.copy()
         updated_fastp = current_fastp.copy()
         updated_star = current_star.copy()
+        updated_hisat2 = current_hisat2.copy()
         updated_featurecounts = current_featurecounts.copy()
         
         # 应用Nextflow配置修改
@@ -270,6 +228,42 @@ FeatureCounts参数：
                 old_value = updated_star.get(key, "未设置")
                 updated_star[key] = value
                 logger.debug(f"star.{key}: {old_value} → {value}")
+        
+        # 应用HISAT2参数修改
+        if modify_request.hisat2_changes:
+            logger.info("应用HISAT2参数修改")
+            
+            hisat2_allowed_keys = {
+                "--mp", "--rdg", "--rfg", "--score-min", "--ma", "--np", "--sp", "--no-mixed", "--no-discordant",
+                "--gbar", "--ignore-quals", "--nofw", "--norc", "--end-to-end", "--local", "--very-fast",
+                "--fast", "--sensitive", "--very-sensitive", "--very-fast-local", "--fast-local", 
+                "--sensitive-local", "--very-sensitive-local", "-N", "-L", "-i", "--n-ceil",
+                "-D", "-R", "--dpad", "--gbar", "--ignore-quals", "--nofw", "--norc", "--no-1mm-upfront",
+                "-k", "-a", "--time", "--un", "--al", "--un-conc", "--al-conc", "--summary-file",
+                "--new-summary", "--quiet", "--met-file", "--met-stderr", "--met", "--no-head",
+                "--no-sq", "--rg-id", "--rg", "--omit-sec-seq", "--sam-no-qname-trunc", "--xeq",
+                "--soft-clipped-unmapped-tlen", "--sam-append-comment", "--reorder", "--mm",
+                "--qc-filter", "--seed", "--non-deterministic", "--remove-chrname-prefix", "--add-chrname-prefix"
+            }
+            
+            for key, value in modify_request.hisat2_changes.items():
+                if key not in hisat2_allowed_keys:
+                    logger.warning(f"跳过未知HISAT2键: {key}")
+                    continue
+                # 处理布尔类型参数
+                if key in {"--no-mixed", "--no-discordant", "--ignore-quals", "--nofw", "--norc", 
+                          "--end-to-end", "--local", "--no-1mm-upfront", "--time", "--new-summary", 
+                          "--quiet", "--met-stderr", "--no-head", "--no-sq", "--omit-sec-seq", 
+                          "--sam-no-qname-trunc", "--xeq", "--soft-clipped-unmapped-tlen", 
+                          "--sam-append-comment", "--reorder", "--qc-filter", "--non-deterministic", 
+                          "--remove-chrname-prefix", "--add-chrname-prefix"}:
+                    if isinstance(value, str):
+                        value = value.strip().lower() in {"1", "true", "yes", "y", "on"}
+                    elif isinstance(value, (int, float)):
+                        value = bool(value)
+                old_value = updated_hisat2.get(key, "未设置")
+                updated_hisat2[key] = value
+                logger.debug(f"hisat2.{key}: {old_value} → {value}")
         
         # 应用FeatureCounts参数修改
         if modify_request.featurecounts_changes:
@@ -366,16 +360,18 @@ FeatureCounts参数：
             "resource_config": updated_resource,
             "fastp_params": updated_fastp,
             "star_params": updated_star,
+            "hisat2_params": updated_hisat2,
             "featurecounts_params": updated_featurecounts,
             
-            # 更新修改需求（记录已应用）
-            "modify_requirements": {
-                "raw_input": raw_input,
+            # 记录修改处理结果
+            "modify_results": {
+                "original_input": raw_input,
                 "parsed_changes": {
                     "nextflow_config": modify_request.nextflow_changes,
                     "resource_config": modify_request.resource_changes,
                     "fastp_params": modify_request.fastp_changes,
                     "star_params": modify_request.star_changes,
+                    "hisat2_params": modify_request.hisat2_changes,
                     "featurecounts_params": modify_request.featurecounts_changes
                 },
                 "applied": True
@@ -400,5 +396,5 @@ FeatureCounts参数：
             "success": False,
             "response": f"❌ 修改解析失败: {str(e)}",
             "status": "failed",
-            "modify_requirements": {}  # 清空修改需求
+            "modify_results": {}  # 清空修改结果
         }

@@ -206,12 +206,9 @@ def _build_node_result(state: AgentState, decision) -> Dict[str, Any]:
     if decision.decision == 'execute' and decision.execution_mode:
         print(f"✅ 用户确认执行{decision.execution_mode}模式")
 
-    # 添加修改内容
+    # 添加修改内容到state.input
     if decision.modify_content:
-        result["modify_requirements"] = {
-            "raw_input": decision.modify_content,
-            "source": "numeric_selection"
-        }
+        result["input"] = decision.modify_content
 
     # 添加payload中的特殊字段
     if decision.payload.get('restart'):
@@ -297,7 +294,7 @@ def _reset_optimization_fields(state: AgentState) -> None:
 def _reset_user_modifications(state: AgentState) -> None:
     """重置用户修改相关字段"""
     state.modification_history = []
-    state.modify_requirements = {}
+    state.modify_results = {}
 
 
 def _reset_execution_results(state: AgentState) -> None:
