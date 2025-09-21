@@ -24,8 +24,10 @@ from langchain_core.tools import tool
 # 导入配置模块
 from ..config import get_tools_config
 from ..logging_bootstrap import get_logger
+from .utils_tools import write_params_file
 
 logger = get_logger("rna.tools.genome")
+
 @tool
 def add_genome_config(genome_info: Dict[str, Any]) -> Dict[str, Any]:
     """添加基因组配置到 genomes.json（不在工具内调用LLM）。
@@ -548,21 +550,24 @@ def build_star_index(
             "sjdb_overhang": sjdb,
             "runThreadN": threads,
             "limitGenomeGenerateRAM": 32000000000,
+            "resources": {"star": {"cpus": threads}},
         }
 
-        # 创建参数文件 - 统一保存到results/star目录（与star_params在一起）
+        # 创建参数文件 - 优先写入results_dir/params目录，便于统一管理
         if results_dir:
-            results_path = Path(results_dir)
-            star_subdir = results_path / "star"
-            star_subdir.mkdir(parents=True, exist_ok=True)
-            params_file = star_subdir / "build_index_params.json"
+            params_file_path = write_params_file(
+                step="build_star_index",
+                params=nf_params,
+                results_dir=results_dir,
+            )
         else:
             # 罕见的独立使用情况，仍然保存到基因组star目录
             star_dir = index_dir.parent / "star"
             star_dir.mkdir(parents=True, exist_ok=True)
-            params_file = star_dir / f"build_index_params_{timestamp}.json"
-        with open(params_file, "w", encoding="utf-8") as f:
-            json.dump(nf_params, f, indent=2, ensure_ascii=False)
+            fallback_filename = f"build_index_params_{timestamp}.json"
+            params_file_path = star_dir / fallback_filename
+            with open(params_file_path, "w", encoding="utf-8") as file_handle:
+                json.dump(nf_params, file_handle, indent=2, ensure_ascii=False)
 
         # 定位 build_index.nf
         nextflow_script = tools_config.settings.nextflow_scripts_dir / "build_index.nf"
@@ -584,14 +589,14 @@ def build_star_index(
             "run",
             str(nextflow_script),
             "-params-file",
-            str(params_file),
+            str(params_file_path),
             "-work-dir",
             str(work_dir),
         ]
 
         logger.info("构建STAR索引 (Nextflow)")
         logger.info(f"执行命令: {' '.join(cmd)}")
-        logger.info(f"参数文件: {params_file}")
+        logger.info(f"参数文件: {params_file_path}")
         logger.info(f"目标目录: {index_dir}")
         result = subprocess.run(
             cmd,
@@ -605,7 +610,7 @@ def build_star_index(
             "success": result.returncode == 0,
             "index_dir": str(index_dir),
             "skipped": False,
-            "params_file": str(params_file),
+            "params_file": str(params_file_path),
         }
         try:
             if get_tools_config().settings.debug_mode:
@@ -642,10 +647,21 @@ def build_star_index(
 @tool
 def build_hisat2_index(
     genome_id: str,
-    p: Optional[int] = None,
+    runThreadN: Optional[int] = None,
     force_rebuild: bool = False,
+    results_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """构建 HISAT2 索引（等价 build_star_index）"""
+    """构建 HISAT2 索引（等价 build_star_index）。
+
+    Args:
+        genome_id: 基因组标识
+        runThreadN: 线程数，未提供时使用默认值
+        force_rebuild: 是否强制重建已有索引
+        results_dir: 存放分析结果的目录，若提供则参数文件写入 results_dir/params
+
+    Returns:
+        构建结果信息
+    """
     try:
         tools_config = get_tools_config()
 
@@ -697,17 +713,36 @@ def build_hisat2_index(
         work_dir = tools_config.settings.data_dir / "work" / work_dir_name
         work_dir.mkdir(parents=True, exist_ok=True)
 
+        thread_count = 8
+        if runThreadN is not None:
+            try:
+                parsed_thread_count = int(runThreadN)
+                if parsed_thread_count > 0:
+                    thread_count = parsed_thread_count
+                else:
+                    logger.warning(f"线程数必须为正整数，已回退到默认值: {runThreadN}")
+            except (TypeError, ValueError):
+                logger.warning(f"无法解析线程数参数 runThreadN={runThreadN}")
+
         nf_params = {
             "genome_fasta": str(fasta_file),
             "genome_gtf": str(gtf_file) if gtf_file else "",
             "hisat2_index_dir": str(index_dir),
             "index_basename": "genome",
-            "p": p or 4,
+            "p": thread_count,
+            "resources": {"hisat2": {"cpus": thread_count}},
         }
 
-        params_file = work_dir / "build_hisat2_index_params.json"
-        with open(params_file, "w", encoding="utf-8") as f:
-            json.dump(nf_params, f, indent=2, ensure_ascii=False)
+        if results_dir:
+            params_file_path = write_params_file(
+                step="build_hisat2_index",
+                params=nf_params,
+                results_dir=results_dir,
+            )
+        else:
+            params_file_path = work_dir / "build_hisat2_index_params.json"
+            with open(params_file_path, "w", encoding="utf-8") as file_handle:
+                json.dump(nf_params, file_handle, indent=2, ensure_ascii=False)
 
         # 6) 定位并执行 Nextflow
         nextflow_script = tools_config.settings.nextflow_scripts_dir / "build_hisat2_index.nf"
@@ -721,10 +756,10 @@ def build_hisat2_index(
         logger.info(f"构建HISAT2索引 - 基因组: {genome_id}")
         logger.info(f"FASTA: {fasta_file}")
         logger.info(f"索引目录: {index_dir}")
-        
+
         cmd = [
             "nextflow", "run", str(nextflow_script),
-            "-params-file", str(params_file),
+            "-params-file", str(params_file_path),
             "-work-dir", str(work_dir),
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=14400, cwd=tools_config.settings.project_root)
@@ -739,7 +774,7 @@ def build_hisat2_index(
             "genome_id": genome_id,
             "index_files": [str(f) for f in final_index_files],
             "work_dir": str(work_dir),
-            "params_file": str(params_file),
+            "params_file": str(params_file_path),
         }
 
         if success:
