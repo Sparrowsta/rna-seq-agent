@@ -48,7 +48,7 @@ def _display_main_menu():
     lines.append("📋 请选择操作")
     lines += [
         "  1) 执行分析",
-        "  2) 浏览 FASTQ 文件",
+        "  2) 项目概览",
         "  3) 基因组配置（仅添加）",
         "  4) 帮助",
         "  5) 退出",
@@ -82,10 +82,10 @@ def _handle_numeric_choice(choice: int, state: AgentState) -> Dict[str, Any]:
         return _handle_execute_mode_entry(state)
     
     elif choice == 2:
-        # 浏览FASTQ文件
+        # 项目概览
         return {
-            "response": "正在扫描FASTQ文件...",
-            "input": "FASTQ文件查询",
+            "response": "正在获取项目概览...",
+            "input": "项目概览",
             "status": "normal",
             "routing_decision": "normal"
         }

@@ -47,7 +47,7 @@ from .featurecounts_tools import (
 )
 
 from .analysis_tools import (
-    write_analysis_markdown
+    parse_pipeline_results
 )
 
 from .utils_tools import (
@@ -88,7 +88,7 @@ __all__ = [
     "parse_featurecounts_metrics",
     
     # 分析报告
-    "write_analysis_markdown",
+    "parse_pipeline_results",
     
     # 通用工具
     "get_project_overview",
@@ -144,6 +144,6 @@ TOOL_CATEGORIES = {
         "parse_star_metrics", 
         "parse_hisat2_metrics",
         "parse_featurecounts_metrics",
-        "write_analysis_markdown"
+        "parse_pipeline_results"
     ]
 }

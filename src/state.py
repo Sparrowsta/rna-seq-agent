@@ -90,49 +90,17 @@ class AgentState(BaseModel):
     workflow_summary: str = Field(default="", description="流程总结报告")
     
     # === Analysis分析字段 ===
-    analysis_report: Dict[str, Any] = Field(default_factory=dict, description="综合分析报告数据")
-    analysis_report_path: str = Field(default="", description="分析报告文件路径")
-    workflow_statistics: Dict[str, Any] = Field(default_factory=dict, description="工作流统计数据")
-    rna_seq_complete: bool = Field(default=False, description="RNA-seq流程完整标志")
+    overall_summary: str = Field(default="", description="流水线执行和数据质量的整体摘要，包括成功状态和完成情况")
+    key_findings: List[str] = Field(default_factory=list, description="基于数据分析的关键发现和模式，重要的数据洞察和生物学意义")
+    sample_health_assessment: str = Field(default="", description="各样本的健康度评估和问题标记，包括PASS/WARN/FAIL状态判断")
+    quality_metrics_analysis: str = Field(default="", description="FastP、比对、定量等步骤的质量指标专业解读和数据模式分析")
+    optimization_recommendations: List[str] = Field(default_factory=list, description="具体的参数调优和实验改进建议，基于数据质量的可行建议")
+    risk_warnings: List[str] = Field(default_factory=list, description="数据使用和后续分析的注意事项，潜在风险和限制因素")
+    next_steps: List[str] = Field(default_factory=list, description="建议的后续分析方向和步骤，包括差异分析、功能富集等")
+
 
 # ==================== 节点响应模型 - 用于特定节点的结构化输出 ====================
 
-# LLM 智能分析结构化输出模型
-class SampleHealthAssessment(BaseModel):
-    """单个样本健康度评估结果"""
-    sample_id: str
-    health_status: str = Field(description="健康状态: PASS/WARN/FAIL/UNKNOWN")
-    quality_score: float = Field(description="整体质量评分 0-100")
-    issues: List[str] = Field(default_factory=list, description="发现的具体问题")
-    strengths: List[str] = Field(default_factory=list, description="数据质量优点")
-    recommendations: List[str] = Field(default_factory=list, description="针对该样本的建议")
-
-class LLMAnalysisModel(BaseModel):
-    """LLM 驱动的智能分析结构化输出模型"""
-
-    # 核心分析结果
-    overall_assessment: str = Field(description="整体实验评估：成功/部分成功/失败，包含关键指标")
-    global_summary: str = Field(description="3-5句面向非技术读者的总结")
-
-    # 样本级别的智能分析
-    sample_assessments: List[SampleHealthAssessment] = Field(description="每个样本的详细健康度评估")
-
-    # 数据质量洞察
-    key_findings: List[str] = Field(description="基于数据模式的关键发现，包含具体数值")
-    data_quality_insights: List[str] = Field(description="数据质量深度洞察和异常模式识别")
-
-    # 实用建议
-    immediate_actions: List[str] = Field(description="需要立即采取的行动")
-    optimization_suggestions: List[str] = Field(description="流水线优化建议")
-    next_steps: List[str] = Field(description="后续分析方向建议")
-
-    # 风险和注意事项
-    risks: List[str] = Field(description="潜在风险与注意事项")
-    limitations: List[str] = Field(description="当前分析的局限性")
-
-    # 可选附加信息
-    technical_notes: Optional[List[str]] = Field(default=None, description="技术细节补充")
-    debug_info: Optional[Dict[str, Any]] = Field(default=None, description="调试信息")
 
 class NormalResponse(BaseModel):
     """Normal节点的精简响应格式 - 兼容create_react_agent工具响应"""
@@ -173,3 +141,13 @@ class Hisat2Response(BaseModel):
     hisat2_optimization_suggestions: str = Field(description="详细的优化理由、数据支撑和预期效果")
     hisat2_optimization_params: Dict[str, Any] = Field(default_factory=dict, description="仅包含改变了的优化参数")
     hisat2_results: Dict[str, Any] = Field(default_factory=dict, description="HISAT2执行产生的输出与摘要；遵循Prompt约定")
+
+class AnalysisResponse(BaseModel):
+    """RNA-seq分析结果的结构化响应格式"""
+    overall_summary: str = Field(default="", description="流水线执行和数据质量的整体摘要，包括成功状态和完成情况")
+    key_findings: List[str] = Field(default_factory=list, description="基于数据分析的关键发现和模式，重要的数据洞察和生物学意义")
+    sample_health_assessment: str = Field(default="", description="各样本的健康度评估和问题标记，包括PASS/WARN/FAIL状态判断")
+    quality_metrics_analysis: str = Field(default="", description="FastP、比对、定量等步骤的质量指标专业解读和数据模式分析")
+    optimization_recommendations: List[str] = Field(default_factory=list, description="具体的参数调优和实验改进建议，基于数据质量的可行建议")
+    risk_warnings: List[str] = Field(default_factory=list, description="数据使用和后续分析的注意事项，潜在风险和限制因素")
+    next_steps: List[str] = Field(default_factory=list, description="建议的后续分析方向和步骤，包括差异分析、功能富集等")

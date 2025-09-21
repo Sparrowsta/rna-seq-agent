@@ -218,21 +218,19 @@ def route_after_analysis(state: AgentState) -> str:
     - single/yolo模式：直接结束（END）
     - optimized/batch_optimize模式：返回用户确认界面
     """
-    # 读取节点顶层success字段，符合success-first约定
     analysis_success = getattr(state, 'success', False)
     mode = (getattr(state, 'execution_mode', 'single') or 'single').lower()
-    
-    if analysis_success:
-        if mode in ('single', 'yolo'):
-            logger.info(f"[ROUTE] {mode.upper()}模式：分析完成，流程结束")
-            return END
-        elif mode in ('optimized', 'batch_optimize'):
-            logger.info(f"[ROUTE] {mode.upper()}模式：分析完成，返回用户确认界面")
-            return "user_confirm"
-        else:
-            # 兜底：未知模式返回确认界面
-            logger.warning(f"[ROUTE] 未知执行模式 '{mode}'，兜底返回确认界面")
-            return "user_confirm"
-    else:
+
+    if not analysis_success:
         logger.info(f"[ROUTE] 分析失败（模式：{mode}），返回用户确认界面")
         return "user_confirm"
+
+    if mode in ('single', 'yolo'):
+        logger.info(f"[ROUTE] {mode.upper()}模式：分析完成，流程结束")
+        return END
+    if mode in ('optimized', 'batch_optimize'):
+        logger.info(f"[ROUTE] {mode.upper()}模式：分析完成，返回用户确认界面")
+        return "user_confirm"
+
+    logger.warning(f"[ROUTE] 未知执行模式 '{mode}'，兜底返回确认界面")
+    return "user_confirm"

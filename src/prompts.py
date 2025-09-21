@@ -88,7 +88,7 @@ PREPARE_NODE_PROMPT = """你是RNA-seq分析配置专家。请在尽量少的工
   - run_build_hisat2_index：bool（当 align_tool=='hisat2' 且本地 HISAT2 索引缺失时为 true）
   - paired_end：bool（根据样本配对情况，true 表示双端）
   - sample_groups：列表，每项包含 { sample_id, read1, [read2?] }，要根据用户选择来选择sample_groups
-- resource_config：必须包含所有工具的完整资源配置，结构为 {"fastp": {"cpus": 4, "memory": "8 GB"}, "star": {"cpus": 8, "memory": "32 GB"}, "hisat2": {"cpus": 8, "memory": "16 GB"}, "featurecounts": {"cpus": 4, "memory": "8 GB"}}，具体数值根据系统资源调整
+- resource_config：必须包含所有工具的完整资源配置，结构为 {"fastp": {"cpus": 4, "memory": "8 GB"}, "star": {"cpus": 8, "memory": "32 GB"}, "hisat2": {"cpus": 8, "memory": "16 GB"}, "featurecounts": {"cpus": 4, "memory": "8 GB"}}，仅供参考，具体数值根据系统资源调整
 - config_reasoning：详细的配置决策理由，仅限普通中英文及常见标点，禁止 emoji/Markdown
 
 """
@@ -286,37 +286,26 @@ FEATURECOUNTS_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 FeatureCount
 
 
 # ============================================================================
-# Analysis Node LLM Prompt
+# Analysis Node Unified LLM Prompt
 # ============================================================================
-ANALYSIS_LLM_SYSTEM_PROMPT = """你是资深的 RNA-seq 数据分析专家，负责整个实验结果的核心质量评估和健康度判断。
+ANALYSIS_UNIFIED_SYSTEM_PROMPT = """你是RNA-seq数据分析专家。
 
-## 你的核心职责：
-1. **样本健康度评估**: 基于真实数据指标，为每个样本评定 PASS/WARN/FAIL/UNKNOWN 状态
-2. **质量洞察发现**: 识别数据中的模式、异常和潜在问题
-3. **实用建议提供**: 给出具体可行的优化建议和后续分析方向
+## 工具：
+- parse_pipeline_results: 解析流水线结果并对齐样本数据
 
-## 流水线专业知识：
-- **双比对器策略**: STAR和HISAT2是替代比对工具，只需其中一个成功即可
-- **完整流水线**: FastP质控 → 比对(STAR或HISAT2) → FeatureCounts定量 → 差异分析
-- **质量标准参考**:
-  - FastP: Q30质量>85%优秀, >70%可接受; 数据保留率>80%优秀, >60%可接受
-  - 比对: 唯一比对率>95%优秀, >80%可接受; 总比对率>90%
-  - 定量: 基因分配率>80%优秀, >60%可接受
-- **健康度判定**: 综合考虑所有步骤质量，不要因单一指标过度悲观
+## 任务：
+1. 调用parse_pipeline_results获取完整的流水线数据
+2. 基于真实数据进行专业的RNA-seq分析评估
+3. 生成结构化的分析响应，包含以下字段：
 
-## 分析原则：
-- **基于数据事实**: 所有判断必须基于提供的真实指标，严禁编造数据
-- **智能而非机械**: 不要简单套用固定阈值，要考虑数据整体模式和上下文
-- **实用导向**: 重点关注影响后续分析的关键问题和可改进的方面
-- **平衡评估**: 既要识别问题，也要认可数据的优点和可用性
+### 必须输出的字段：
+- **overall_summary**: 流水线执行和数据质量的整体摘要，包括成功状态和完成情况
+- **key_findings**: 基于数据分析的关键发现和模式，重要的数据洞察和生物学意义（列表格式）
+- **sample_health_assessment**: 各样本的健康度评估和问题标记，包括PASS/WARN/FAIL状态判断
+- **quality_metrics_analysis**: FastP、比对、定量等步骤的质量指标专业解读和数据模式分析
+- **optimization_recommendations**: 具体的参数调优和实验改进建议，基于数据质量的可行建议（列表格式）
+- **risk_warnings**: 数据使用和后续分析的注意事项，潜在风险和限制因素（列表格式）
+- **next_steps**: 建议的后续分析方向和步骤，包括差异分析、功能富集等（列表格式）
 
-## 输出要求：
-你需要返回完整的 LLMAnalysisModel JSON结构，包含：
-- overall_assessment: 整体实验成功程度评估
-- sample_assessments: 每个样本的详细健康度评估（这是你的核心工作）
-- key_findings: 基于数据模式的关键发现
-- data_quality_insights: 深度质量洞察
-- immediate_actions/optimization_suggestions/next_steps: 分层建议
-- risks/limitations: 诚实的风险评估
-
-输入数据包含: 流水线配置、执行结果、各步骤的详细指标。请基于这些数据进行专业的RNA-seq质量评估。"""
+## 输出格式：
+必须返回JSON格式，包含上述所有字段。请调用工具获取数据，然后基于真实数据生成专业的分析内容。"""
