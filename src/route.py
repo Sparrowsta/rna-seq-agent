@@ -74,48 +74,39 @@ def route_after_confirm(state: AgentState) -> str:
 
 def route_after_fastp(state: AgentState) -> str:
     """FastP节点后的路由：
-    根据决策器返回的 next_action 选择下一步：
-    - continue_next: 根据配置选择比对器（star/hisat2）继续执行
-    - return_confirm: 返回用户确认界面（失败或有优化建议）
-    - re_run: 重新运行FastP（可自动修复的错误）
+    - continue_next: 按配置选择比对器（star/hisat2）
+    - return_confirm: 返回用户确认
+    - re_run: 重新运行FastP
     """
-    # 调用路由决策器获取下一步行动
     next_action = decide_next_action_fastp(state)
-    
+
     logger.debug(f"[ROUTE-FASTP] 决策器返回: {next_action}")
-    
+
     if next_action == "return_confirm":
         logger.info("[ROUTE] FastP需要用户确认（失败或有优化建议），返回确认界面")
         return "user_confirm"
-    
     elif next_action == "re_run":
         logger.info("[ROUTE] FastP检测到可自动修复错误，重新运行")
         return "fastp"
-    
     elif next_action == "continue_next":
-        # 选择比对器 - 优先级：配置 > 用户需求 > 默认(star)
-        # 支持两种键名：align_tool（首选）与 aligner（兼容旧字段）
-        aligner = "star"  # 默认使用STAR
+        # 选择比对器 - 优先级：配置 > 用户需求 > 默认(STAR)
+        align_tool = "star"
         if hasattr(state, 'nextflow_config') and state.nextflow_config:
             cfg = state.nextflow_config
-            aligner = (cfg.get('align_tool')
-                       or cfg.get('aligner')
-                       or 'star')
+            align_tool = (cfg.get('align_tool') or 'star')
         elif hasattr(state, 'user_requirements') and state.user_requirements:
             req = state.user_requirements
-            aligner = (req.get('align_tool')
-                       or req.get('aligner')
-                       or 'star')
-        
-        # 确保比对器名称标准化
-        aligner = aligner.lower()
-        if aligner not in ['star', 'hisat2']:
-            logger.warning(f"[ROUTE] 未知比对器 '{aligner}'，使用默认STAR")
-            aligner = 'star'
+            align_tool = (req.get('align_tool') or 'star')
 
-        logger.info(f"[ROUTE] FastP完成，继续{aligner.upper()}比对")
-        return aligner
-    
+        # 最小修复：标准化值，避免因首尾空白/大小写导致误判
+        align_tool = str(align_tool).strip().lower()
+
+        if align_tool not in ['star', 'hisat2']:
+            logger.warning(f"[ROUTE] 未知比对器 '{align_tool}'，使用默认STAR")
+            align_tool = 'star'
+
+        logger.info(f"[ROUTE] FastP完成，继续{align_tool.upper()}比对")
+        return align_tool
     else:
         # 兜底逻辑：未知决策返回确认界面
         logger.warning(f"[ROUTE] 未知决策 '{next_action}'，返回确认界面")

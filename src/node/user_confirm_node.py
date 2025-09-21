@@ -62,6 +62,12 @@ async def _numeric_user_confirm_node(state: AgentState) -> Dict[str, Any]:
                 'completed_steps': getattr(state, 'completed_steps', []),
                 'current_step': getattr(state, 'current_step', '')
             }
+            # 注入比对器，供 /continue 在 fastp 后决定进入 STAR/HISAT2
+            try:
+                align_tool = str((getattr(state, 'nextflow_config', {}) or {}).get('align_tool', 'star')).strip().lower()
+            except Exception:
+                align_tool = 'star'
+            context['align_tool'] = align_tool
             
             # 使用新的数字选择解析
             decision = parse_numeric_selection(user_choice, view.commands, context)

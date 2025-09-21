@@ -105,13 +105,15 @@ def _convert_command_to_decision(
         )
     
     elif command.command == "/continue":
-        # 根据完成步骤确定下一步
+        # 根据完成步确定下一步
         if "featurecounts" in completed_steps:
             decision = 'continue_analysis'
         elif "star" in completed_steps:
             decision = 'continue_featurecounts'
         elif "fastp" in completed_steps:
-            decision = 'continue_star'
+            # 按配置的比对器继续（默认star）
+            align_tool = str(context.get('align_tool', 'star')).strip().lower()
+            decision = 'continue_hisat2' if align_tool == 'hisat2' else 'continue_star'
         else:
             decision = 'continue'
         

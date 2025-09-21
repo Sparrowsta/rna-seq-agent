@@ -338,6 +338,13 @@ def _build_commands(state: AgentState) -> List[CommandHint]:
     completed_steps = getattr(state, 'completed_steps', []) or []
     current_step = getattr(state, 'current_step', '')
     
+    # 读取比对器配置（仅用于文案渲染）
+    align_tool = 'star'
+    try:
+        align_tool = str((getattr(state, 'nextflow_config', {}) or {}).get('align_tool', 'star')).strip().lower()
+    except Exception:
+        align_tool = 'star'
+    
     # 根据执行进度动态生成命令
     if completed_steps:
         # 有执行进度，显示continue选项
@@ -354,9 +361,10 @@ def _build_commands(state: AgentState) -> List[CommandHint]:
                 icon="➡️"
             ))
         elif "fastp" in completed_steps:
+            next_align_desc = "继续到HISAT2比对" if align_tool == 'hisat2' else "继续到STAR比对"
             commands.append(CommandHint(
                 command="/continue",
-                description="继续到STAR比对", 
+                description=next_align_desc, 
                 icon="➡️"
             ))
         
@@ -389,7 +397,7 @@ def _build_commands(state: AgentState) -> List[CommandHint]:
     
     # 通用命令
     commands.extend([
-        CommandHint(command="/modify", description="修改配置", icon="🔧"),
+        CommandHint(command="/modify", description="修改配置", icon="🛧".replace("🛧","🔧")),
         CommandHint(command="/cancel", description="取消分析", icon="❌"),
         CommandHint(command="/quit", description="退出程序", icon="🚪"),
     ])
