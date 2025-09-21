@@ -68,7 +68,7 @@ async def modify_node(state: AgentState) -> Dict[str, Any]:
     logger = get_logger("rna.nodes.modify")
     logger.info("配置修改节点启动")
     
-    # 获取修改需求 - 从state.input获取用户输入
+    # 获取修改需求 - 在state.input获取用户输入
     raw_input = state.input or ""
     
     # 获取当前配置
@@ -81,7 +81,7 @@ async def modify_node(state: AgentState) -> Dict[str, Any]:
     
     logger.info(f"用户修改需求: {raw_input}")
     logger.debug(
-        "当前配置概览 | nextflow=%d 资源进程=%d fastp=%d star=%d hisat2=%d featurecounts=%d",
+        "当前配置概要 | nextflow=%d 资源进程=%d fastp=%d star=%d hisat2=%d featurecounts=%d",
         len(current_nextflow), len(current_resource), len(current_fastp), len(current_star), len(current_hisat2), len(current_featurecounts)
     )
     
@@ -309,6 +309,7 @@ async def modify_node(state: AgentState) -> Dict[str, Any]:
             },
             "reason": modify_request.modification_reason
         }
+        modification_record["changes"]["hisat2"] = modify_request.hisat2_changes
         modification_history.append(modification_record)
         
         logger.info("配置修改完成")
