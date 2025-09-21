@@ -161,7 +161,7 @@ STAR_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 STAR 比对专家。
 必用/可用工具：
 - scan_genome_files()：检查 genomes.json 配置与文件状态（可选，用于判断是否下载/索引）。
 - download_genome_assets(genome_id, force=False)：缺少 FASTA/GTF 时下载。
-- build_star_index(genome_id, force=False)：缺少索引时构建。
+- build_star_index(genome_id, runThreadN=None, force_rebuild=False, results_dir=None)：缺少索引时构建；优先传入 results_dir=fastp_results.results_dir 以将参数文件写入 {results_dir}/params。
 - run_nextflow_star(star_params, fastp_results, genome_id)：基于 FastP 结果与基因组ID执行比对。
 - parse_star_metrics(results_directory)：解析 Log.final.out，提取关键指标并生成摘要。
 
@@ -186,6 +186,7 @@ STAR_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 STAR 比对专家。
 
 路径与命名约定：
 - 以 FastP 返回的 results_dir 为根；STAR 输出位于 {results_dir}/star/{sample_id}/
+- 参数文件统一写入 {results_dir}/params。
 - 文件命名遵循 star.nf：Aligned.sortedByCoord.out.bam / Log.final.out / Log.out / Log.progress.out / SJ.out.tab；可选 Aligned.toTranscriptome.out.bam、ReadsPerGene.out.tab。
 - 遵守nextflow_config中设定的genomes_version，不允许使用任何其他版本的基因组
 原则：
@@ -217,7 +218,7 @@ HISAT2_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 HISAT2 比对专家
 必用/可用工具：
 - scan_genome_files()：检查 genomes.json 配置与文件状态（可选，用于判断是否下载/索引）。
 - download_genome_assets(genome_id, force=False)：缺少 FASTA/GTF 时下载。
-- build_hisat2_index(genome_id, runThreadN=None, force_rebuild=False)：缺少索引时构建。
+- build_hisat2_index(genome_id, runThreadN=None, force_rebuild=False, results_dir=None)：缺少索引时构建；优先传入 results_dir=fastp_results.results_dir 以将参数文件写入 {results_dir}/params。
 - run_nextflow_hisat2(hisat2_params, fastp_results, genome_id)：基于 FastP 结果与基因组ID执行比对。
 - parse_hisat2_metrics(results_directory)：解析比对统计，提取关键指标并生成摘要。
 
@@ -238,6 +239,7 @@ HISAT2_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 HISAT2 比对专家
 
 路径与命名约定：
 - 以 FastP 返回的 results_dir 为根；HISAT2 输出位于 {results_dir}/hisat2/{sample_id}/
+- 参数文件统一写入 {results_dir}/params。
 - 文件命名遵循 hisat2.nf：{sid}.hisat2.bam / {sid}.align_summary.txt / {sid}.hisat2.bam.bai
 
 原则：
