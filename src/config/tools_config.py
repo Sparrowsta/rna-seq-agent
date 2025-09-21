@@ -41,8 +41,6 @@ class ToolsConfig:
         """基因组配置文件路径"""
         return self.settings.genomes_config_path
     
-    # 运行时与 nextflow 配置文件路径已废弃，不再暴露属性
-    
     # === 索引目录路径 ===
     def get_star_index_dir(self, fasta_path: Path) -> Path:
         """获取STAR索引目录"""
@@ -52,7 +50,6 @@ class ToolsConfig:
         """获取HISAT2索引目录"""
         return fasta_path.parent / "hisat2_index"
     
-    # === 确保目录存在（已废弃：由调用方按需创建） ===
 
 # 全局工具配置实例
 _global_tools_config = None

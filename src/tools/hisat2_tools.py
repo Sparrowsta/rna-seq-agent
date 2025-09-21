@@ -39,7 +39,7 @@ def run_nextflow_hisat2(
     - 仅在 fastp_results.success 为真且包含 per_sample_outputs 时放行
     - 统一复用 FastP 的 results_dir 作为运行根目录
     - 直接使用 genome_paths["hisat2_index_path"] 获取HISAT2索引路径
-    - sample_inputs 仅来源于 fastp_results.per_sample_outputs（不再扫描目录）
+    - sample_inputs 仅来源于 fastp_results.per_sample_outputs
     - per_sample_outputs 路径与 hisat2.nf 产出一致（样本子目录 + 默认文件名）
     """
     try:
@@ -159,7 +159,7 @@ def run_nextflow_hisat2(
             "-params-file", str(params_file),
             "-work-dir", str(work_dir),
         ]
-        # 不再使用 -params 内联注入，统一通过 params-file 传递资源
+        # 统一通过 params-file 传递资源，避免内联 -params
         execution_result = subprocess.run(command, capture_output=True, text=True, timeout=7200, cwd=tools_config.settings.project_root)
 
         # 7) 组装每样本输出路径（与 hisat2.nf publishDir 对齐）

@@ -41,7 +41,7 @@ def run_nextflow_star(
     - 仅在 fastp_results.success 为真且包含 per_sample_outputs 时放行
     - 统一复用 FastP 的 results_dir 作为运行根目录
     - 直接使用 genome_paths["star_index_path"] 获取STAR索引路径
-    - sample_inputs 仅来源于 fastp_results.per_sample_outputs（不再扫描目录）
+    - sample_inputs 仅来源于 fastp_results.per_sample_outputs
     - per_sample_outputs 路径与 star.nf 产出一致（样本子目录 + 默认文件名）
     """
     try:
@@ -163,7 +163,7 @@ def run_nextflow_star(
             "-params-file", str(params_file),
             "-work-dir", str(work_dir),
         ]
-        # 不再使用 -params 内联注入，统一通过 params-file 传递资源
+        # 统一通过 params-file 传递资源，避免内联 -params
         execution_result = subprocess.run(command, capture_output=True, text=True, timeout=7200, cwd=tools_config.settings.project_root)
 
         # 7) 组装每样本输出路径（与 star.nf publishDir 对齐）
@@ -420,7 +420,7 @@ def parse_star_metrics(results_directory: str) -> Dict[str, Any]:
 
         for sample_dir in sample_dirs:
             sample_id = sample_dir.name
-            # 仅接受与 star.nf 一致的命名：<sample_id>.Log.final.out（不再保留无前缀回退）
+            # 仅接受与 star.nf 一致的命名：<sample_id>.Log.final.out
             log_final_path = sample_dir / f"{sample_id}.Log.final.out"
 
             if not log_final_path.exists():

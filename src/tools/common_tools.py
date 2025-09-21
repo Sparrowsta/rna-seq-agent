@@ -319,7 +319,7 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
                     "exists": star_index_full_path.exists()
                 }
             else:
-                # 不再基于 FASTA 路径推断索引目录，保持为空以便上游感知缺失
+                # 保持索引目录为空以便上游感知缺失，在填写前不尝试推断
                 status["files"]["star_index"] = {
                     "path": "",
                     "relative_path": "",
@@ -350,7 +350,7 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
                     "exists": hisat2_index_full_path.exists()
                 }
             else:
-                # 不再基于 FASTA 路径推断索引目录，保持为空以便上游感知缺失
+                # 保持索引目录为空以便上游感知缺失，在填写前不尝试推断
                 status["files"]["hisat2_index"] = {
                     "path": "",
                     "relative_path": "",

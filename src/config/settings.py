@@ -84,11 +84,7 @@ class Settings(BaseModel):
     def genomes_config_path(self) -> Path:
         """基因组配置文件路径"""
         return self.data_dir / "config" / "genomes.json"
-    
-    # runtime_config_path 与 nextflow_config_path 已废弃
-    
-    # 模板目录已废弃
-    
+
     def validate_environment(self) -> tuple[bool, list[str]]:
         """验证环境配置"""
         errors = []
@@ -102,7 +98,7 @@ class Settings(BaseModel):
         if not gpath.exists():
             errors.append(f"基因组配置文件不存在: {gpath}")
         
-        # 检查关键目录（config 目录已废弃，不再校验）
+        # 检查数据目录是否存在
         if not self.data_dir.exists():
             errors.append(f"数据目录不存在: {self.data_dir}")
         

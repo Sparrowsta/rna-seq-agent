@@ -169,7 +169,7 @@ def run_nextflow_featurecounts(
             "-work-dir",
             str(work_dir),
         ]
-        # 不再使用 -params 内联注入，统一通过 params-file 传递资源
+        # 统一通过 params-file 传递资源，避免内联 -params
 
         logger.info("执行Nextflow FeatureCounts流水线")
         logger.info(f"参数文件: {params_file}")

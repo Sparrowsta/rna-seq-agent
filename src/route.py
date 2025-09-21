@@ -74,7 +74,7 @@ def route_after_confirm(state: AgentState) -> str:
 
 def route_after_fastp(state: AgentState) -> str:
     """FastP节点后的路由：
-    基于代码推断next_action，不再依赖execution_mode分支：
+    根据决策器返回的 next_action 选择下一步：
     - continue_next: 根据配置选择比对器（star/hisat2）继续执行
     - return_confirm: 返回用户确认界面（失败或有优化建议）
     - re_run: 重新运行FastP（可自动修复的错误）
@@ -124,7 +124,7 @@ def route_after_fastp(state: AgentState) -> str:
 
 def route_after_star(state: AgentState) -> str:
     """STAR节点后的路由：
-    基于代码推断next_action，不再依赖execution_mode分支：
+    根据决策器返回的 next_action 选择下一步：
     - continue_next: 继续FeatureCounts定量
     - return_confirm: 返回用户确认界面（失败或有优化建议）
     - re_run: 重新运行STAR（可自动修复的错误）
@@ -154,7 +154,7 @@ def route_after_star(state: AgentState) -> str:
 
 def route_after_hisat2(state: AgentState) -> str:
     """HISAT2节点后的路由：
-    基于代码推断next_action，不再依赖execution_mode分支：
+    根据决策器返回的 next_action 选择下一步：
     - continue_next: 继续FeatureCounts定量
     - return_confirm: 返回用户确认界面（失败或有优化建议）
     - re_run: 重新运行HISAT2（可自动修复的错误）
@@ -185,7 +185,7 @@ def route_after_hisat2(state: AgentState) -> str:
 
 def route_after_featurecount(state: AgentState) -> str:
     """FeatureCount节点后的路由：
-    基于代码推断next_action，不再依赖execution_mode分支：
+    根据决策器返回的 next_action 选择下一步：
     - continue_next: 进入综合分析
     - return_confirm: 返回用户确认界面（失败或有优化建议）
     - re_run: 重新运行FeatureCounts（可自动修复的错误）

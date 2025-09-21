@@ -38,13 +38,11 @@ class AgentState(BaseModel):
     
     # === UserConfirm确认字段 ===
     user_decision: str = Field(default="", description="用户决策: execute/replan/cancel")
-    confirmation_message: str = Field(default="", description="确认界面展示信息")
 
     # === 执行模式（用于路由与展示） ===
     execution_mode: str = Field(default="single", description="执行模式: single/optimized/batch_optimize/yolo")
     current_step: str = Field(default="", description="当前执行步骤: fastp/star/featurecounts/analysis")
     completed_steps: List[str] = Field(default_factory=list, description="已完成的步骤列表")
-    pipeline_progress: Dict[str, Any] = Field(default_factory=dict, description="流水线执行进度跟踪")
 
 
     # === 工具执行结果（保留这些字段，它们不是参数管理字段） ===
@@ -58,12 +56,6 @@ class AgentState(BaseModel):
     star_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_STAR_PARAMS.copy(), description="当前STAR比对参数")
     hisat2_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_HISAT2_PARAMS.copy(), description="当前HISAT2比对参数")
     featurecounts_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_FEATURECOUNTS_PARAMS.copy(), description="当前FeatureCounts定量参数")
-
-    # === 工具优化字段 ===
-    fastp_optimization: Dict[str, Any] = Field(default_factory=dict, description="FastP优化结果")
-    star_optimization: Dict[str, Any] = Field(default_factory=dict, description="STAR优化结果")
-    hisat2_optimization: Dict[str, Any] = Field(default_factory=dict, description="HISAT2优化结果")
-    featurecounts_optimization: Dict[str, Any] = Field(default_factory=dict, description="FeatureCounts优化结果")
 
     # === 工具优化参数变更字段（供跨节点引用优化历史） ===
     fastp_optimization_params: Dict[str, Any] = Field(default_factory=dict, description="FastP优化参数变更记录（仅包含改动项）")
@@ -83,11 +75,6 @@ class AgentState(BaseModel):
     hisat2_optimization_history: List[Dict[str, Any]] = Field(default_factory=list, description="HISAT2优化参数历史列表，保存最近5次优化记录")
     featurecounts_optimization_history: List[Dict[str, Any]] = Field(default_factory=list, description="FeatureCounts优化参数历史列表，保存最近5次优化记录")
     # === 工作流集成字段 ===
-    workflow_status: str = Field(default="", description="整体流程状态")
-    workflow_checkpoints: Dict[str, Any] = Field(default_factory=dict, description="检查点数据")
-    optimization_suggestions: Dict[str, Any] = Field(default_factory=dict, description="优化建议")
-    user_param_overrides: Dict[str, Any] = Field(default_factory=dict, description="用户参数覆盖")
-    workflow_summary: str = Field(default="", description="流程总结报告")
     
     # === Analysis分析字段 ===
     overall_summary: str = Field(default="", description="流水线执行和数据质量的整体摘要，包括成功状态和完成情况")

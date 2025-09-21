@@ -322,7 +322,7 @@ FeatureCounts参数：
 
         # 直接更新 Prepare 节点生成的参数文件（不做版本管理）
         try:
-            # 目标目录：仅使用 state.results_dir（不再从 nextflow_config 获取）
+            # 目标目录：统一使用 state.results_dir
             target_results_dir = getattr(state, "results_dir", "")
             if target_results_dir:
                 params_dir = Path(target_results_dir) / "params"
@@ -384,7 +384,7 @@ FeatureCounts参数：
             # 保存修改历史
             "modification_history": modification_history,
             
-            # 配置理由保持原样（不再在理由中插入修改说明，避免重复展示）
+            # 配置理由保持原样，避免重复插入修改说明
             "config_reasoning": state.config_reasoning,
             
             # 状态和响应
