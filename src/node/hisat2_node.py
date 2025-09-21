@@ -192,6 +192,17 @@ async def _call_hisat2_optimization_agent(state: AgentState) -> Hisat2Response:
 
     hisat2_resource_config = state.resource_config.get("hisat2") if state.resource_config else {}
 
+    # 获取来自detect node的基因组信息，为LLM提供判断基础
+    genome_info = {}
+    if hasattr(state, 'detect_results') and state.detect_results:
+        # 从detect结果中获取基因组信息
+        detect_results = state.detect_results
+        if isinstance(detect_results, dict):
+            query_results = detect_results.get('query_results', {})
+            if isinstance(query_results, dict) and genome_version:
+                # 提取指定基因组的详细信息
+                genome_info = query_results.get(genome_version, {})
+
     user_context = {
         "execution_mode": state.execution_mode,
         "genome_config": {
@@ -199,6 +210,7 @@ async def _call_hisat2_optimization_agent(state: AgentState) -> Hisat2Response:
             "paired_end": state.nextflow_config.get("paired_end")
         },
         "genome_paths": genome_paths,
+        "genome_info": genome_info,  # 来自detect node的基因组详细信息
         # 注入 nextflow 全局配置与资源配置，让 LLM 基于全局设置做决策
         "hisat2_resource_config": hisat2_resource_config,
         "current_hisat2_params": state.hisat2_params,

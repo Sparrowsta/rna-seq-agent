@@ -79,7 +79,25 @@ DEFAULT_FASTP_PARAMS = {
     "overrepresentation_sampling": None, # -P/--overrepresentation_sampling
 }
 
-# STAR 默认参数 - 使用 Python 风格命名
+# STAR 索引构建默认参数
+DEFAULT_STAR_INDEX_PARAMS = {
+    # 基础索引参数
+    "sjdbOverhang": 100,                      # 剪接位点overhang长度（read长度-1）
+    "runThreadN": 8,                          # 线程数
+    "limitGenomeGenerateRAM": 32000000000,    # 索引构建内存限制 32GB
+    
+    # 高级索引参数
+    "genomeSAindexNbases": None,              # SA索引的bases数（小基因组需调整）
+    "genomeChrBinNbits": None,                # 染色体bin的bits数
+    "genomeSAsparseD": None,                  # SA稀疏化距离
+    "sjdbGTFfile": None,                      # GTF注释文件（由Nextflow提供）
+    "sjdbGTFfeatureExon": None,               # GTF中外显子特征名
+    "sjdbGTFtagExonParentTranscript": None,   # GTF中转录本标签
+    "sjdbGTFtagExonParentGene": None,         # GTF中基因标签
+    "sjdbInsertSave": None,                   # 保存剪接位点到基因组
+}
+
+# STAR 比对运行默认参数 - 使用 Python 风格命名
 DEFAULT_STAR_PARAMS = {
     # 注意：线程数runThreadN由Nextflow resource_config统一管理，不在这里重复定义
     
@@ -171,7 +189,32 @@ DEFAULT_FEATURECOUNTS_PARAMS = {
     "--extraAttributes": None,                 # 输出额外的特征属性
 }
 
-# HISAT2 默认参数 - 使用 Python 风格命名
+# HISAT2 索引构建默认参数
+DEFAULT_HISAT2_INDEX_PARAMS = {
+    # 基础索引参数
+    "runThreadN": 8,                          # 线程数（转换为-p参数）
+    "large_index": False,                     # 大索引模式（适用于大基因组）
+    
+    # 剪接位点和外显子文件（可选，提高比对精度）
+    "ss": None,                               # 剪接位点文件路径
+    "exon": None,                             # 外显子文件路径
+    
+    # 高级索引参数  
+    "offrate": 4,                             # 偏移速率（索引密度）
+    "ftabchars": None,                        # ftab字符数
+    "local": False,                           # 本地构建模式
+    "packed": False,                          # 压缩索引
+    "bmax": None,                             # 最大bucket大小
+    "bmaxdivn": None,                         # bmax/参考长度比值
+    "dcv": None,                              # 差异覆盖采样
+    "nodc": False,                            # 不使用差异覆盖
+    "noref": False,                           # 不构建参考字符串
+    "justref": False,                         # 仅构建参考字符串
+    "seed": None,                             # 随机种子
+    "cutoff": None,                           # 截止值
+}
+
+# HISAT2 比对运行默认参数 - 使用 Python 风格命名
 DEFAULT_HISAT2_PARAMS = {
     # 注意：线程数-p由Nextflow resource_config统一管理，不在这里重复定义
     

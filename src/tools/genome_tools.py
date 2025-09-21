@@ -384,8 +384,7 @@ def download_genome_assets(
 @tool
 def build_star_index(
     genome_id: str,
-    sjdb_overhang: Optional[int] = None,
-    runThreadN: Optional[int] = None,
+    star_params: Optional[Dict[str, Any]] = None,
     force_rebuild: bool = False,
     results_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -396,8 +395,7 @@ def build_star_index(
 
     Args:
         genome_id: 基因组标识，用于定位FASTA和GTF文件
-        sjdb_overhang: 剪接位点overhang（默认用 DEFAULT_STAR_PARAMS 或 100）
-        runThreadN: 线程数（默认用 DEFAULT_STAR_PARAMS 或 4）
+        star_params: STAR索引构建参数字典，包含sjdbOverhang、runThreadN等优化参数
         force_rebuild: 若索引目录已存在是否强制重建
         results_dir: 分析结果目录，参数文件保存到results/star/子目录
 
@@ -405,7 +403,7 @@ def build_star_index(
         Dict: 执行结果（包含 index_dir/stdout/stderr/skipped 等）
     """
     try:
-        from ..config.default_tool_params import DEFAULT_STAR_PARAMS
+        from ..config.default_tool_params import DEFAULT_STAR_INDEX_PARAMS
         tools_config = get_tools_config()
 
         # 读取基因组配置
@@ -428,92 +426,37 @@ def build_star_index(
         fasta_path = data_dir / fasta_rel
         gtf_path = data_dir / gtf_rel
         
-        # 检查文件是否存在，如果不存在则尝试下载
-        files_missing = []
-        files_invalid = []
-        
+        # 检查必需的基因组文件是否存在和有效
         if not fasta_path.exists():
-            files_missing.append(f"FASTA: {fasta_path}")
-        else:
-            # 检查FASTA文件有效性
-            try:
-                file_size = fasta_path.stat().st_size
-                if file_size == 0:
-                    files_invalid.append(f"FASTA文件为空: {fasta_path}")
-                else:
-                    # 检查文件格式（前几个字符）
-                    with open(fasta_path, 'rb') as f:
-                        first_bytes = f.read(10)
-                    if not first_bytes.startswith(b'>'):
-                        files_invalid.append(f"FASTA文件格式无效: {fasta_path} (首字符: {first_bytes[:5]})")
-            except Exception as e:
-                files_invalid.append(f"FASTA文件检查失败: {fasta_path} ({e})")
+            return {"success": False, "error": f"FASTA文件不存在: {fasta_path}，请先使用download_genome_assets下载基因组文件"}
         
         if not gtf_path.exists():
-            files_missing.append(f"GTF: {gtf_path}")
-        else:
-            # 检查GTF文件有效性
-            try:
-                file_size = gtf_path.stat().st_size
-                if file_size == 0:
-                    files_invalid.append(f"GTF文件为空: {gtf_path}")
-            except Exception as e:
-                files_invalid.append(f"GTF文件检查失败: {gtf_path} ({e})")
+            return {"success": False, "error": f"GTF文件不存在: {gtf_path}，请先使用download_genome_assets下载基因组文件"}
+        
+        # 检查文件有效性
+        try:
+            fasta_size = fasta_path.stat().st_size
+            if fasta_size == 0:
+                return {"success": False, "error": f"FASTA文件为空: {fasta_path}，请重新下载基因组文件"}
             
-        if files_missing or files_invalid:
-            logger.info(f"检测到问题文件，尝试重新下载: missing={files_missing}, invalid={files_invalid}")
+            with open(fasta_path, 'rb') as f:
+                first_bytes = f.read(10)
+            if not first_bytes.startswith(b'>'):
+                return {"success": False, "error": f"FASTA文件格式无效: {fasta_path}，请重新下载基因组文件"}
             
-            # 删除无效文件
-            for invalid_file in files_invalid:
-                try:
-                    if "FASTA" in invalid_file and fasta_path.exists():
-                        fasta_path.unlink()
-                        logger.info(f"删除无效FASTA文件: {fasta_path}")
-                    elif "GTF" in invalid_file and gtf_path.exists():
-                        gtf_path.unlink()
-                        logger.info(f"删除无效GTF文件: {gtf_path}")
-                except Exception as e:
-                    logger.warning(f"删除无效文件失败: {e}")
-            
-            download_result = download_genome_assets(genome_id)
-            
-            if not download_result.get("success", False):
-                return {
-                    "success": False,
-                    "error": f"重新下载基因组文件失败: {download_result.get('error', '未知错误')}"
-                }
-            
-            # 等待并再次检查文件
-            time.sleep(2)  # 等待文件系统同步
-            
-            # 重新检查文件是否存在且有效
-            if not fasta_path.exists():
-                return {"success": False, "error": f"重新下载后FASTA文件仍不存在: {fasta_path}"}
-            if not gtf_path.exists():
-                return {"success": False, "error": f"重新下载后GTF文件仍不存在: {gtf_path}"}
-            
-            # 再次验证文件有效性
-            try:
-                fasta_size = fasta_path.stat().st_size
-                if fasta_size == 0:
-                    return {"success": False, "error": f"重新下载的FASTA文件仍为空: {fasta_path}"}
+            gtf_size = gtf_path.stat().st_size
+            if gtf_size == 0:
+                return {"success": False, "error": f"GTF文件为空: {gtf_path}，请重新下载基因组文件"}
                 
-                with open(fasta_path, 'rb') as f:
-                    first_bytes = f.read(10)
-                if not first_bytes.startswith(b'>'):
-                    return {"success": False, "error": f"重新下载的FASTA文件格式仍无效: {fasta_path}"}
-                
-                gtf_size = gtf_path.stat().st_size
-                if gtf_size == 0:
-                    return {"success": False, "error": f"重新下载的GTF文件仍为空: {gtf_path}"}
-                    
-            except Exception as e:
-                return {"success": False, "error": f"验证重新下载的文件失败: {e}"}
-            
-            logger.info(f"文件重新下载并验证成功: FASTA={fasta_size}字节, GTF={gtf_size}字节")
+        except Exception as e:
+            return {"success": False, "error": f"基因组文件检查失败: {e}，请重新下载基因组文件"}
 
-        # 目标索引目录
-        index_dir = tools_config.get_star_index_dir(fasta_path)
+        # 目标索引目录 - 直接从genomes.json配置获取
+        star_index_path = cfg.get("star_index_path")
+        if not star_index_path:
+            return {"success": False, "error": f"基因组 '{genome_id}' 配置缺少star_index_path"}
+        
+        index_dir = data_dir / star_index_path
 
         # 存在即跳过
         if index_dir.exists() and not force_rebuild:
@@ -527,31 +470,39 @@ def build_star_index(
                     "message": "STAR索引已存在，跳过构建",
                 }
 
-        # 构造 Nextflow 参数
-        sjdb = (
-            int(sjdb_overhang)
-            if sjdb_overhang is not None
-            else int(DEFAULT_STAR_PARAMS.get("sjdbOverhang") or 100)
-        )
-        threads = (
-            int(runThreadN)
-            if runThreadN is not None
-            else int(DEFAULT_STAR_PARAMS.get("runThreadN", 4))
-        )
+        # 处理STAR参数，合并默认值和用户输入
+        if star_params is None:
+            star_params = {}
+        
+        # 合并默认参数和用户参数
+        final_star_params = DEFAULT_STAR_INDEX_PARAMS.copy()
+        final_star_params.update(star_params)
+        
+        # 提取关键参数
+        sjdb = int(final_star_params.get("sjdbOverhang", 100))
+        threads = int(final_star_params.get("runThreadN", 4))
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         temp_dir = Path(tools_config.settings.data_dir) / "tmp" / f"nextflow_star_index_{timestamp}"
         temp_dir.mkdir(parents=True, exist_ok=True)
 
+        # 构建Nextflow参数，包含所有STAR索引参数
         nf_params = {
             "genome_fasta": str(fasta_path),
             "genome_gtf": str(gtf_path),
             "star_index_dir": str(index_dir),
             "sjdb_overhang": sjdb,
             "runThreadN": threads,
-            "limitGenomeGenerateRAM": 32000000000,
+            "limitGenomeGenerateRAM": final_star_params.get("limitGenomeGenerateRAM", 32000000000),
             "resources": {"star": {"cpus": threads}},
         }
+        
+        # 添加其他STAR索引构建参数
+        for key, value in final_star_params.items():
+            if key not in ["sjdbOverhang", "runThreadN", "limitGenomeGenerateRAM"]:
+                # 只添加非None值的参数，避免传递无效参数
+                if value is not None:
+                    nf_params[key] = value
 
         # 创建参数文件 - 优先写入results_dir/params目录，便于统一管理
         if results_dir:
@@ -647,7 +598,7 @@ def build_star_index(
 @tool
 def build_hisat2_index(
     genome_id: str,
-    runThreadN: Optional[int] = None,
+    hisat2_params: Optional[Dict[str, Any]] = None,
     force_rebuild: bool = False,
     results_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -655,7 +606,7 @@ def build_hisat2_index(
 
     Args:
         genome_id: 基因组标识
-        runThreadN: 线程数，未提供时使用默认值
+        hisat2_params: HISAT2索引构建参数字典，包含runThreadN、large_index、ss、exon等优化参数
         force_rebuild: 是否强制重建已有索引
         results_dir: 存放分析结果的目录，若提供则参数文件写入 results_dir/params
 
@@ -683,18 +634,43 @@ def build_hisat2_index(
         if not fasta_path:
             return {"success": False, "error": f"基因组 '{genome_id}' 配置缺少fasta_path"}
 
-        # 2) 直接使用fasta路径，不做复杂转换
-        fasta_file = Path(fasta_path)
-        gtf_file = Path(gtf_path) if gtf_path else None
+        # 2) 构建完整路径并进行完整性校验（等价于build_star_index）
+        data_dir = tools_config.settings.data_dir
+        fasta_file = data_dir / fasta_path
+        gtf_file = data_dir / gtf_path if gtf_path else None
         
-        # 检查必需文件是否存在
+        # 检查必需的基因组文件是否存在和有效
         if not fasta_file.exists():
-            return {"success": False, "error": f"FASTA文件不存在: {fasta_file}，请先下载基因组文件"}
+            return {"success": False, "error": f"FASTA文件不存在: {fasta_file}，请先使用download_genome_assets下载基因组文件"}
+        
         if gtf_file and not gtf_file.exists():
-            return {"success": False, "error": f"GTF文件不存在: {gtf_file}，请先下载基因组文件"}
+            return {"success": False, "error": f"GTF文件不存在: {gtf_file}，请先使用download_genome_assets下载基因组文件"}
+        
+        # 检查文件有效性
+        try:
+            fasta_size = fasta_file.stat().st_size
+            if fasta_size == 0:
+                return {"success": False, "error": f"FASTA文件为空: {fasta_file}，请重新下载基因组文件"}
+            
+            with open(fasta_file, 'rb') as f:
+                first_bytes = f.read(10)
+            if not first_bytes.startswith(b'>'):
+                return {"success": False, "error": f"FASTA文件格式无效: {fasta_file}，请重新下载基因组文件"}
+            
+            if gtf_file:
+                gtf_size = gtf_file.stat().st_size
+                if gtf_size == 0:
+                    return {"success": False, "error": f"GTF文件为空: {gtf_file}，请重新下载基因组文件"}
+                    
+        except Exception as e:
+            return {"success": False, "error": f"基因组文件检查失败: {e}，请重新下载基因组文件"}
 
-        # 3) 直接基于fasta父目录确定索引目录
-        index_dir = fasta_file.parent / "hisat2_index"
+        # 3) 索引目录 - 直接从genomes.json配置获取
+        hisat2_index_path = genome_config.get("hisat2_index_path")
+        if not hisat2_index_path:
+            return {"success": False, "error": f"基因组 '{genome_id}' 配置缺少hisat2_index_path"}
+        
+        index_dir = data_dir / hisat2_index_path
         index_dir.mkdir(parents=True, exist_ok=True)
 
         # 4) 检查是否需要重建
@@ -713,17 +689,19 @@ def build_hisat2_index(
         work_dir = tools_config.settings.data_dir / "work" / work_dir_name
         work_dir.mkdir(parents=True, exist_ok=True)
 
-        thread_count = 8
-        if runThreadN is not None:
-            try:
-                parsed_thread_count = int(runThreadN)
-                if parsed_thread_count > 0:
-                    thread_count = parsed_thread_count
-                else:
-                    logger.warning(f"线程数必须为正整数，已回退到默认值: {runThreadN}")
-            except (TypeError, ValueError):
-                logger.warning(f"无法解析线程数参数 runThreadN={runThreadN}")
+        # 处理HISAT2参数，合并默认值和用户输入
+        if hisat2_params is None:
+            hisat2_params = {}
+        
+        # 获取默认HISAT2索引参数并合并用户参数
+        from ..config.default_tool_params import DEFAULT_HISAT2_INDEX_PARAMS
+        final_hisat2_params = DEFAULT_HISAT2_INDEX_PARAMS.copy()
+        final_hisat2_params.update(hisat2_params)
+        
+        # 提取关键参数  
+        thread_count = int(final_hisat2_params.get("runThreadN", 8))
 
+        # 构建Nextflow参数，包含所有HISAT2索引参数
         nf_params = {
             "genome_fasta": str(fasta_file),
             "genome_gtf": str(gtf_file) if gtf_file else "",
@@ -732,6 +710,13 @@ def build_hisat2_index(
             "p": thread_count,
             "resources": {"hisat2": {"cpus": thread_count}},
         }
+        
+        # 添加所有HISAT2索引构建参数（包括large_index）
+        for key, value in final_hisat2_params.items():
+            if key not in ["runThreadN"]:  # runThreadN已经转换为"p"
+                # 只添加非None值的参数，避免传递无效参数
+                if value is not None:
+                    nf_params[key] = value
 
         if results_dir:
             params_file_path = write_params_file(

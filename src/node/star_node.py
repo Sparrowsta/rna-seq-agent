@@ -205,6 +205,17 @@ async def _call_star_optimization_agent(state: AgentState) -> StarResponse:
     genome_version = state.nextflow_config.get("genome_version")
     star_resource_config = state.resource_config.get("star") if state.resource_config else {}
     
+    # 获取来自detect node的基因组信息，为LLM提供判断基础
+    genome_info = {}
+    if hasattr(state, 'detect_results') and state.detect_results:
+        # 从detect结果中获取基因组信息
+        detect_results = state.detect_results
+        if isinstance(detect_results, dict):
+            query_results = detect_results.get('query_results', {})
+            if isinstance(query_results, dict) and genome_version:
+                # 提取指定基因组的详细信息
+                genome_info = query_results.get(genome_version, {})
+    
     user_context = {
         "execution_mode": state.execution_mode,
         "genome_config": {
@@ -212,6 +223,7 @@ async def _call_star_optimization_agent(state: AgentState) -> StarResponse:
             "paired_end": state.nextflow_config.get("paired_end")
         },
         "genome_paths": genome_paths,
+        "genome_info": genome_info,  # 来自detect node的基因组详细信息
         "star_resource_config": star_resource_config,
         "current_star_params": state.star_params,
         "fastp_results": state.fastp_results,  # 完整传递FastP结果
