@@ -44,6 +44,10 @@ class AgentState(BaseModel):
     current_step: str = Field(default="", description="当前执行步骤: fastp/star/featurecounts/analysis")
     completed_steps: List[str] = Field(default_factory=list, description="已完成的步骤列表")
 
+    # === 返回上下文（用于状态清空判断） ===
+    return_source: str = Field(default="", description="返回user_confirm的来源节点: analysis/featurecounts/fastp/star/hisat2")
+    return_reason: str = Field(default="", description="返回原因: completed/failed/step_confirm/batch_collect")
+
 
     # === 工具执行结果（保留这些字段，它们不是参数管理字段） ===
     fastp_results: Dict[str, Any] = Field(default_factory=dict, description="FastP执行产生的输出与摘要；遵循Prompt约定")

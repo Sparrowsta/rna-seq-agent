@@ -15,6 +15,7 @@ from ..tools import (
     scan_genome_files,
     extract_genome_paths
 )
+from ..route_decider import decide_next_action_star
 from ..logging_bootstrap import get_logger, log_llm_preview
 import json
 from datetime import datetime
@@ -86,6 +87,10 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
 
     # 依赖检查：需要FastP成功结果
     if not state.fastp_results or not state.fastp_results.get("success"):
+        # 依赖失败时设置返回上下文
+        state.return_source = "star"
+        state.return_reason = "failed"
+
         return {
             "success": False,
             "status": "star_failed",
@@ -145,6 +150,17 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
             results=star_results
         )
 
+        # 根据路由决策器结果设置返回上下文
+        next_action = decide_next_action_star(state)
+        if next_action == "return_confirm":
+            state.return_source = "star"
+            if not star_results.get("success", True):
+                state.return_reason = "failed"
+            elif state.execution_mode == 'batch_optimize' and optimization_count > 0:
+                state.return_reason = "batch_collect"
+            else:
+                state.return_reason = "step_confirm"
+
         # 构建成功结果
         result = {
             "success": True,
@@ -158,12 +174,15 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
             "star_results": star_results,
         }
 
-
-
         return result
 
     except Exception as e:
         logger.error(f"[STAR] STAR执行失败: {str(e)}")
+
+        # 失败时设置返回上下文
+        state.return_source = "star"
+        state.return_reason = "failed"
+
         return {
             "success": False,
             "status": "star_failed",
@@ -172,7 +191,7 @@ async def star_node(state: AgentState) -> Dict[str, Any]:
             "completed_steps": completed_steps,
             "star_results": {
                 "success": False,
-                "status": "failed", 
+                "status": "failed",
                 "error": str(e)
             }
         }

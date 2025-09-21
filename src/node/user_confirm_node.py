@@ -6,9 +6,10 @@
 
 from typing import Dict, Any
 from ..state import AgentState
+from ..config.default_tool_params import DEFAULT_FASTP_PARAMS, DEFAULT_STAR_PARAMS, DEFAULT_FEATURECOUNTS_PARAMS, DEFAULT_HISAT2_PARAMS
 """交互输出统一使用标准 print，避免额外封装"""
 from .confirm import (
-    build_confirm_view, render_confirm, 
+    build_confirm_view, render_confirm,
     parse_numeric_selection, get_execution_mode_selection, parse_execution_mode_selection
 )
 
@@ -30,20 +31,32 @@ async def user_confirm_node(state: AgentState) -> Dict[str, Any]:
 
 async def _numeric_user_confirm_node(state: AgentState) -> Dict[str, Any]:
     """纯数字选择用户确认节点实现"""
-    
+
+    # 在显示界面前，根据返回原因决定是否清空状态
+    if state.return_reason == "completed":
+        print(f"🎉 {state.execution_mode}模式任务完成，重置状态准备新任务...")
+        _reset_state_for_execution_mode(state, state.execution_mode, preserve_base_config=True)
+        print("✅ 状态重置完成")
+    elif state.return_reason == "batch_collect":
+        print(f"📋 Batch优化模式：保留收集的优化建议")
+    elif state.return_reason == "step_confirm":
+        print(f"🔄 Optimized模式步骤确认：保留当前进度")
+    elif state.return_reason == "failed":
+        print(f"⚠️  执行失败：保留错误信息供分析")
+
     # 1. 构建视图模型
     view = build_confirm_view(state)
-    
+
     # 2. 渲染输出
     rendered_lines = render_confirm(view)
     for line in rendered_lines:
         print(line)
-    
+
     # 3. 循环获取用户输入直到有效
     while True:
         try:
             user_choice = input("请输入数字选择 (0取消): ").strip()
-            
+
             # 构建命令解析上下文
             context = {
                 'completed_steps': getattr(state, 'completed_steps', []),
@@ -177,36 +190,128 @@ def _generate_decision_message(decision) -> str:
 
 def _build_node_result(state: AgentState, decision) -> Dict[str, Any]:
     """构建节点返回结果"""
-    
+
     # 基础返回字段
     result = {
         "response": _generate_decision_message(decision),
         "user_decision": decision.decision,
         "status": "confirm_complete"
     }
-    
+
     # 添加执行模式
     if decision.execution_mode:
         result["execution_mode"] = decision.execution_mode
-    
+
+    # 如果是执行决策，可以添加额外的日志
+    if decision.decision == 'execute' and decision.execution_mode:
+        print(f"✅ 用户确认执行{decision.execution_mode}模式")
+
     # 添加修改内容
     if decision.modify_content:
         result["modify_requirements"] = {
             "raw_input": decision.modify_content,
             "source": "numeric_selection"
         }
-    
+
     # 添加payload中的特殊字段
     if decision.payload.get('restart'):
         result["restart_requested"] = True
-    
+
     if decision.payload.get('re_optimization'):
         result["re_optimization_target"] = decision.payload.get('target_step')
-    
+
     # 处理特殊路由
     if decision.decision == 'cancel':
         result["routing_decision"] = "normal"
     elif decision.decision == 'quit':
         result["routing_decision"] = "end"
-    
+
     return result
+
+
+def _reset_state_for_execution_mode(state: AgentState, mode: str, preserve_base_config: bool = True) -> None:
+    """
+    根据执行模式重置状态字段
+
+    Args:
+        state: AgentState实例
+        mode: 执行模式 (single/optimized/batch_optimize/yolo)
+        preserve_base_config: 是否保留基础配置（prepare_node生成的配置）
+    """
+    mode = (mode or '').lower()
+
+    if mode in ('single', 'optimized'):
+        # Single和Optimized模式：完全重置，除了基础配置
+        _reset_tool_params(state)
+        _reset_optimization_fields(state)
+        _reset_user_modifications(state)
+        _reset_execution_results(state)
+
+    elif mode == 'batch_optimize':
+        # Batch_optimize模式：只清空执行结果，保留优化累积状态
+        _reset_execution_results(state)
+
+    elif mode == 'yolo':
+        # Yolo模式：当前与single模式相同（可以后续调整）
+        _reset_tool_params(state)
+        _reset_optimization_fields(state)
+        _reset_user_modifications(state)
+        _reset_execution_results(state)
+
+    # 根据参数决定是否保留基础配置
+    if not preserve_base_config:
+        state.nextflow_config = {}
+        state.resource_config = {}
+        state.config_reasoning = ""
+
+
+def _reset_tool_params(state: AgentState) -> None:
+    """重置工具参数到默认值"""
+    state.fastp_params = DEFAULT_FASTP_PARAMS.copy()
+    state.star_params = DEFAULT_STAR_PARAMS.copy()
+    state.hisat2_params = DEFAULT_HISAT2_PARAMS.copy()
+    state.featurecounts_params = DEFAULT_FEATURECOUNTS_PARAMS.copy()
+
+
+def _reset_optimization_fields(state: AgentState) -> None:
+    """重置优化相关字段"""
+    # 清空优化建议
+    state.fastp_optimization_suggestions = ""
+    state.star_optimization_suggestions = ""
+    state.hisat2_optimization_suggestions = ""
+    state.featurecounts_optimization_suggestions = ""
+
+    # 清空优化参数变更
+    state.fastp_optimization_params = {}
+    state.star_optimization_params = {}
+    state.hisat2_optimization_params = {}
+    state.featurecounts_optimization_params = {}
+
+    # 清空优化历史（保留最近的状态管理）
+    state.fastp_optimization_history = []
+    state.star_optimization_history = []
+    state.hisat2_optimization_history = []
+    state.featurecounts_optimization_history = []
+
+
+def _reset_user_modifications(state: AgentState) -> None:
+    """重置用户修改相关字段"""
+    state.modification_history = []
+    state.modify_requirements = {}
+
+
+def _reset_execution_results(state: AgentState) -> None:
+    """重置执行结果字段"""
+    state.fastp_results = {}
+    state.star_results = {}
+    state.hisat2_results = {}
+    state.featurecounts_results = {}
+
+    # 重置分析结果
+    state.overall_summary = ""
+    state.key_findings = []
+    state.sample_health_assessment = ""
+    state.quality_metrics_analysis = ""
+    state.optimization_recommendations = []
+    state.risk_warnings = []
+    state.next_steps = []

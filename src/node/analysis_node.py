@@ -34,6 +34,9 @@ def analysis_node(state: AgentState) -> Dict[str, Any]:
         # 提取结果目录
         results_dir = _extract_results_directory(state)
         if not results_dir:
+            # 失败时设置返回上下文
+            state.return_source = "analysis"
+            state.return_reason = "failed"
             return _create_error_response("无法确定结果目录，分析无法进行")
 
         # 获取基本配置信息
@@ -84,6 +87,9 @@ def analysis_node(state: AgentState) -> Dict[str, Any]:
         pipeline_data = _extract_pipeline_data_from_agent(agent_result)
         if not pipeline_data:
             logger.error("ReactAgent未返回流水线解析数据，终止分析流程")
+            # 失败时设置返回上下文
+            state.return_source = "analysis"
+            state.return_reason = "failed"
             return _create_error_response("ReactAgent未返回流水线解析数据，分析无法进行")
 
         # 缓存流水线数据，便于后续步骤使用
@@ -100,6 +106,9 @@ def analysis_node(state: AgentState) -> Dict[str, Any]:
         if not report_result.get("success"):
             error_message = report_result.get("error") or "生成分析报告失败"
             logger.error(f"分析报告生成失败: {error_message}")
+            # 失败时设置返回上下文
+            state.return_source = "analysis"
+            state.return_reason = "failed"
             return _create_error_response(error_message)
 
         report_path = report_result.get("markdown_report") or ""
@@ -118,6 +127,13 @@ def analysis_node(state: AgentState) -> Dict[str, Any]:
             response_lines.append("🔎 关键发现:")
             response_lines.extend(f"- {finding}" for finding in structured_analysis.key_findings)
         user_response = "\n".join(response_lines).strip()
+
+        # 根据执行模式设置返回上下文
+        if state.execution_mode in ('optimized', 'batch_optimize'):
+            # Optimized和Batch_optimize模式：任务完成，返回用户确认进行状态清空
+            state.return_source = "analysis"
+            state.return_reason = "completed"
+        # Single和Yolo模式不返回user_confirm，直接结束
 
         return {
             "success": True,
@@ -145,6 +161,9 @@ def analysis_node(state: AgentState) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Analysis ReactAgent节点执行失败: {e}", exc_info=True)
+        # 失败时设置返回上下文
+        state.return_source = "analysis"
+        state.return_reason = "failed"
         return _create_error_response(f"Analysis ReactAgent节点执行失败: {str(e)}")
 
 

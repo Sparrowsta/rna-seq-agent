@@ -9,7 +9,6 @@ RNA-seq智能分析助手 - 主程序入口
 import sys
 import asyncio
 from pathlib import Path
- 
 
 # 添加项目根目录到Python路径 - 修复导入问题
 PROJECT_ROOT = Path(__file__).parent
