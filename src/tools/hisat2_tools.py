@@ -62,6 +62,28 @@ def run_nextflow_hisat2(
                 "error": f"基因组配置缺少HISAT2索引路径: {genome_id}"
             }
 
+        # 2) 根据hisat2_index_path推断hisat2_index_prefix
+        try:
+            import re
+            idx_path = Path(hisat2_index_path)
+            if not idx_path.is_absolute():
+                idx_path = tools_config.settings.data_dir / idx_path
+            if idx_path.is_dir():
+                candidates = sorted(idx_path.glob('*.1.ht2'))
+                if not candidates:
+                    candidates = sorted(idx_path.glob('*.ht2'))
+                if candidates:
+                    first_name = candidates[0].name
+                    prefix_base = re.sub(r'\.(?:[1-8])\.ht2$', '', first_name)
+                    hisat2_index_prefix = str(idx_path / prefix_base)
+                else:
+                    hisat2_index_prefix = str(idx_path / 'genome')
+            else:
+                hisat2_index_prefix = str(idx_path)
+        except Exception as _e:
+            logger.warning(f"HISAT2 索引前缀推断失败，使用原始配置: {hisat2_index_path} (error={_e})")
+            hisat2_index_prefix = str(hisat2_index_path)
+
         # 1) 校验 FastP 结果与运行根目录
         if not (fastp_results and fastp_results.get("success")):
             return {"success": False, "error": "FastP结果无效，无法执行HISAT2比对"}
@@ -124,7 +146,8 @@ def run_nextflow_hisat2(
 
         nextflow_params = {
             "sample_inputs": json.dumps(sample_inputs, ensure_ascii=False),
-            "hisat2_index": str(hisat2_index_path),
+            # 传递给 Nextflow 的应为索引前缀的绝对路径
+            "hisat2_index": str(hisat2_index_prefix),
             "results_dir": str(results_dir),
             "work_dir": str(work_dir),
             # 将资源配置并入 params-file，避免对 -params 的版本依赖
@@ -160,7 +183,7 @@ def run_nextflow_hisat2(
             }
 
         logger.info(f"执行HISAT2比对 - 参数文件: {params_file}")
-        logger.info(f"HISAT2索引: {hisat2_index_path}")
+        logger.info(f"HISAT2索引前缀: {nextflow_params.get('hisat2_index')}")
         command = [
             "nextflow", "run", str(nextflow_script),
             "-params-file", str(params_file),
