@@ -309,7 +309,7 @@ def normalize_resources(stage_name: str, resource_config: Dict[str, Dict[str, An
     try:
         resource_config_map = resource_config or {}
         stage_config = resource_config_map.get(stage_name, {})
-        
+
         # 提取并验证cpus参数
         cpus = None
         if stage_config.get("cpus"):
@@ -317,24 +317,90 @@ def normalize_resources(stage_name: str, resource_config: Dict[str, Dict[str, An
                 cpus = int(stage_config["cpus"])
             except (ValueError, TypeError):
                 logger.warning(f"无效的cpus值: {stage_config.get('cpus')}")
-        
+
         # 提取并验证memory参数
         memory = stage_config.get("memory")
         if memory and not isinstance(memory, str):
             memory = str(memory)
-        
+
         # 构建归一化结果（只包含有效值）
         normalized = {}
         if cpus is not None:
             normalized["cpus"] = cpus
         if memory:
             normalized["memory"] = memory
-            
+
         logger.debug(f"归一化资源配置 {stage_name}: {normalized}")
         return normalized
-        
+
     except Exception as e:
         logger.error(f"归一化资源配置失败 {stage_name}: {e}")
+        return {}
+
+
+def get_genome_paths_from_id(genome_id: str) -> Dict[str, str]:
+    """从 genome_id 获取完整的基因组路径信息
+
+    Args:
+        genome_id: 基因组ID，如 "hg38", "mm39" 等
+
+    Returns:
+        完整的基因组路径信息字典
+        {
+            "genome_id": "hg38",
+            "species": "human",
+            "version": "hg38",
+            "gtf_path": "/data/genomes/human/hg38/annotation.gtf",
+            "star_index_path": "/data/genomes/human/hg38/star_index",
+            "hisat2_index_path": "/data/genomes/human/hg38/hisat2_index"
+        }
+    """
+    try:
+        config = get_tools_config()
+        genomes_config_path = config.genomes_config_path
+
+        if not genomes_config_path.exists():
+            logger.error(f"基因组配置文件不存在: {genomes_config_path}")
+            return {}
+
+        # 读取基因组配置文件
+        with open(genomes_config_path, 'r', encoding='utf-8') as f:
+            genomes_config = json.load(f)
+
+        # 查找目标基因组
+        if genome_id not in genomes_config:
+            logger.error(f"未找到基因组配置: {genome_id}, 可用基因组: {list(genomes_config.keys())}")
+            return {}
+
+        genome_info = genomes_config[genome_id]
+
+        # 构建路径字典
+        paths = {
+            "genome_id": genome_info.get("genome_id", genome_id),
+            "species": genome_info.get("species", ""),
+            "version": genome_info.get("version", genome_id),
+            "gtf_path": genome_info.get("gtf_path", ""),
+            "star_index_path": genome_info.get("star_index_path", ""),
+            "hisat2_index_path": genome_info.get("hisat2_index_path", "")
+        }
+
+        # 验证关键路径
+        missing_paths = []
+        if not paths["gtf_path"]:
+            missing_paths.append("gtf_path")
+        if not paths["star_index_path"]:
+            missing_paths.append("star_index_path")
+        if not paths["hisat2_index_path"]:
+            missing_paths.append("hisat2_index_path")
+
+        if missing_paths:
+            logger.warning(f"基因组 {genome_id} 缺少路径信息: {missing_paths}")
+
+        logger.info(f"成功获取基因组路径信息: {genome_id}")
+        return paths
+
+    except Exception as e:
+        logger.error(f"获取基因组路径信息失败: {e}")
         return {}
 
         

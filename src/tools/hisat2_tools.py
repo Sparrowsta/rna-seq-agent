@@ -25,7 +25,7 @@ logger = get_logger("rna.tools.hisat2")
 def run_nextflow_hisat2(
     hisat2_params: Dict[str, Any],
     fastp_results: Dict[str, Any],
-    genome_paths: Dict[str, str],
+    genome_id: str,
     resource_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """执行 HISAT2 比对
@@ -33,26 +33,33 @@ def run_nextflow_hisat2(
     Args:
         hisat2_params: HISAT2执行参数
         fastp_results: FastP质控结果
-        genome_paths: 简化的基因组路径信息（从节点动态提取）
+        genome_id: 基因组ID，用于获取对应的基因组路径信息
 
     约束（与路径契约一致）:
     - 仅在 fastp_results.success 为真且包含 per_sample_outputs 时放行
     - 统一复用 FastP 的 results_dir 作为运行根目录
-    - 直接使用 genome_paths["hisat2_index_path"] 获取HISAT2索引路径
+    - 通过 genome_id 从配置文件中获取HISAT2索引路径
     - sample_inputs 仅来源于 fastp_results.per_sample_outputs
     - per_sample_outputs 路径与 hisat2.nf 产出一致（样本子目录 + 默认文件名）
     """
     try:
         tools_config = get_tools_config()
 
-        # 直接从传入的路径信息中提取所需字段
-        genome_id = genome_paths.get("genome_id", "unknown")
-        hisat2_index_path = genome_paths.get("hisat2_index_path", "")
+        # 通过 genome_id 获取基因组路径信息
+        from .utils_tools import get_genome_paths_from_id
+        genome_paths = get_genome_paths_from_id(genome_id)
 
+        if not genome_paths:
+            return {
+                "success": False,
+                "error": f"无法获取基因组路径信息: {genome_id}"
+            }
+
+        hisat2_index_path = genome_paths.get("hisat2_index_path", "")
         if not hisat2_index_path:
             return {
                 "success": False,
-                "error": f"基因组路径信息缺少HISAT2索引路径: {genome_id}"
+                "error": f"基因组配置缺少HISAT2索引路径: {genome_id}"
             }
 
         # 1) 校验 FastP 结果与运行根目录

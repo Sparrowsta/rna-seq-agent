@@ -26,7 +26,7 @@ logger = get_logger("rna.tools.star")
 def run_nextflow_star(
     star_params: Dict[str, Any],
     fastp_results: Dict[str, Any],
-    genome_paths: Dict[str, str],
+    genome_id: str,
     resource_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """执行 STAR 比对（精简版）
@@ -34,27 +34,34 @@ def run_nextflow_star(
     Args:
         star_params: STAR执行参数
         fastp_results: FastP质控结果
-        genome_paths: 简化的基因组路径信息（从节点动态提取）
+        genome_id: 基因组ID，用于获取对应的基因组路径信息
         resource_config: 仅包含 STAR 阶段的资源配置片段，如 {"cpus": 8, "memory": "32 GB"}
 
     约束（与路径契约一致）:
     - 仅在 fastp_results.success 为真且包含 per_sample_outputs 时放行
     - 统一复用 FastP 的 results_dir 作为运行根目录
-    - 直接使用 genome_paths["star_index_path"] 获取STAR索引路径
+    - 通过 genome_id 从配置文件中获取STAR索引路径
     - sample_inputs 仅来源于 fastp_results.per_sample_outputs
     - per_sample_outputs 路径与 star.nf 产出一致（样本子目录 + 默认文件名）
     """
     try:
         tools_config = get_tools_config()
 
-        # 直接从传入的路径信息中提取所需字段
-        genome_id = genome_paths.get("genome_id", "unknown")
-        star_index_path = genome_paths.get("star_index_path", "")
+        # 通过 genome_id 获取基因组路径信息
+        from .utils_tools import get_genome_paths_from_id
+        genome_paths = get_genome_paths_from_id(genome_id)
 
+        if not genome_paths:
+            return {
+                "success": False,
+                "error": f"无法获取基因组路径信息: {genome_id}"
+            }
+
+        star_index_path = genome_paths.get("star_index_path", "")
         if not star_index_path:
             return {
                 "success": False,
-                "error": f"基因组路径信息缺少STAR索引路径: {genome_id}"
+                "error": f"基因组配置缺少STAR索引路径: {genome_id}"
             }
 
         # 1) 校验 FastP 结果与运行根目录
