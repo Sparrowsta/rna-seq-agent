@@ -96,7 +96,7 @@ async def hisat2_node(state: AgentState) -> Dict[str, Any]:
         }
 
     try:
-        # 统一通过Agent执行HISAT2，生成优化建议
+        # 统一通过Agent执行HISAT2比对和优化分析
         logger.info("[HISAT2] 调用Agent执行HISAT2比对和优化分析...")
         agent_response = await _call_hisat2_optimization_agent(state)
 
@@ -128,10 +128,13 @@ async def hisat2_node(state: AgentState) -> Dict[str, Any]:
         else:
             response = (
                 "✅ HISAT2比对完成\n\n"
-                "🚀 执行详情: 已完成序列比对，当前参数配置已是最优"
+                "🚀 执行详情: 已完成序列比对"
             )
 
         logger.info(f"[HISAT2] HISAT2执行完成，生成{optimization_count}个优化参数")
+
+        # 更新状态以便路由决策读取最新结果
+        state.hisat2_results = hisat2_results
 
         # 根据路由决策器结果设置返回上下文
         next_action = decide_next_action_hisat2(state)

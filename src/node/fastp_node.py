@@ -80,7 +80,7 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
         completed_steps.append("fastp")
     
     try:
-        # 统一通过Agent执行FastP，生成优化建议
+        # 统一通过Agent执行FastP质控和优化分析
         logger.info("[FASTP] 调用Agent执行FastP质控和优化分析...")
         agent_response = await _call_fastp_optimization_agent(state)
 
@@ -112,7 +112,7 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
         else:
             response = (
                 "✅ FastP质控完成\n\n"
-                "🚀 执行详情: 已完成质量控制，当前参数配置已是最优"
+                "🚀 执行详情: 已完成质量控制"
             )
 
         logger.info(f"[FASTP] FastP执行完成，生成{optimization_count}个优化参数")
@@ -124,6 +124,9 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
             suggestions=optimization_reasoning,
             results=fastp_results
         )
+
+        # 更新状态以便路由决策读取最新结果
+        state.fastp_results = fastp_results
 
         # 根据路由决策器结果设置返回上下文
         next_action = decide_next_action_fastp(state)

@@ -144,6 +144,9 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
                 "🚀 执行详情: 已完成基因定量，当前参数配置已是最优"
             )
 
+        # 更新状态以便路由决策读取最新结果
+        state.featurecounts_results = fc_results
+
         # 根据路由决策器结果设置返回上下文
         next_action = decide_next_action_featurecounts(state)
         if next_action == "return_confirm":
