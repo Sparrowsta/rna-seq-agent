@@ -268,6 +268,7 @@ def parse_hisat2_metrics(results_directory: str) -> Dict[str, Any]:
             }
 
         sample_logs = []
+        sample_metrics: List[Dict[str, Any]] = []
 
         # 遍历样本目录，收集align_summary.txt文件内容
         for sample_dir in hisat2_dir.iterdir():
@@ -296,6 +297,37 @@ def parse_hisat2_metrics(results_directory: str) -> Dict[str, Any]:
                     "content": log_content
                 })
 
+                # 解析关键指标：overall alignment rate、总reads数等
+                import re
+                overall_rate = None
+                total_reads = None
+
+                # 匹配例如："123456 reads; of these:" 或 "123,456 reads; of these:"
+                m_total = re.search(r"([\d,]+)\s+reads;\s+of\s+these:", log_content, re.IGNORECASE)
+                if m_total:
+                    try:
+                        total_reads = int(m_total.group(1).replace(',', ''))
+                    except Exception:
+                        total_reads = None
+
+                # 匹配例如："95.67% overall alignment rate"
+                m_rate = re.search(r"([\d.]+)%\s+overall\s+alignment\s+rate", log_content, re.IGNORECASE)
+                if m_rate:
+                    try:
+                        overall_rate = float(m_rate.group(1))
+                    except Exception:
+                        overall_rate = None
+
+                metric_entry = {"sample_id": sample_id}
+                if overall_rate is not None:
+                    metric_entry["overall_alignment_rate"] = overall_rate
+                if total_reads is not None:
+                    metric_entry["total_reads"] = total_reads
+
+                # 仅在至少有一项可用指标时加入
+                if len(metric_entry) > 1:
+                    sample_metrics.append(metric_entry)
+
             except Exception as exception:
                 sample_logs.append({
                     "sample_id": sample_id,
@@ -316,7 +348,9 @@ def parse_hisat2_metrics(results_directory: str) -> Dict[str, Any]:
             "success": True,
             "total_samples": successful_samples,
             "results_directory": results_directory,
-            "sample_logs": sample_logs
+            "sample_logs": sample_logs,
+            # 新增：为对齐函数提供可消费的样本级指标
+            "sample_metrics": sample_metrics,
         }
 
         try:
