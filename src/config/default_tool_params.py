@@ -127,15 +127,13 @@ DEFAULT_STAR_PARAMS = {
     
     # 输出文件前缀
     "outFileNamePrefix": "STAR_",             # 输出文件前缀
-    
+
     # 额外的高级参数
     "readFilesCommand": None,                 # 读取压缩文件的命令
     "outReadsUnmapped": None,                 # 未比对reads输出选项
     "outFilterIntronMotifs": None,            # 内含子motif过滤
     "outSAMstrandField": None,                # 链信息字段
     "outFilterType": None,                    # 过滤类型
-    "sjdbGTFfile": None,                      # GTF注释文件（构建索引用）
-    "sjdbOverhang": None,                     # 剪接位点overhang（构建索引用）
     "chimSegmentMin": None,                   # 嵌合体最小片段长度
     "chimOutType": None,                      # 嵌合体输出类型
     "chimMainSegmentMultNmax": None,          # 嵌合体主片段最大比对数
@@ -247,14 +245,14 @@ DEFAULT_HISAT2_PARAMS = {
     "N": 0,                                    # 每个种子最多错配数
     "D": 15,                                   # 扩展尝试次数
     "R": 2,                                    # 重新播种次数
-    
+
     # 输出控制参数
     "no_unal": False,                          # 不输出未比对reads
     "no_hd": False,                            # 不输出SAM头部
     "no_sq": False,                            # 不输出SQ行
     "rg_id": None,                             # Read Group ID
     "rg": None,                                # Read Group标签
-    
+
     # 性能优化参数
     "mm": False,                               # 使用内存映射文件
     "qc_filter": False,                        # 跳过质控失败的reads

@@ -39,8 +39,16 @@ class ModifyRequest(BaseModel):
         default={},
         description="FeatureCounts参数修改：-s, -p, -M, -O, -Q等FeatureCounts特有参数。当用户明确提到FeatureCounts或这些参数时必须使用此字段！"
     )
+    star_index_changes: Dict[str, Any] = Field(
+        default={},
+        description="STAR索引参数修改：genomeSAindexNbases, genomeChrBinNbits, genomeSAsparseD等索引构建参数。这些参数仅供用户手动修改，LLM不会自动优化。"
+    )
+    hisat2_index_changes: Dict[str, Any] = Field(
+        default={},
+        description="HISAT2索引参数修改：large_index, offrate, ftabchars等索引构建参数。这些参数仅供用户手动修改，LLM不会自动优化。"
+    )
     modification_reason: str = Field(
-        default="", 
+        default="",
         description="修改原因说明"
     )
     validation_notes: List[str] = Field(
@@ -78,11 +86,13 @@ async def modify_node(state: AgentState) -> Dict[str, Any]:
     current_star = state.star_params or {}
     current_hisat2 = state.hisat2_params or {}
     current_featurecounts = state.featurecounts_params or {}
+    current_star_index = state.star_index_params or {}
+    current_hisat2_index = state.hisat2_index_params or {}
     
     logger.info(f"用户修改需求: {raw_input}")
     logger.debug(
-        "当前配置概要 | nextflow=%d 资源进程=%d fastp=%d star=%d hisat2=%d featurecounts=%d",
-        len(current_nextflow), len(current_resource), len(current_fastp), len(current_star), len(current_hisat2), len(current_featurecounts)
+        "当前配置概要 | nextflow=%d 资源进程=%d fastp=%d star=%d hisat2=%d featurecounts=%d star_index=%d hisat2_index=%d",
+        len(current_nextflow), len(current_resource), len(current_fastp), len(current_star), len(current_hisat2), len(current_featurecounts), len(current_star_index), len(current_hisat2_index)
     )
     
     # 分析当前执行上下文 - 获取工具选择
@@ -144,6 +154,8 @@ async def modify_node(state: AgentState) -> Dict[str, Any]:
         updated_star = current_star.copy()
         updated_hisat2 = current_hisat2.copy()
         updated_featurecounts = current_featurecounts.copy()
+        updated_star_index = current_star_index.copy()
+        updated_hisat2_index = current_hisat2_index.copy()
         
         # 应用Nextflow配置修改
         if modify_request.nextflow_changes:
@@ -212,12 +224,12 @@ async def modify_node(state: AgentState) -> Dict[str, Any]:
             
             star_allowed_keys = {
                 "outSAMtype", "outSAMunmapped", "outSAMattributes",
-                "outFilterMultimapNmax", "alignSJoverhangMin", "alignSJDBoverhangMin", 
+                "outFilterMultimapNmax", "alignSJoverhangMin", "alignSJDBoverhangMin",
                 "outFilterMismatchNmax", "outFilterMismatchNoverReadLmax",
                 "alignIntronMin", "alignIntronMax", "alignMatesGapMax", "quantMode", "twopassMode",
                 "limitBAMsortRAM", "outBAMsortingThreadN", "genomeLoad", "outFileNamePrefix",
-                "readFilesCommand", "outReadsUnmapped", "outFilterIntronMotifs", 
-                "outSAMstrandField", "outFilterType", "sjdbGTFfile", "sjdbOverhang", 
+                "readFilesCommand", "outReadsUnmapped", "outFilterIntronMotifs",
+                "outSAMstrandField", "outFilterType",
                 "chimSegmentMin", "chimOutType", "chimMainSegmentMultNmax"
             }
             
@@ -236,7 +248,7 @@ async def modify_node(state: AgentState) -> Dict[str, Any]:
             hisat2_allowed_keys = {
                 "--mp", "--rdg", "--rfg", "--score-min", "--ma", "--np", "--sp", "--no-mixed", "--no-discordant",
                 "--gbar", "--ignore-quals", "--nofw", "--norc", "--end-to-end", "--local", "--very-fast",
-                "--fast", "--sensitive", "--very-sensitive", "--very-fast-local", "--fast-local", 
+                "--fast", "--sensitive", "--very-sensitive", "--very-fast-local", "--fast-local",
                 "--sensitive-local", "--very-sensitive-local", "-N", "-L", "-i", "--n-ceil",
                 "-D", "-R", "--dpad", "--gbar", "--ignore-quals", "--nofw", "--norc", "--no-1mm-upfront",
                 "-k", "-a", "--time", "--un", "--al", "--un-conc", "--al-conc", "--summary-file",
@@ -289,6 +301,50 @@ async def modify_node(state: AgentState) -> Dict[str, Any]:
                 old_value = updated_featurecounts.get(key, "未设置")
                 updated_featurecounts[key] = value
                 logger.debug(f"featurecounts.{key}: {old_value} → {value}")
+
+        # 应用STAR索引参数修改
+        if modify_request.star_index_changes:
+            logger.info("应用STAR索引参数修改")
+
+            star_index_allowed_keys = {
+                "sjdbOverhang", "runThreadN", "limitGenomeGenerateRAM",
+                "genomeSAindexNbases", "genomeChrBinNbits", "genomeSAsparseD",
+                "sjdbGTFfile", "sjdbGTFfeatureExon", "sjdbGTFtagExonParentTranscript",
+                "sjdbGTFtagExonParentGene", "sjdbInsertSave"
+            }
+
+            for key, value in modify_request.star_index_changes.items():
+                if key not in star_index_allowed_keys:
+                    logger.warning(f"跳过未知STAR索引键: {key}")
+                    continue
+                old_value = updated_star_index.get(key, "未设置")
+                updated_star_index[key] = value
+                logger.debug(f"star_index.{key}: {old_value} → {value}")
+
+        # 应用HISAT2索引参数修改
+        if modify_request.hisat2_index_changes:
+            logger.info("应用HISAT2索引参数修改")
+
+            hisat2_index_allowed_keys = {
+                "runThreadN", "large_index", "ss", "exon",
+                "offrate", "ftabchars", "local", "packed",
+                "bmax", "bmaxdivn", "dcv", "nodc",
+                "noref", "justref", "seed", "cutoff"
+            }
+
+            for key, value in modify_request.hisat2_index_changes.items():
+                if key not in hisat2_index_allowed_keys:
+                    logger.warning(f"跳过未知HISAT2索引键: {key}")
+                    continue
+                # 处理布尔类型参数
+                if key in {"large_index", "local", "packed", "nodc", "noref", "justref"}:
+                    if isinstance(value, str):
+                        value = value.strip().lower() in {"1", "true", "yes", "y", "on"}
+                    elif isinstance(value, (int, float)):
+                        value = bool(value)
+                old_value = updated_hisat2_index.get(key, "未设置")
+                updated_hisat2_index[key] = value
+                logger.debug(f"hisat2_index.{key}: {old_value} → {value}")
         
         # 显示验证提示
         if modify_request.validation_notes:
@@ -310,6 +366,8 @@ async def modify_node(state: AgentState) -> Dict[str, Any]:
             "reason": modify_request.modification_reason
         }
         modification_record["changes"]["hisat2"] = modify_request.hisat2_changes
+        modification_record["changes"]["star_index"] = modify_request.star_index_changes
+        modification_record["changes"]["hisat2_index"] = modify_request.hisat2_index_changes
         modification_history.append(modification_record)
         
         logger.info("配置修改完成")
@@ -363,6 +421,8 @@ async def modify_node(state: AgentState) -> Dict[str, Any]:
             "star_params": updated_star,
             "hisat2_params": updated_hisat2,
             "featurecounts_params": updated_featurecounts,
+            "star_index_params": updated_star_index,
+            "hisat2_index_params": updated_hisat2_index,
             
             # 记录修改处理结果
             "modify_results": {
@@ -373,7 +433,9 @@ async def modify_node(state: AgentState) -> Dict[str, Any]:
                     "fastp_params": modify_request.fastp_changes,
                     "star_params": modify_request.star_changes,
                     "hisat2_params": modify_request.hisat2_changes,
-                    "featurecounts_params": modify_request.featurecounts_changes
+                    "featurecounts_params": modify_request.featurecounts_changes,
+                    "star_index_params": modify_request.star_index_changes,
+                    "hisat2_index_params": modify_request.hisat2_index_changes
                 },
                 "applied": True
             },

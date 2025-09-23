@@ -227,6 +227,7 @@ async def _call_star_optimization_agent(state: AgentState) -> StarResponse:
         "genome_info": genome_info,  # 来自detect node的基因组详细信息
         "star_resource_config": star_resource_config,
         "current_star_params": state.star_params,
+        "current_star_index_params": state.star_index_params,
         "fastp_results": state.fastp_results,  # 完整传递FastP结果
         "star_results": state.star_results,  # 历史执行结果
         "optimization_history": state.star_optimization_history

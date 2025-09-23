@@ -6,7 +6,14 @@
 
 from typing import Dict, Any
 from ..state import AgentState
-from ..config.default_tool_params import DEFAULT_FASTP_PARAMS, DEFAULT_STAR_PARAMS, DEFAULT_FEATURECOUNTS_PARAMS, DEFAULT_HISAT2_PARAMS
+from ..config.default_tool_params import (
+    DEFAULT_FASTP_PARAMS,
+    DEFAULT_STAR_PARAMS,
+    DEFAULT_FEATURECOUNTS_PARAMS,
+    DEFAULT_HISAT2_PARAMS,
+    DEFAULT_STAR_INDEX_PARAMS,
+    DEFAULT_HISAT2_INDEX_PARAMS,
+)
 """交互输出统一使用标准 print，避免额外封装"""
 from .confirm import (
     build_confirm_view, render_confirm,
@@ -274,6 +281,9 @@ def _reset_tool_params(state: AgentState) -> None:
     state.star_params = DEFAULT_STAR_PARAMS.copy()
     state.hisat2_params = DEFAULT_HISAT2_PARAMS.copy()
     state.featurecounts_params = DEFAULT_FEATURECOUNTS_PARAMS.copy()
+    # 同步重置索引构建参数，避免模式切换后残留覆盖
+    state.star_index_params = DEFAULT_STAR_INDEX_PARAMS.copy()
+    state.hisat2_index_params = DEFAULT_HISAT2_INDEX_PARAMS.copy()
 
 
 def _reset_optimization_fields(state: AgentState) -> None:

@@ -166,7 +166,7 @@ STAR_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 STAR 比对专家。
 
 工具调用顺序（严格按序执行）：
 1. download_genome_assets(genome_id) - 仅在FASTA/GTF缺失时调用
-2. build_star_index(genome_id, results_dir=fastp_results.results_dir) - 仅在索引无效时调用
+2. build_star_index(genome_id, star_index_params=current_star_index_params, results_dir=fastp_results.results_dir) - 仅在索引无效时调用，必须原样传递current_star_index_params，不得修改或优化
 3. run_nextflow_star(star_params, fastp_results, genome_id) - 执行比对（必须调用）
 4. parse_star_metrics(results_directory) - 解析结果（必须调用）
 
@@ -180,6 +180,12 @@ STAR_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 STAR 比对专家。
 - 唯一比对率：目标 >80%，警戒 <60%
 - 多重比对率：正常 <20%
 - mismatch 率：目标 <5%
+
+⚠️ **禁止优化的索引参数（用户手动配置）**：
+- 以下索引构建参数仅供用户查看和手动修改，LLM不得自动优化：
+  - genomeSAindexNbases, genomeChrBinNbits, genomeSAsparseD
+  - sjdbGTFfile, sjdbGTFfeatureExon, sjdbGTFtagExonParentTranscript
+  - sjdbGTFtagExonParentGene, sjdbInsertSave
 
 常用调优要点（按问题选择其一两项，避免激进）：
 - 低总体/唯一比对率：放宽 outFilterMismatchNoverReadLmax；必要时提高 outFilterMultimapNmax；或启用 twopassMode="Basic" 发现新剪接位点
@@ -233,7 +239,7 @@ HISAT2_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 HISAT2 比对专家
 
 工具调用顺序（严格按序执行）：
 1. download_genome_assets(genome_id) - 仅在FASTA/GTF缺失时调用
-2. build_hisat2_index(genome_id, results_dir=fastp_results.results_dir) - 仅在索引无效时调用
+2. build_hisat2_index(genome_id, hisat2_index_params=current_hisat2_index_params, results_dir=fastp_results.results_dir) - 仅在索引无效时调用，必须原样传递current_hisat2_index_params，不得修改或优化
 3. run_nextflow_hisat2(hisat2_params, fastp_results, genome_paths) - 执行比对（必须调用）
 4. parse_hisat2_metrics(results_directory) - 解析结果（必须调用）
 
@@ -244,6 +250,12 @@ HISAT2_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 HISAT2 比对专家
 
 关键评估指标（用于说明，不作硬性限制）：
 - 总体比对率、唯一比对率、多重比对率；（双端）一致/不一致比对率
+
+⚠️ **禁止优化的索引参数（用户手动配置）**：
+- 以下索引构建参数仅供用户查看和手动修改，LLM不得自动优化：
+  - large_index, ss, exon, offrate, ftabchars
+  - local, packed, bmax, bmaxdivn, dcv, nodc
+  - noref, justref, seed, cutoff
 
 常用调优要点（按问题选择其一两项，避免激进）：
 - 低总体/唯一比对率：放宽 score_min；适度提高 mp；必要时放宽 n_ceil
@@ -344,22 +356,28 @@ MODIFY_NODE_PROMPT = """你是RNA-seq分析配置专家。请解析用户的修�
    - 如果用户明确提到"FastP"或质控参数 → 使用fastp_changes字段
 
 2. **比对相关修改** (如"更严格比对"、"降低多重比对"、"提高精度")：
-   - 如果配置的比对工具是"star" → 使用star_changes字段
-   - 如果配置的比对工具是"hisat2" → 使用hisat2_changes字段
+   - 如果配置的比对工具是"star" → 使用star_changes字段（仅用于运行期比对参数）
+   - 如果配置的比对工具是"hisat2" → 使用hisat2_changes字段（仅用于运行期比对参数）
    - 如果用户明确提到工具名称 → 优先使用对应字段
 
-3. **定量分析修改** (如"链特异性"、"双端模式"、"计数参数")：
+3. **索引构建修改** (如"sjdbOverhang"、"sjdbGTFfile"、"large_index"、"ss"、"exon" 等)：
+   - STAR 索引参数 → 使用 star_index_changes 字段
+   - HISAT2 索引参数 → 使用 hisat2_index_changes 字段
+
+4. **定量分析修改** (如"链特异性"、"双端模式"、"计数参数")：
    - 如果配置的定量工具是"featurecounts" → 使用featurecounts_changes字段
    - 如果配置其他定量工具 → 根据工具名使用对应字段
    - 如果用户明确提到"FeatureCounts"或定量参数 → 使用featurecounts_changes字段
 
-4. **明确工具参数** (用户明确提到工具名或参数名)：
-   - STAR参数 → star_changes字段
-   - HISAT2参数 → hisat2_changes字段
-   - FastP参数 → fastp_changes字段
-   - FeatureCounts参数 → featurecounts_changes字段
+5. **明确工具参数** (用户明确提到工具名或参数名)：
+   - STAR 比对参数 → star_changes 字段
+   - STAR 索引参数 → star_index_changes 字段
+   - HISAT2 比对参数 → hisat2_changes 字段
+   - HISAT2 索引参数 → hisat2_index_changes 字段
+   - FastP 参数 → fastp_changes 字段
+   - FeatureCounts 参数 → featurecounts_changes 字段
 
-5. **模糊语义智能匹配** (根据当前工具配置自动选择)：
+6. **模糊语义智能匹配** (根据当前工具配置自动选择)：
    - "更严格" + 当前步骤或工具配置 → 选择对应工具参数字段
    - "提高质量" + 质控工具配置 → 选择质控工具参数字段
    - "优化比对" + 比对工具配置 → 选择比对工具参数字段
@@ -390,13 +408,13 @@ MODIFY_NODE_PROMPT = """你是RNA-seq分析配置专家。请解析用户的修�
 - overrepresentation_analysis, overrepresentation_sampling
 
 【比对工具参数】
-**STAR参数（键名必须精确）**
+**STAR参数（键名必须精确，运行期比对参数）**
 - outSAMtype, outSAMunmapped, outSAMattributes,
 - outFilterMultimapNmax, alignSJoverhangMin, alignSJDBoverhangMin, outFilterMismatchNmax, outFilterMismatchNoverReadLmax,
 - alignIntronMin, alignIntronMax, alignMatesGapMax, quantMode, twopassMode,
 - limitBAMsortRAM, outBAMsortingThreadN, genomeLoad, outFileNamePrefix,
 - readFilesCommand, outReadsUnmapped, outFilterIntronMotifs, outSAMstrandField,
-- outFilterType, sjdbGTFfile, sjdbOverhang, chimSegmentMin, chimOutType, chimMainSegmentMultNmax
+- outFilterType, chimSegmentMin, chimOutType, chimMainSegmentMultNmax
 
 **HISAT2参数（键名必须精确）**
 - --mp, --rdg, --rfg, --score-min, --ma, --np, --sp, --no-mixed, --no-discordant,
@@ -410,6 +428,19 @@ MODIFY_NODE_PROMPT = """你是RNA-seq分析配置专家。请解析用户的修�
 - --soft-clipped-unmapped-tlen, --sam-append-comment, --reorder", --mm,
 - --qc-filter, --seed, --non-deterministic, --remove-chrname-prefix, --add-chrname-prefix
 
+【索引构建参数】
+**STAR索引参数（键名必须精确）**
+- sjdbOverhang, runThreadN, limitGenomeGenerateRAM,
+- genomeSAindexNbases, genomeChrBinNbits, genomeSAsparseD,
+- sjdbGTFfile, sjdbGTFfeatureExon, sjdbGTFtagExonParentTranscript,
+- sjdbGTFtagExonParentGene, sjdbInsertSave
+
+**HISAT2索引参数（键名必须精确）**
+- runThreadN, large_index, ss, exon,
+- offrate, ftabchars, local, packed,
+- bmax, bmaxdivn, dcv, nodc,
+- noref, justref, seed, cutoff
+
 【定量工具参数】
 **FeatureCounts参数（键名必须精确）**
 - -s, -p, -B, -C, -t, -g, -M, -O, --fraction, -Q,
@@ -421,9 +452,10 @@ MODIFY_NODE_PROMPT = """你是RNA-seq分析配置专家。请解析用户的修�
 ⚠️ **关键参数选择规则**：
 1. **质量相关参数** → 使用 fastp_changes：如"质量阈值"、"qualified_quality_phred"、"length_required"
 2. **比对相关参数** → 使用 star_changes：如"多重比对"、"两遍模式"、"outFilterMultimapNmax"、"twopassMode"
-3. **计数相关参数** → 使用 featurecounts_changes：如"链特异性"、"双端模式"、"-s"、"-p"、"-M"
-4. **线程/CPU资源** → 使用 resource_changes：如"线程数"、"CPU核心"、"runThreadN"、"-T"参数
-5. **流程配置** → 使用 nextflow_changes：物种、基因组版本、工具选择
+3. **索引构建参数** → 使用 star_index_changes 或 hisat2_index_changes：如 "sjdbOverhang"、"sjdbGTFfile"、"limitGenomeGenerateRAM"、"large_index"、"ss"、"exon"
+4. **计数相关参数** → 使用 featurecounts_changes：如"链特异性"、"双端模式"、"-s"、"-p"、"-M"
+5. **线程/CPU资源** → 使用 resource_changes：如"线程数"、"CPU核心"、"runThreadN"、"-T"参数
+6. **流程配置** → 使用 nextflow_changes：物种、基因组版本、工具选择
 
 ⚠️ **重要提醒**：用户明确提到具体工具参数时，必须使用对应的工具参数字段！
 

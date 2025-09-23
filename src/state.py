@@ -1,7 +1,14 @@
 
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
-from .config.default_tool_params import DEFAULT_FASTP_PARAMS, DEFAULT_STAR_PARAMS, DEFAULT_FEATURECOUNTS_PARAMS, DEFAULT_HISAT2_PARAMS
+from .config.default_tool_params import (
+    DEFAULT_FASTP_PARAMS,
+    DEFAULT_STAR_PARAMS,
+    DEFAULT_FEATURECOUNTS_PARAMS,
+    DEFAULT_HISAT2_PARAMS,
+    DEFAULT_STAR_INDEX_PARAMS,
+    DEFAULT_HISAT2_INDEX_PARAMS
+)
 
 # ==================== 统一Agent状态 ====================
 
@@ -60,6 +67,10 @@ class AgentState(BaseModel):
     star_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_STAR_PARAMS.copy(), description="当前STAR比对参数")
     hisat2_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_HISAT2_PARAMS.copy(), description="当前HISAT2比对参数")
     featurecounts_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_FEATURECOUNTS_PARAMS.copy(), description="当前FeatureCounts定量参数")
+
+    # === 索引构建参数（与运行参数分离，独立显示和管理） ===
+    star_index_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_STAR_INDEX_PARAMS.copy(), description="STAR索引构建参数")
+    hisat2_index_params: Dict[str, Any] = Field(default_factory=lambda: DEFAULT_HISAT2_INDEX_PARAMS.copy(), description="HISAT2索引构建参数")
 
     # === 工具优化参数变更字段（供跨节点引用优化历史） ===
     fastp_optimization_params: Dict[str, Any] = Field(default_factory=dict, description="FastP优化参数变更记录（仅包含改动项）")

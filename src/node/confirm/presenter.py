@@ -167,7 +167,12 @@ def _build_param_sections(state: AgentState, nextflow_config: Dict[str, Any]) ->
         fc_section = _build_featurecounts_section(state)
         if fc_section:
             sections.append(fc_section)
-    
+
+    # 索引参数显示区域
+    index_section = _build_index_params_section(state, nextflow_config)
+    if index_section:
+        sections.append(index_section)
+
     return sections
 
 
@@ -315,6 +320,49 @@ def _build_featurecounts_section(state: AgentState) -> Optional[Section]:
         user_mods=_create_param_items(param_diff.user_modifications, "用户修改") if param_diff.user_modifications else [],
         optimizations=_create_param_items(param_diff.optimizations, "优化建议") if param_diff.optimizations else [],
         reasoning_text=reasoning_text.strip() or None,
+        visible=True
+    )
+
+
+def _build_index_params_section(state: AgentState, nextflow_config: Dict[str, Any]) -> Optional[Section]:
+    """构建索引参数显示区域"""
+    align_tool = (nextflow_config.get('align_tool') or '').lower()
+
+    # 根据选择的比对器显示对应的索引参数
+    index_params = {}
+    section_title = ""
+    icon = "🗂️"
+
+    if align_tool == 'star':
+        index_params = getattr(state, 'star_index_params', {}) or {}
+        section_title = "STAR 索引参数"
+    elif align_tool == 'hisat2':
+        index_params = getattr(state, 'hisat2_index_params', {}) or {}
+        section_title = "HISAT2 索引参数"
+
+    if not index_params:
+        return None
+
+    # 构建索引参数项
+    effective_items = []
+    for key in sorted(index_params.keys()):
+        if index_params[key] is not None:  # 只显示非None值
+            effective_items.append(ParamItem(
+                key=key,
+                value=index_params[key],
+                applied_optimization=False
+            ))
+
+    if not effective_items:
+        return None
+
+    return Section(
+        title=section_title,
+        icon=icon,
+        effective=effective_items,
+        user_mods=[],
+        optimizations=[],
+        reasoning_text="索引构建参数 - 用户可手动修改，LLM不会自动优化",
         visible=True
     )
 

@@ -384,7 +384,7 @@ def download_genome_assets(
 @tool
 def build_star_index(
     genome_id: str,
-    star_params: Optional[Dict[str, Any]] = None,
+    star_index_params: Optional[Dict[str, Any]] = None,
     force_rebuild: bool = False,
     results_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -395,7 +395,7 @@ def build_star_index(
 
     Args:
         genome_id: 基因组标识，用于定位FASTA和GTF文件
-        star_params: STAR索引构建参数字典，包含sjdbOverhang、runThreadN等优化参数
+        star_index_params: STAR索引构建参数字典，包含sjdbOverhang、runThreadN等优化参数
         force_rebuild: 若索引目录已存在是否强制重建
         results_dir: 分析结果目录，参数文件保存到results/star/子目录
 
@@ -471,12 +471,12 @@ def build_star_index(
                 }
 
         # 处理STAR参数，合并默认值和用户输入
-        if star_params is None:
-            star_params = {}
+        if star_index_params is None:
+            star_index_params = {}
         
         # 合并默认参数和用户参数
         final_star_params = DEFAULT_STAR_INDEX_PARAMS.copy()
-        final_star_params.update(star_params)
+        final_star_params.update(star_index_params)
         
         # 提取关键参数
         sjdb = int(final_star_params.get("sjdbOverhang", 100))
@@ -598,7 +598,7 @@ def build_star_index(
 @tool
 def build_hisat2_index(
     genome_id: str,
-    hisat2_params: Optional[Dict[str, Any]] = None,
+    hisat2_index_params: Optional[Dict[str, Any]] = None,
     force_rebuild: bool = False,
     results_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -606,7 +606,7 @@ def build_hisat2_index(
 
     Args:
         genome_id: 基因组标识
-        hisat2_params: HISAT2索引构建参数字典，包含runThreadN、large_index、ss、exon等优化参数
+        hisat2_index_params: HISAT2索引构建参数字典，包含runThreadN、large_index、ss、exon等优化参数
         force_rebuild: 是否强制重建已有索引
         results_dir: 存放分析结果的目录，若提供则参数文件写入 results_dir/params
 
@@ -690,13 +690,13 @@ def build_hisat2_index(
         work_dir.mkdir(parents=True, exist_ok=True)
 
         # 处理HISAT2参数，合并默认值和用户输入
-        if hisat2_params is None:
-            hisat2_params = {}
+        if hisat2_index_params is None:
+            hisat2_index_params = {}
         
         # 获取默认HISAT2索引参数并合并用户参数
         from ..config.default_tool_params import DEFAULT_HISAT2_INDEX_PARAMS
         final_hisat2_params = DEFAULT_HISAT2_INDEX_PARAMS.copy()
-        final_hisat2_params.update(hisat2_params)
+        final_hisat2_params.update(hisat2_index_params)
         
         # 提取关键参数  
         thread_count = int(final_hisat2_params.get("runThreadN", 8))

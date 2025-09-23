@@ -426,7 +426,7 @@ def scan_genome_files(genome_id: Optional[str] = None) -> Dict[str, Any]:
                 "detection_status": "success",
                 "genome_id": genome_id,
                 "available": genome_status.get("available", False),
-                "files": {k: {"exists": v["exists"], "size_mb": v["size_mb"]}
+                "files": {k: {"exists": v["exists"], "size_mb": v.get("size_mb", 0)}
                          for k, v in genome_status.get("files", {}).items()},
                 "indexes": genome_status.get("indexes", {}),
                 "missing_files": genome_status.get("missing_files", []),

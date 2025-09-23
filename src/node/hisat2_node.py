@@ -215,6 +215,7 @@ async def _call_hisat2_optimization_agent(state: AgentState) -> Hisat2Response:
         # 注入 nextflow 全局配置与资源配置，让 LLM 基于全局设置做决策
         "hisat2_resource_config": hisat2_resource_config,
         "current_hisat2_params": state.hisat2_params,
+        "current_hisat2_index_params": state.hisat2_index_params,
         "fastp_results": state.fastp_results,  # 完整传递FastP结果
         "hisat2_results": state.hisat2_results,  # 历史执行结果
         "optimization_history": state.hisat2_optimization_history

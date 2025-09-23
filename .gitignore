@@ -19,22 +19,51 @@ data/*/
 !data/fastq/.gitkeep
 !data/genomes/.gitkeep
 !data/results/.gitkeep
+!data/config/
+!data/config/genomes.json
 
-# 配置文件（保留模板）
-config.json
-!config/.env.example
+# 开发和测试相关文件（生产环境不需要）
+tests/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+pytest.ini
+
+# 开发工具文件（生产环境不需要）
+Makefile
+run_tests.sh
+.env.test.template
+
+# CI/CD配置（生产环境不需要）
+.github/
+
+# 文档和脚本（生产环境不需要）
+docs/
+scripts/
+AGENTS.md
+
+# 测试数据文件（生产环境不需要）
+SRR_list.txt
+*.txt
+!requirements.txt
 
 # 临时和日志文件
-temp/
 *.log
 *.log.*
 nextflow_run.log
 
-# 测试和开发文件
+# 测试报告
+test_report.html
+*_test_report.html
+
+# 开发模式临时文件
 test_*.py
 *_test.py
 temp_*
-run_comprehensive_tests.sh
+*verification*.py
+*summary*.py
 
 # IDE文件
 .vscode/
@@ -51,17 +80,11 @@ Thumbs.db
 *.bak
 *~
 
-# 特定忽略的项目文件
-main_sample.nf
-datatest/
-*.md
-*.ipynb
-*.txt
-config/runtime_config.json
-config/nextflow.config
-
+# MCP和工具缓存（开发环境专用）
 .claude
 .bmad-core
-!data/config/
-!data/config/genomes.json
+.shrimp
 .serena
+.local
+.cache
+*.md
