@@ -194,11 +194,31 @@ def run_nextflow_featurecounts(
             "summary_file": str(fc_root / "all_samples.featureCounts.summary"),
         }
 
+        # 若Nextflow报告成功，则进一步校验聚合产物是否存在
+        if result.returncode == 0:
+            missing_files = []
+            required_paths = [output.get("counts_file"), output.get("summary_file")]
+            from pathlib import Path as _Path
+            missing_files = [file_path for file_path in required_paths if file_path and not _Path(file_path).exists()]
+            if missing_files:
+                return {
+                    "success": False,
+                    "results_dir": str(results_dir),
+                    "sample_count": sample_count,
+                    "output": output,
+                    "stderr": result.stderr,
+                    "stdout": result.stdout,
+                    "error": "FeatureCounts执行完成但未找到期望产物",
+                    "missing_outputs": missing_files,
+                }
+
         results = {
             "success": result.returncode == 0,
             "results_dir": str(results_dir),
             "sample_count": sample_count,
-            "output": output
+            "output": output,
+            "stderr": result.stderr,
+            "stdout": result.stdout,
         }
         
         if results["success"]:

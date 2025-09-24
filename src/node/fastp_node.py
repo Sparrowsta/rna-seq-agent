@@ -15,6 +15,7 @@ from ..route_decider import decide_next_action_fastp
 from ..logging_bootstrap import get_logger, log_llm_preview
 import json
 from datetime import datetime
+from pathlib import Path
 
 logger = get_logger("rna.nodes.fastp")
 
@@ -89,31 +90,31 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
         optimization_reasoning = agent_response.fastp_optimization_suggestions
         optimization_params_changes = agent_response.fastp_optimization_params
 
-        # 处理执行结果
-        fastp_results = {
-            "success": True,
-            "status": "success"
-        }
+        # 处理执行结果（以工具真实返回为准，默认失败避免"空成功"）
         try:
-            if getattr(agent_response, 'fastp_results', None):
-                agent_results = agent_response.fastp_results or {}
-                fastp_results.update(agent_results)  # 直接更新所有结果，包括params_file
+            agent_results = dict(getattr(agent_response, 'fastp_results', {}) or {})
         except Exception:
-            fastp_results["success"] = False
-            fastp_results["status"] = "failed"
+            agent_results = {}
+        success_flag = bool(agent_results.get("success", False))
+        status_text = agent_results.get("status", "success" if success_flag else "failed")
+        fastp_results = {**agent_results, "success": success_flag, "status": status_text}
 
         # 生成响应信息
         optimization_count = len(optimization_params_changes or {})
-        if optimization_count > 0:
-            response = (
-                f"✅ FastP质控完成\n- 质控状态: 成功完成\n- 优化分析: 生成了{optimization_count}个优化建议\n\n"
-                f"⚡ 优化详情: {optimization_reasoning}"
-            )
+        if success_flag:
+            if optimization_count > 0:
+                response = (
+                    f"✅ FastP质控完成\n- 质控状态: 成功完成\n- 优化分析: 生成了{optimization_count}个优化建议\n\n"
+                    f"⚡ 优化详情: {optimization_reasoning}"
+                )
+            else:
+                response = (
+                    "✅ FastP质控完成\n\n"
+                    "🚀 执行详情: 已完成质量控制"
+                )
         else:
-            response = (
-                "✅ FastP质控完成\n\n"
-                "🚀 执行详情: 已完成质量控制"
-            )
+            error_msg = fastp_results.get("error") or fastp_results.get("message") or "FastP执行未产生有效输出"
+            response = f"❌ FastP执行失败：{error_msg}"
 
         logger.info(f"[FASTP] FastP执行完成，生成{optimization_count}个优化参数")
 
@@ -132,7 +133,7 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
         next_action = decide_next_action_fastp(state)
         if next_action == "return_confirm":
             state.return_source = "fastp"
-            if not fastp_results.get("success", True):
+            if not success_flag:
                 state.return_reason = "failed"
             elif state.execution_mode == 'batch_optimize' and optimization_count > 0:
                 state.return_reason = "batch_collect"
@@ -141,7 +142,7 @@ async def fastp_node(state: AgentState) -> Dict[str, Any]:
 
         # 构建成功结果
         result = {
-            "success": True,
+            "success": success_flag,
             "status": "fastp_completed",
             "current_step": "fastp",
             "completed_steps": completed_steps,
@@ -224,7 +225,42 @@ async def _call_fastp_optimization_agent(state: AgentState) -> FastpResponse:
             log_llm_preview(logger, "fastp.raw", {"keys": list(result.keys())[:10]})
     except Exception:
         pass
+
+    # 定义最小校验：必须含有 results_dir 和每样本产物文件存在
+    def _is_valid_fastp_results(res: FastpResponse) -> bool:
+        try:
+            fr = getattr(res, 'fastp_results', {}) or {}
+            if not fr.get('success'):
+                return False
+            results_dir = fr.get('results_dir') or fr.get('results_directory')
+            per_outputs = fr.get('per_sample_outputs') or []
+            if not results_dir or not per_outputs:
+                return False
+            missing_paths = []
+            for item in per_outputs:
+                required = [
+                    item.get('html'),
+                    item.get('json')
+                ]
+                # 根据 paired_end 状态添加不同的必需文件
+                if item.get('paired_end'):
+                    required.extend([
+                        item.get('trimmed_r1'),
+                        item.get('trimmed_r2')
+                    ])
+                else:
+                    required.append(item.get('trimmed_single'))
+                for file_path in required:
+                    if file_path and not Path(file_path).exists():
+                        missing_paths.append(file_path)
+            return len(missing_paths) == 0
+        except Exception:
+            return False
+
     if not structured_response:
         raise ValueError("Agent返回的结构化响应为空")
-    
+
+    if not _is_valid_fastp_results(structured_response):
+        raise ValueError("Agent返回的结果无效或缺少必要产物")
+
     return structured_response

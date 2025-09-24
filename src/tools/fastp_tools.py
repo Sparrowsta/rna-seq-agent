@@ -184,6 +184,34 @@ def run_nextflow_fastp(
                         output_info["trimmed_single"] = str(sample_dir / f"{sample_id}.single.trimmed.fastq.gz")
                     
                     per_sample_outputs.append(output_info)
+
+                # 校验产出文件是否真实存在（避免“空成功”）
+                missing_details = []
+                for item in per_sample_outputs:
+                    required = [item.get("html"), item.get("json")]
+                    if paired_end_value:
+                        required += [item.get("trimmed_r1"), item.get("trimmed_r2")]
+                    else:
+                        required += [item.get("trimmed_single")]
+                    missing = [file_path for file_path in required if file_path and not Path(file_path).exists()]
+                    if missing:
+                        missing_details.append({
+                            "sample_id": item.get("sample_id"),
+                            "missing": missing
+                        })
+
+                if missing_details:
+                    return {
+                        "success": False,
+                        "results_dir": str(results_dir),
+                        "per_sample_outputs": per_sample_outputs,
+                        "execution_time": execution_time,
+                        "params_file": str(params_file),
+                        "stderr": result.stderr,
+                        "stdout": result.stdout,
+                        "error": "FastP执行完成但未找到期望产物",
+                        "missing_outputs": missing_details
+                    }
                 
                 return {
                     "success": True,
@@ -191,13 +219,16 @@ def run_nextflow_fastp(
                     "per_sample_outputs": per_sample_outputs,
                     "execution_time": execution_time,
                     "params_file": str(params_file),
-                    "message": "FastP执行成功"
+                    "message": "FastP执行成功",
+                    "stderr": result.stderr,
+                    "stdout": result.stdout
                 }
             else:
                 return {
                     "success": False,
                     "error": f"FastP执行失败，返回码: {result.returncode}",
                     "stderr": result.stderr,
+                    "stdout": result.stdout,
                     "execution_time": execution_time
                 }
         

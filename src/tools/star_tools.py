@@ -194,6 +194,45 @@ def run_nextflow_star(
                 sample_result_entry["gene_counts"] = str(sample_dir / f"{sample_id}.ReadsPerGene.out.tab")
             per_sample_outputs.append(sample_result_entry)
 
+        # 若Nextflow报告成功，则进一步校验每样本期望产物是否存在
+        if execution_result.returncode == 0:
+            missing_details: List[Dict[str, Any]] = []
+            for sample_result in per_sample_outputs:
+                required_paths = [
+                    sample_result.get("aligned_bam"),
+                    sample_result.get("log_final"),
+                    sample_result.get("log_out"),
+                    sample_result.get("log_progress"),
+                    sample_result.get("splice_junctions"),
+                ]
+                # 可选产物：根据是否存在键来校验
+                if sample_result.get("transcriptome_bam"):
+                    required_paths.append(sample_result.get("transcriptome_bam"))
+                if sample_result.get("gene_counts"):
+                    required_paths.append(sample_result.get("gene_counts"))
+
+                missing_files = [file_path for file_path in required_paths if file_path and not Path(file_path).exists()]
+                if missing_files:
+                    missing_details.append({
+                        "sample_id": sample_result.get("sample_id"),
+                        "missing": missing_files,
+                    })
+
+            if missing_details:
+                return {
+                    "success": False,
+                    "results_dir": str(results_dir),
+                    "work_dir": str(work_dir),
+                    "params_file": str(params_file),
+                    "sample_count": len(sample_inputs),
+                    "per_sample_outputs": per_sample_outputs,
+                    "stderr": execution_result.stderr,
+                    "stdout": execution_result.stdout,
+                    "error": "STAR执行完成但未找到期望产物",
+                    "missing_outputs": missing_details,
+                    "cmd": " ".join(command),
+                }
+
         results = {
             "success": execution_result.returncode == 0,
             "results_dir": str(results_dir),
@@ -201,20 +240,14 @@ def run_nextflow_star(
             "params_file": str(params_file),
             "sample_count": len(sample_inputs),
             "per_sample_outputs": per_sample_outputs,
+            "stderr": execution_result.stderr,
+            "stdout": execution_result.stdout,
+            "cmd": " ".join(command),
         }
-        if get_tools_config().settings.debug_mode:
-            results.update({"stderr": execution_result.stderr, "cmd": " ".join(command)})
         if results["success"]:
             logger.info(f"STAR完成:samples={len(sample_inputs)} results={results_dir}")
         else:
             logger.warning(f"STAR失败:rc={execution_result.returncode} stderr={(execution_result.stderr or '')[:400]}")
-            # 失败时也添加调试信息
-            results.update({
-                "return_code": execution_result.returncode,
-                "stderr": execution_result.stderr[:1000] if execution_result.stderr else "",
-                "cmd": " ".join(command),
-                "work_dir": str(work_dir)
-            })
         return results
 
     except Exception as exception:

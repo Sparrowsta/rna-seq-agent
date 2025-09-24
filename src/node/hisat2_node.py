@@ -17,6 +17,7 @@ from ..tools import (
 from ..route_decider import decide_next_action_hisat2
 from ..logging_bootstrap import get_logger, log_llm_preview
 import json
+from pathlib import Path
 
 logger = get_logger("rna.nodes.hisat2")
 
@@ -105,31 +106,31 @@ async def hisat2_node(state: AgentState) -> Dict[str, Any]:
         optimization_reasoning = agent_response.hisat2_optimization_suggestions
         optimization_params_changes = agent_response.hisat2_optimization_params
 
-        # 处理执行结果
-        hisat2_results = {
-            "success": True,
-            "status": "success"
-        }
+        # 处理执行结果（以工具真实返回为准，默认失败避免“空成功”）
         try:
-            if getattr(agent_response, 'hisat2_results', None):
-                agent_results = agent_response.hisat2_results or {}
-                hisat2_results.update(agent_results)
+            agent_results = dict(getattr(agent_response, 'hisat2_results', {}) or {})
         except Exception:
-            hisat2_results["success"] = False
-            hisat2_results["status"] = "failed"
+            agent_results = {}
+        success_flag = bool(agent_results.get("success", False))
+        status_text = agent_results.get("status", "success" if success_flag else "failed")
+        hisat2_results = {**agent_results, "success": success_flag, "status": status_text}
 
         # 生成响应信息
         optimization_count = len(optimization_params_changes or {})
-        if optimization_count > 0:
-            response = (
-                f"✅ HISAT2比对完成\n- 比对状态: 成功完成\n- 优化分析: 生成了{optimization_count}个优化建议\n\n"
-                f"⚡ 优化详情: {optimization_reasoning}"
-            )
+        if success_flag:
+            if optimization_count > 0:
+                response = (
+                    f"✅ HISAT2比对完成\n- 比对状态: 成功完成\n- 优化分析: 生成了{optimization_count}个优化建议\n\n"
+                    f"⚡ 优化详情: {optimization_reasoning}"
+                )
+            else:
+                response = (
+                    "✅ HISAT2比对完成\n\n"
+                    "🚀 执行详情: 已完成序列比对"
+                )
         else:
-            response = (
-                "✅ HISAT2比对完成\n\n"
-                "🚀 执行详情: 已完成序列比对"
-            )
+            error_msg = hisat2_results.get("error") or hisat2_results.get("message") or "HISAT2执行未产生有效输出"
+            response = f"❌ HISAT2执行失败：{error_msg}"
 
         logger.info(f"[HISAT2] HISAT2执行完成，生成{optimization_count}个优化参数")
 
@@ -140,7 +141,7 @@ async def hisat2_node(state: AgentState) -> Dict[str, Any]:
         next_action = decide_next_action_hisat2(state)
         if next_action == "return_confirm":
             state.return_source = "hisat2"
-            if not hisat2_results.get("success", True):
+            if not success_flag:
                 state.return_reason = "failed"
             elif state.execution_mode == 'batch_optimize' and optimization_count > 0:
                 state.return_reason = "batch_collect"
@@ -149,7 +150,7 @@ async def hisat2_node(state: AgentState) -> Dict[str, Any]:
 
         # 构建成功结果
         result = {
-            "success": True,
+            "success": success_flag,
             "status": "hisat2_completed",
             "current_step": "hisat2",
             "completed_steps": completed_steps,
@@ -242,7 +243,35 @@ async def _call_hisat2_optimization_agent(state: AgentState) -> Hisat2Response:
             log_llm_preview(logger, "hisat2.raw", {"keys": list(result.keys())[:10]})
     except Exception:
         pass
+
+    # 定义最小校验：必须含有 results_dir 和每样本产物文件存在
+    def _is_valid_hisat2_results(res: Hisat2Response) -> bool:
+        try:
+            hr = getattr(res, 'hisat2_results', {}) or {}
+            if not hr.get('success'):
+                return False
+            results_dir = hr.get('results_dir') or hr.get('results_directory')
+            per_outputs = hr.get('per_sample_outputs') or []
+            if not results_dir or not per_outputs:
+                return False
+            missing_paths = []
+            for item in per_outputs:
+                required = [
+                    item.get('aligned_bam'),
+                    item.get('align_summary'),
+                    item.get('bam_index'),
+                ]
+                for file_path in required:
+                    if file_path and not Path(file_path).exists():
+                        missing_paths.append(file_path)
+            return len(missing_paths) == 0
+        except Exception:
+            return False
+
     if not structured_response:
         raise ValueError("Agent返回的结构化响应为空")
-    
+
+    if not _is_valid_hisat2_results(structured_response):
+        raise ValueError("Agent返回的结果无效或缺少必要产物")
+
     return structured_response

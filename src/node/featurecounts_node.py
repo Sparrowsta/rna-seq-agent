@@ -17,6 +17,7 @@ from ..route_decider import decide_next_action_featurecounts
 from ..logging_bootstrap import get_logger, log_llm_preview
 import json
 from datetime import datetime
+from pathlib import Path
 
 
 def create_featurecounts_agent():
@@ -111,38 +112,33 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
         optimization_reasoning = fc_response.featurecounts_optimization_suggestions
         optimization_params_changes = fc_response.featurecounts_optimization_params
         
-        # 透传Agent返回的results
-        agent_results = getattr(fc_response, 'featurecounts_results', None)
-        fc_results = {
-            "success": True,
-            "status": "success",
-        }
-        if agent_results and isinstance(agent_results, dict):
-            fc_results.update(agent_results)
-        
-        result = {
-            "success": True,
-            "status": "featurecounts_completed",
-            "current_step": "featurecounts",
-            "completed_steps": completed_steps,
-            "featurecounts_params": optimized_params,
-            "featurecounts_optimization_suggestions": optimization_reasoning,
-            "featurecounts_optimization_params": optimization_params_changes,
-            "featurecounts_results": fc_results,
-        }
+        # 处理执行结果（以工具真实返回为准，默认失败避免"空成功"）
+        try:
+            agent_results = dict(getattr(fc_response, 'featurecounts_results', {}) or {})
+        except Exception:
+            agent_results = {}
+        success_flag = bool(agent_results.get("success", False))
+        status_text = agent_results.get("status", "success" if success_flag else "failed")
+        fc_results = {**agent_results, "success": success_flag, "status": status_text}
 
         # 生成响应信息
         optimization_count = len(optimization_params_changes or {})
-        if optimization_count > 0:
-            result["response"] = (
-                f"✅ FeatureCounts定量完成\n- 定量状态: 成功完成\n- 优化分析: 生成了{optimization_count}个优化建议\n\n"
-                f"⚡ 优化详情: {optimization_reasoning}"
-            )
+        if success_flag:
+            if optimization_count > 0:
+                response = (
+                    f"✅ FeatureCounts定量完成\n- 定量状态: 成功完成\n- 优化分析: 生成了{optimization_count}个优化建议\n\n"
+                    f"⚡ 优化详情: {optimization_reasoning}"
+                )
+            else:
+                response = (
+                    "✅ FeatureCounts定量完成\n\n"
+                    "🚀 执行详情: 已完成基因定量，当前参数配置已是最优"
+                )
         else:
-            result["response"] = (
-                "✅ FeatureCounts定量完成\n\n"
-                "🚀 执行详情: 已完成基因定量，当前参数配置已是最优"
-            )
+            error_msg = fc_results.get("error") or fc_results.get("message") or "FeatureCounts执行未产生有效输出"
+            response = f"❌ FeatureCounts执行失败：{error_msg}"
+
+        logger.info(f"[FEATURECOUNTS] FeatureCounts执行完成，生成{optimization_count}个优化参数")
 
         # 更新状态以便路由决策读取最新结果
         state.featurecounts_results = fc_results
@@ -151,12 +147,25 @@ async def featurecounts_node(state: AgentState) -> Dict[str, Any]:
         next_action = decide_next_action_featurecounts(state)
         if next_action == "return_confirm":
             state.return_source = "featurecounts"
-            if not fc_results.get("success", True):
+            if not success_flag:
                 state.return_reason = "failed"
             elif state.execution_mode == 'batch_optimize':
                 state.return_reason = "batch_collect"  # Batch模式特殊处理
             else:
                 state.return_reason = "step_confirm"
+
+        # 构建成功结果
+        result = {
+            "success": success_flag,
+            "status": "featurecounts_completed",
+            "current_step": "featurecounts",
+            "completed_steps": completed_steps,
+            "response": response,
+            "featurecounts_params": optimized_params,
+            "featurecounts_optimization_suggestions": optimization_reasoning,
+            "featurecounts_optimization_params": optimization_params_changes,
+            "featurecounts_results": fc_results,
+        }
 
         # 追加优化历史记录
         append_featurecounts_optimization_history(
@@ -241,7 +250,43 @@ async def _call_featurecounts_optimization_agent(state: AgentState) -> Featureco
             log_llm_preview(logger, "featurecounts.raw", {"keys": list(result.keys())[:10]})
     except Exception:
         pass
+
+    # 定义最小校验：必须含有 results_dir 和关键产物文件存在
+    def _is_valid_featurecounts_results(res: FeaturecountsResponse) -> bool:
+        try:
+            fcr = getattr(res, 'featurecounts_results', {}) or {}
+            if not fcr.get('success'):
+                return False
+            results_dir = fcr.get('results_dir') or fcr.get('results_directory')
+            if not results_dir:
+                return False
+
+            # 检查关键输出文件是否存在
+            output = fcr.get('output', {})
+            required_files = [
+                output.get('counts_file'),
+                output.get('summary_file')
+            ]
+
+            # 检查每样本输出文件（如果存在）
+            per_sample_outputs = output.get('per_sample_outputs', [])
+            for item in per_sample_outputs:
+                if item.get('counts_file'):
+                    required_files.append(item.get('counts_file'))
+
+            missing_paths = []
+            for file_path in required_files:
+                if file_path and not Path(file_path).exists():
+                    missing_paths.append(file_path)
+
+            return len(missing_paths) == 0
+        except Exception:
+            return False
+
     if not structured_response:
         raise ValueError("Agent返回的结构化响应为空")
-    
+
+    if not _is_valid_featurecounts_results(structured_response):
+        raise ValueError("Agent返回的结果无效或缺少必要产物")
+
     return structured_response
