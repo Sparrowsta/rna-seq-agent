@@ -332,13 +332,17 @@ def _build_index_params_section(state: AgentState, nextflow_config: Dict[str, An
     index_params = {}
     section_title = ""
     icon = "🗂️"
+    modification_history = getattr(state, 'modification_history', []) or []
+    index_tool_key = None
 
     if align_tool == 'star':
         index_params = getattr(state, 'star_index_params', {}) or {}
         section_title = "STAR 索引参数"
+        index_tool_key = 'star_index'
     elif align_tool == 'hisat2':
         index_params = getattr(state, 'hisat2_index_params', {}) or {}
         section_title = "HISAT2 索引参数"
+        index_tool_key = 'hisat2_index'
 
     if not index_params:
         return None
@@ -356,11 +360,18 @@ def _build_index_params_section(state: AgentState, nextflow_config: Dict[str, An
     if not effective_items:
         return None
 
+    # 提取“用户修改（Mods）”以展示最近一次索引参数的变更
+    user_mods_items = []
+    if index_tool_key:
+        user_mods_raw = extract_user_modifications_from_history(modification_history, index_tool_key) or {}
+        if user_mods_raw:
+            user_mods_items = _create_param_items(user_mods_raw, "用户修改")
+
     return Section(
         title=section_title,
         icon=icon,
         effective=effective_items,
-        user_mods=[],
+        user_mods=user_mods_items,
         optimizations=[],
         reasoning_text="索引构建参数 - 用户可手动修改，LLM不会自动优化",
         visible=True

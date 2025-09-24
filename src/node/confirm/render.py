@@ -113,19 +113,21 @@ def _render_section(section: Section) -> List[str]:
         lines.append("")
         lines.append(f"   ✏️ 用户修改（Mods）： 无")
     
-    # Optimizations（优化建议）
-    if section.optimizations:
-        lines.append("")
-        lines.append(f"   ⚙️ 优化建议（Opt）：")
-        for item in section.optimizations:
-            if getattr(item, 'applied_optimization', False):
-                suffix = " (已应用优化)"
-            else:
-                suffix = ""
-            lines.append(f"     - {item.key}: {item.value}{suffix}")
-    else:
-        lines.append("")
-        lines.append(f"   ⚙️ 优化建议（Opt）： 无")
+    # Optimizations（优化建议）- 索引参数区块不显示优化建议
+    hide_opt_for_titles = {"STAR 索引参数", "HISAT2 索引参数"}
+    if section.title not in hide_opt_for_titles:
+        if section.optimizations:
+            lines.append("")
+            lines.append(f"   ⚙️ 优化建议（Opt）：")
+            for item in section.optimizations:
+                if getattr(item, 'applied_optimization', False):
+                    suffix = " (已应用优化)"
+                else:
+                    suffix = ""
+                lines.append(f"     - {item.key}: {item.value}{suffix}")
+        else:
+            lines.append("")
+            lines.append(f"   ⚙️ 优化建议（Opt）： 无")
     
     # 优化理由
     if section.reasoning_text:
