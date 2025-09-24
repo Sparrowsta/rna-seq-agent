@@ -124,6 +124,10 @@ FASTP_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 FastP 质量控制�
 - 读长偏短：降低 length_required 至 15–20bp；避免不必要的 length_limit
 - PolyG/X：trim_poly_g=True, poly_g_min_len=10；仅在需要时启用 trim_poly_x
 
+参数使用注意：
+- 仅当 cut_front/cut_tail/cut_right 至少一个为 true 时，才设置 --cut_window_size/--cut_mean_quality；否则不要传入（fastp 会提示无效）。
+- 若开启 overrepresentation_analysis 且未指定 sampling，采用 fastp 默认值 20。
+
 输出要求（必须包含）：
 - fastp_params：返回执行后/建议后的完整参数字典
 - fastp_optimization_params：仅包含“与输入相比确实改变”的键值
@@ -296,7 +300,7 @@ FEATURECOUNTS_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 FeatureCount
 - 低分配率：检查 -s 链特异性（0/1/2）；必要时调整 -t/-g
 - MultiMapping 偏高：启用 -M；必要时 --fraction；调整 -Q
 - Ambiguous 偏高：启用 -O；设置 --fracOverlap / --minOverlap
-- 双端：-p，必要时 -B/-C；线程：-T
+- 双端：-p，必要时 -B/-C；线程：-T；若希望按“片段/模板”计数，需同时加 --countReadPairs（与 -p 配合）。
 
 输出要求（必须返回 FeaturecountsResponse）：
 - featurecounts_params：执行后/建议后的完整参数字典

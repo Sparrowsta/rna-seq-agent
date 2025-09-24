@@ -125,8 +125,8 @@ process fastp_quality_control {
             ${params.cut_tail_mean_quality != null ? "--cut_tail_mean_quality ${params.cut_tail_mean_quality}" : ''} \\
             ${params.cut_right_window_size != null ? "--cut_right_window_size ${params.cut_right_window_size}" : ''} \\
             ${params.cut_right_mean_quality != null ? "--cut_right_mean_quality ${params.cut_right_mean_quality}" : ''} \\
-            --cut_window_size ${params.cut_window_size} \\
-            --cut_mean_quality ${params.cut_mean_quality} \\
+            ${(params.cut_front || params.cut_tail || params.cut_right) ? "--cut_window_size ${params.cut_window_size}" : ''} \\
+            ${(params.cut_front || params.cut_tail || params.cut_right) ? "--cut_mean_quality ${params.cut_mean_quality}" : ''} \\
             ${params.adapter_trimming ? '' : '--disable_adapter_trimming'} \\
             ${params.quality_filtering ? '' : '--disable_quality_filtering'} \\
             ${params.length_filtering && !params.disable_length_filtering ? '' : '--disable_length_filtering'} \\
@@ -180,8 +180,8 @@ process fastp_quality_control {
             ${params.cut_tail_mean_quality != null ? "--cut_tail_mean_quality ${params.cut_tail_mean_quality}" : ''} \\
             ${params.cut_right_window_size != null ? "--cut_right_window_size ${params.cut_right_window_size}" : ''} \\
             ${params.cut_right_mean_quality != null ? "--cut_right_mean_quality ${params.cut_right_mean_quality}" : ''} \\
-            --cut_window_size ${params.cut_window_size} \\
-            --cut_mean_quality ${params.cut_mean_quality} \\
+            ${(params.cut_front || params.cut_tail || params.cut_right) ? "--cut_window_size ${params.cut_window_size}" : ''} \\
+            ${(params.cut_front || params.cut_tail || params.cut_right) ? "--cut_mean_quality ${params.cut_mean_quality}" : ''} \\
             ${params.adapter_trimming ? '' : '--disable_adapter_trimming'} \\
             ${params.quality_filtering ? '' : '--disable_quality_filtering'} \\
             ${params.length_filtering && !params.disable_length_filtering ? '' : '--disable_length_filtering'} \\

@@ -67,13 +67,13 @@ process FEATURECOUNTS_ALL {
         -g ${params.attribute_type} \
         -Q ${params.min_mapping_quality} \
         -T ${task.cpus} \
-        -s ${params.strand_specificity} \
-        ${params.count_reads_pairs ? '-p' : ''} \
-        ${params.count_multi_mapping_reads ? '-M' : ''} \
-        ${params.ignore_duplicates ? '--ignoreDup' : ''} \
-        ${params.require_both_ends_mapped ? '-B' : ''} \
-        ${params.exclude_chimeric ? '-C' : ''} \
-        ${bams_arg}
+	        -s ${params.strand_specificity} \
+	        ${params.count_reads_pairs ? '-p --countReadPairs' : ''} \
+	        ${params.count_multi_mapping_reads ? '-M' : ''} \
+	        ${params.ignore_duplicates ? '--ignoreDup' : ''} \
+	        ${params.require_both_ends_mapped ? '-B' : ''} \
+	        ${params.exclude_chimeric ? '-C' : ''} \
+	        ${bams_arg}
 
     if [ -f "all_samples.featureCounts" ]; then
         echo "FeatureCounts执行成功，开始处理输出文件表头"
