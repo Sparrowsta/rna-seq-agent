@@ -127,7 +127,7 @@ FASTP_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 FastP 质量控制�
 - fastp_params：返回执行后/建议后的完整参数字典
 - fastp_optimization_params：仅包含“与输入相比确实改变”的键值
 - fastp_optimization_suggestions：精炼文字，包含：问题→改动→预期影响/权衡
-- fastp_results：包含 results_dir 与 per_sample_outputs（每项含 sample_id、html、json，PE 含 trimmed_r1/r2；SE 含 trimmed_single）。
+- fastp_results：包含 success/false（布尔值，表示执行成功/失败）、results_dir 与 per_sample_outputs（每项含 sample_id、html、json，PE 含 trimmed_r1/r2；SE 含 trimmed_single）。
 
 路径与命名约定：
 - 以 run_nextflow_fastp 返回的 results_dir 为根
@@ -197,7 +197,7 @@ STAR_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 STAR 比对专家。
 - star_params：执行后/建议后的完整参数字典
 - star_optimization_params：仅包含“与输入相比确实改变”的键值
 - star_optimization_suggestions：精炼文字，包含：问题→改动→预期影响/权衡
-- star_results：包含 results_dir 与 per_sample_outputs；每项至少含 sample_id、aligned_bam、log_final、log_out、log_progress、splice_junctions；若启用 TranscriptomeSAM/GeneCounts，请补充 transcriptome_bam / gene_counts。
+- star_results：包含 success/false（布尔值，表示执行成功/失败）、results_dir 与 per_sample_outputs；每项至少含 sample_id、aligned_bam、log_final、log_out、log_progress、splice_junctions；若启用 TranscriptomeSAM/GeneCounts，请补充 transcriptome_bam / gene_counts。
 
 路径与命名约定：
 - 以 FastP 返回的 results_dir 为根；STAR 输出位于 {results_dir}/star/{sample_id}/
@@ -267,7 +267,7 @@ HISAT2_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 HISAT2 比对专家
 - hisat2_params：执行后/建议后的完整参数字典
 - hisat2_optimization_params：仅包含“与输入相比确实改变”的键值
 - hisat2_optimization_suggestions：精炼文字，包含：问题→改动→预期影响/权衡
-- hisat2_results：包含 results_dir 与 per_sample_outputs；每项至少含 sample_id、aligned_bam、align_summary、bam_index。
+- hisat2_results：包含 success/false（布尔值，表示执行成功/失败）、results_dir 与 per_sample_outputs；每项至少含 sample_id、aligned_bam、align_summary、bam_index。
 
 路径与命名约定：
 - 以 FastP 返回的 results_dir 为根；HISAT2 输出位于 {results_dir}/hisat2/{sample_id}/
@@ -309,7 +309,7 @@ FEATURECOUNTS_OPTIMIZATION_PROMPT = """你是RNA-seq流水线中的 FeatureCount
 - featurecounts_params：执行后/建议后的完整参数字典
 - featurecounts_optimization_params：仅包含“与输入相比确实改变”的键值
 - featurecounts_optimization_suggestions：精炼文字，包含：问题→改动→预期影响/权衡
-- featurecounts_results：包含 results_dir、matrix_path 与 per_sample_outputs；每项至少含 sample_id、counts_file、summary_file。
+- featurecounts_results：包含 success/false（布尔值，表示执行成功/失败）、results_dir、matrix_path 与 per_sample_outputs；每项至少含 sample_id、counts_file、summary_file。
 
 路径与命名约定：
 - 以比对器（STAR/HISAT2）返回的 results_dir 为根；FeatureCounts 输出位于 {results_dir}/featurecounts/
