@@ -77,8 +77,6 @@ RUN uv pip install --system -r pyproject.toml
 # 11. 设置环境变量
 ENV HOME=/data \
     NXF_HOME=/data/.nextflow \
-    NXF_WORK=/data/work \
-    NXF_TEMP=/data/tmp \
     PYTHONPATH=/src \
     NXF_OFFLINE=1 \
     PATH="/root/.local/bin:/root/.cargo/bin:$PATH"
